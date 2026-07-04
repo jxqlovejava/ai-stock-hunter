@@ -5,7 +5,17 @@ from __future__ import annotations
 
 from .comparative import MARKET_COMPARISONS, compare_markets, asymmetry_report
 from .players import PLAYER_PROFILES, PlayerProfile, PlayerType
-from .playbooks import TOP_3_PLAYBOOKS, Playbook
+from .playbooks import TOP_3_PLAYBOOKS, Playbook, get_playbook_evidence_summary
+from .playbook_validator import (
+    EvidenceGrade,
+    PlaybookValidation,
+    PlaybookValidator,
+    SeatWinRate,
+    ValidationReport,
+    get_seat_rankings,
+    upgrade_playbook_evidence,
+    validate_playbooks,
+)
 from .price_impact import PRICE_IMPACT_PROFILES, PriceImpact
 from .rules import (
     A_SHARE_RULES,
@@ -56,7 +66,11 @@ __all__ = [
     # Players
     "PLAYER_PROFILES", "PlayerProfile", "PlayerType",
     # Playbooks
-    "TOP_3_PLAYBOOKS", "Playbook",
+    "TOP_3_PLAYBOOKS", "Playbook", "get_playbook_evidence_summary",
+    # Playbook Validator (Phase 2)
+    "PlaybookValidator", "PlaybookValidation", "SeatWinRate",
+    "ValidationReport", "EvidenceGrade",
+    "validate_playbooks", "get_seat_rankings", "upgrade_playbook_evidence",
     # Price Impact
     "PRICE_IMPACT_PROFILES", "PriceImpact",
     # Comparative

@@ -2,10 +2,17 @@
 """操盘手法模式库（原则 4b）。
 
 ⚠️ 标注: HYPOTHESIS — 基于逻辑推演，Phase 2 需用龙虎榜数据做统计验证。
+
+Evidence grade lifecycle:
+  HYPOTHESIS → PRELIMINARY (≥5 samples) → CONFIRMED (≥20, p<0.05) → CALIBRATED (≥100, p<0.01)
+  HYPOTHESIS → REFUTED (证伪)
+
+Validation pipeline: playbook_validator.py
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from dataclasses import dataclass, field
 
 from .players import PlayerType
@@ -23,6 +30,8 @@ class Playbook:
     price_impact_profile: str
     risk_to_follower: str
     evidence_level: str = "HYPOTHESIS"  # HYPOTHESIS 直到被龙虎榜数据验证
+    evidence_upgraded_at: str = ""      # 证据升级时间戳
+    validation_summary: str = ""        # 最近一次验证的摘要
 
 
 TOP_3_PLAYBOOKS: list[Playbook] = [
@@ -99,3 +108,28 @@ TOP_3_PLAYBOOKS: list[Playbook] = [
         evidence_level="HYPOTHESIS",
     ),
 ]
+
+
+def get_playbook_evidence_summary() -> str:
+    """生成所有 playbook 的证据等级摘要。"""
+    from collections import Counter
+    counts = Counter(pb.evidence_level for pb in TOP_3_PLAYBOOKS)
+    lines = [
+        "# Playbook 证据等级",
+        "",
+        f"| Playbook | 类型 | 证据等级 |",
+        f"|----------|------|---------|",
+    ]
+    for pb in TOP_3_PLAYBOOKS:
+        icon = {"HYPOTHESIS": "🔬", "PRELIMINARY": "⚠️", "CONFIRMED": "✅",
+                "CALIBRATED": "🎯", "REFUTED": "❌"}.get(pb.evidence_level, "❓")
+        lines.append(f"| {icon} {pb.name} | {pb.player_type.value} | {pb.evidence_level} |")
+    lines += [
+        "",
+        f"| 等级 | 数量 |",
+        f"|------|------|",
+    ]
+    for grade in ["CALIBRATED", "CONFIRMED", "PRELIMINARY", "HYPOTHESIS", "REFUTED"]:
+        if counts.get(grade, 0) > 0:
+            lines.append(f"| {grade} | {counts[grade]} |")
+    return "\n".join(lines)
