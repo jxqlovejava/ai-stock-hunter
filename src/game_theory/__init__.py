@@ -1,0 +1,66 @@
+# -*- coding: utf-8 -*-
+"""博弈论模块 — 统一导出。"""
+
+from __future__ import annotations
+
+from .comparative import MARKET_COMPARISONS, compare_markets, asymmetry_report
+from .players import PLAYER_PROFILES, PlayerProfile, PlayerType
+from .playbooks import TOP_3_PLAYBOOKS, Playbook
+from .price_impact import PRICE_IMPACT_PROFILES, PriceImpact
+from .rules import (
+    A_SHARE_RULES,
+    TOP_3_RULES,
+    EvidenceLevel,
+    MarketRule,
+    RuleCapitalFlowModel,
+    RuleCategory,
+)
+
+
+def get_game_theory_summary() -> str:
+    """返回博弈论模块的知识概览。"""
+    lines = [
+        "# A 股博弈论知识库",
+        "",
+        f"## 规则库: {len(A_SHARE_RULES)} 条核心规则",
+        f"## 核心玩家: {len(PLAYER_PROFILES)} 类",
+        f"## 操盘手法: {len(TOP_3_PLAYBOOKS)} 种",
+        f"## 价格冲击: {len(PRICE_IMPACT_PROFILES)} 类",
+        f"## 跨市场对比: {len(MARKET_COMPARISONS)} 维度",
+        f"## 资金流因果: {len(TOP_3_RULES)} 条",
+        "",
+        "## 规则类别分布",
+    ]
+    categories: dict[str, list[MarketRule]] = {}
+    for r in A_SHARE_RULES:
+        cat = r.category.value
+        categories.setdefault(cat, []).append(r)
+    for cat, rules in categories.items():
+        names = "、".join(r.name for r in rules)
+        lines.append(f"- {cat} ({len(rules)}): {names}")
+
+    lines += [
+        "",
+        "## 证据等级分布",
+        f"- VERIFIED: {sum(1 for r in A_SHARE_RULES if r.evidence == EvidenceLevel.VERIFIED)}",
+        f"- HYPOTHESIS: {sum(1 for r in A_SHARE_RULES if r.evidence == EvidenceLevel.HYPOTHESIS)}",
+        f"- HEURISTIC: {sum(1 for r in A_SHARE_RULES if r.evidence == EvidenceLevel.HEURISTIC)}",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = [
+    # Rules
+    "A_SHARE_RULES", "TOP_3_RULES", "MarketRule", "RuleCategory",
+    "RuleCapitalFlowModel", "EvidenceLevel",
+    # Players
+    "PLAYER_PROFILES", "PlayerProfile", "PlayerType",
+    # Playbooks
+    "TOP_3_PLAYBOOKS", "Playbook",
+    # Price Impact
+    "PRICE_IMPACT_PROFILES", "PriceImpact",
+    # Comparative
+    "MARKET_COMPARISONS", "compare_markets", "asymmetry_report",
+    # Summary
+    "get_game_theory_summary",
+]
