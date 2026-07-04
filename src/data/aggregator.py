@@ -139,6 +139,41 @@ class DataAggregator:
         return self.akshare.get_all_quotes()
 
     # ------------------------------------------------------------------
+    # Historical K-line (for backtest)
+    # ------------------------------------------------------------------
+
+    def get_history(
+        self,
+        symbol: str,
+        start_date: str = "2015-01-01",
+        end_date: str = "",
+        period: str = "daily",
+    ):
+        """获取历史K线数据（用于回测）。
+
+        AKShare 是唯一支持日期范围历史数据的源。
+        Guosen 只支持 N 日回溯，不适用于回测。
+
+        Args:
+            symbol: 股票代码，如 "600519"
+            start_date: 起始日期 "YYYYMMDD"
+            end_date: 结束日期 "YYYYMMDD"，默认今天
+            period: K线周期 "daily" | "weekly" | "monthly"
+
+        Returns:
+            pd.DataFrame，列含: 日期,开盘,收盘,最高,最低,成交量,成交额,涨跌幅
+        """
+        import pandas as pd
+
+        if not end_date:
+            end_date = datetime.now().strftime("%Y%m%d")
+
+        return self.akshare.get_history(
+            symbol=symbol, period=period,
+            start_date=start_date, end_date=end_date,
+        )
+
+    # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
 

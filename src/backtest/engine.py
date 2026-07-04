@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import backtrader as bt
+import pandas as pd
 
 
 @dataclass
@@ -105,6 +106,70 @@ class BacktestEngine:
         feed.northbound = northbound
         self._data_feeds.append(feed)
 
+    def load_data(
+        self,
+        symbols: list[str],
+        start: str = "2015-01-01",
+        end: str = "2024-12-31",
+    ):
+        """自动加载历史K线数据并计算代理因子。
+
+        通过 AKShare 拉取数据并注入到回测引擎。
+        日期格式自动转换 "YYYY-MM-DD" ↔ "YYYYMMDD"。
+
+        因子计算:
+          - pe_percentile: 价格在过去 252 日区间中的位置（越低越便宜）
+          - roe: 过去 252 日涨跌幅
+          - northbound: 简化处理，默认 1.0
+
+        Args:
+            symbols: 股票代码列表，如 ["600519", "000001"]
+            start: 起始日期 "YYYY-MM-DD"
+            end: 结束日期 "YYYY-MM-DD"
+        """
+        import akshare as ak
+
+        start_fmt = start.replace("-", "")
+        end_fmt = end.replace("-", "")
+
+        for code in symbols:
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=code, period="daily",
+                    start_date=start_fmt, end_date=end_fmt,
+                    adjust="qfq",
+                )
+                if df is None or df.empty:
+                    continue
+
+                # 标准化列名
+                df = df.rename(columns={
+                    "日期": "date", "开盘": "open", "收盘": "close",
+                    "最高": "high", "最低": "low", "成交量": "volume",
+                    "成交额": "amount", "涨跌幅": "pct_change",
+                })
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date")
+
+                # 计算代理因子
+                close = df["close"]
+                roll_max = close.rolling(252).max()
+                roll_min = close.rolling(252).min()
+                pe_proxy = ((close - roll_min) / (roll_max - roll_min + 0.01)).fillna(50)
+                pe_proxy = (1 - pe_proxy) * 100
+                pe_pct = float(pe_proxy.median())
+
+                roe_val = float(((close / close.shift(252) - 1) * 100).median())
+
+                self.add_data(
+                    code=code, df=df,
+                    pe_percentile=pe_pct if pe_pct > 0 else 50,
+                    roe=roe_val if abs(roe_val) < 200 else 10,
+                    northbound=1.0,
+                )
+            except Exception:
+                continue
+
     def run(
         self,
         start: str = "2015-01-01",
@@ -154,6 +219,12 @@ class BacktestEngine:
         total_return = (end_val - start_val) / start_val
         years = self._year_diff(start, end)
 
+        # 提取最大回撤（Backtrader 返回小数形式，如 -0.15 = -15%）
+        dd_info = drawdown.get("max", {}) if isinstance(drawdown, dict) else {}
+        max_dd = dd_info.get("drawdown", 0) if dd_info else 0
+        if isinstance(max_dd, (int, float)):
+            max_dd = max_dd * 100 if abs(max_dd) < 10 else max_dd  # 小数→百分比
+
         return BacktestResult(
             strategy_name=self._strategy_class.__name__,
             start_date=start,
@@ -163,7 +234,7 @@ class BacktestEngine:
             total_return=total_return,
             annual_return=(1 + total_return) ** (1 / years) - 1 if years > 0 else 0,
             sharpe_ratio=sharpe.get("sharperatio", 0) or 0,
-            max_drawdown=drawdown.get("max", {}).get("drawdown", 0) or 0,
+            max_drawdown=max_dd,
             win_rate=self._win_rate(trades),
             total_trades=trades.get("total", {}).get("total", 0),
             yearly_returns={str(k): v for k, v in annual.items()},
