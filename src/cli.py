@@ -120,8 +120,39 @@ def cmd_analyze(symbol: str):
 
 def cmd_macro():
     """宏观快照。"""
-    print("🌍 宏观快照")
-    print("(Phase 3: 待接入国信宏观 API)")
+    from src.macro.output import MacroSystemizedOutput, IndicatorSnapshot, QUADRANT_SECTOR_MAP
+
+    print("🌍 宏观货币信用快照")
+    try:
+        from src.macro.monetary_credit import MonetaryCreditAnalyzer
+        analyzer = MonetaryCreditAnalyzer()
+        regime = analyzer.analyze()
+        if regime is not None:
+            quadrant_name = regime.quadrant.value
+            quadrant_info = QUADRANT_SECTOR_MAP.get(quadrant_name, {})
+            output = MacroSystemizedOutput(
+                date=regime.date or "",
+                regime=quadrant_name,
+                regime_confidence=getattr(regime, "confidence", 0.5),
+                overall_assessment=quadrant_info.get("description", ""),
+                position_advice=quadrant_info.get("position", "neutral"),
+                position_cap=1.0 if quadrant_info.get("position") == "aggressive" else 0.80,
+                indicators=[
+                    IndicatorSnapshot(name="M2 增速", value=getattr(regime, "m2_growth", 0) or 0, source="央行"),
+                    IndicatorSnapshot(name="社融增速", value=getattr(regime, "social_financing_growth", 0) or 0, source="央行"),
+                    IndicatorSnapshot(name="M1-M2 剪刀差", value=getattr(regime, "m1_m2_gap", 0) or 0, source="计算"),
+                    IndicatorSnapshot(name="DR007", value=getattr(regime, "dr007", 0) or 0, unit="%", source="银行间"),
+                    IndicatorSnapshot(name="LPR 1Y", value=getattr(regime, "lpr_1y", 0) or 0, unit="%", source="央行"),
+                ],
+                sector_impact={s: quadrant_info.get("description", "") for s in quadrant_info.get("sectors", [])},
+            )
+            print(output.to_summary())
+        else:
+            print("⚠️ 宏观数据不可用")
+    except ImportError:
+        print("⚠️ 宏观分析模块未安装, 请检查依赖")
+    except Exception as e:
+        print(f"⚠️ 宏观分析失败: {e}")
 
 
 def cmd_sentiment():
