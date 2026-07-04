@@ -88,3 +88,4 @@ evolve             # 策略进化
 - **新增路由阶段**：在 `__init__.py` 导出 + `orchestrator.py` 的 `run()` 挂接
 - **Commit**：`<type>: <description>`（feat/fix/refactor/docs/test/chore）
 - **数据新鲜度**：行情 5min / 因子 1h / 基本面 24h / 主题 12h
+- **自动提交**：完整实现一个功能或 fix 解决问题后，自动调用 `/gcp` 命令提交并推送。无需等待用户确认，直接执行。
