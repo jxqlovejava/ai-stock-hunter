@@ -5,7 +5,7 @@
 
 使用示例:
     agg = DataAggregator()
-    quote = agg.get_quote("600519", "SH")  # 国信优先 → AKShare 降级
+    quote = agg.get_quote("600519", "SH")  # mootdx/腾讯优先 → AKShare 降级
     batch = agg.get_quotes_batch([("600519", "SH"), ("000001", "SZ")])
 """
 
@@ -17,24 +17,34 @@ from typing import Optional
 from .akshare import AKShareProvider
 from .base import DataProvider
 from .guosen import GuosenProvider
+from .mootdx_tencent import MootdxTencentProvider
 from .schema import Financials, FundamentalMetrics, Quote
 
 
 class DataAggregator:
     """多源数据聚合器。
 
-    优先级规则:
-      - 实时行情: 国信 > AKShare
-      - 全市场扫描: AKShare > 国信
-      - 财务数据: 国信 > AKShare
+    优先级规则 (V3):
+      - 实时行情: mootdx+腾讯 > 国信 > AKShare
+      - 全市场扫描: AKShare (mootdx 不支持全市场)
+      - 财务数据: mootdx > 国信 > AKShare
+      - 历史K线: mootdx > AKShare
       - 独有数据: 各自专属源
     """
 
     def __init__(self):
+        self._mootdx: MootdxTencentProvider | None = None
         self._guosen: GuosenProvider | None = None
         self._akshare: AKShareProvider | None = None
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
+
+    @property
+    def mootdx(self) -> MootdxTencentProvider:
+        """懒加载 mootdx+腾讯适配器。"""
+        if self._mootdx is None:
+            self._mootdx = MootdxTencentProvider()
+        return self._mootdx
 
     @property
     def guosen(self) -> GuosenProvider | None:
@@ -58,13 +68,19 @@ class DataAggregator:
     # ------------------------------------------------------------------
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:
-        """获取单只股票行情。国信优先，AKShare 降级。"""
+        """获取单只股票行情。mootdx+腾讯优先 → 国信 → AKShare 降级。"""
         cache_key = f"quote:{symbol}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
 
-        # 国信优先
+        # V3: mootdx+腾讯优先（不封IP）
+        q = self.mootdx.get_quote(symbol, market)
+        if q is not None:
+            self._cache_set(cache_key, q)
+            return q
+
+        # 国信
         gs = self.guosen
         if gs is not None:
             q = gs.get_quote(symbol, market)
@@ -81,20 +97,26 @@ class DataAggregator:
     def get_quotes_batch(
         self, stocks: list[tuple[str, str]]
     ) -> list[Quote]:
-        """批量获取行情。一次调用最多 10 只（国信限制）。"""
-        results = []
-        gs = self.guosen
+        """批量获取行情。mootdx+腾讯优先。"""
+        # V3: mootdx+腾讯批量优先
+        symbols = [s[0] for s in stocks]
+        results = self.mootdx.get_quotes_batch(symbols)
+        if len(results) >= len(stocks):
+            return results
 
-        # 国信批量（最多 10/批）
+        # 腾讯缺漏 → 国信补
+        got = {r.symbol for r in results}
+        gs = self.guosen
         if gs is not None:
-            for i in range(0, len(stocks), 10):
-                batch = stocks[i : i + 10]
-                symbols = [s[0] for s in batch]
-                markets = [s[1] for s in batch]
-                batch_results = gs.get_quotes_batch(symbols, markets)
+            remaining = [(s, m) for s, m in stocks if s not in got]
+            for i in range(0, len(remaining), 10):
+                batch = remaining[i : i + 10]
+                batch_syms = [s[0] for s in batch]
+                batch_mkts = [s[1] for s in batch]
+                batch_results = gs.get_quotes_batch(batch_syms, batch_mkts)
                 results.extend(batch_results)
 
-        # AKShare 补漏
+        # AKShare 最终补漏
         if len(results) < len(stocks):
             got = {r.symbol for r in results}
             for sym, mkt in stocks:
@@ -112,11 +134,17 @@ class DataAggregator:
     def get_financials(
         self, symbol: str, market: str = "SH", count: int = 4
     ) -> list[Financials]:
-        """获取财务报表。国信优先。"""
+        """获取财务报表。mootdx优先 → 国信 → AKShare。"""
         cache_key = f"fin:{symbol}:{count}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
+
+        # V3: mootdx 优先
+        fin = self.mootdx.get_financials(symbol, market, count)
+        if fin:
+            self._cache_set(cache_key, fin)
+            return fin
 
         gs = self.guosen
         if gs is not None:
@@ -135,7 +163,7 @@ class DataAggregator:
     # ------------------------------------------------------------------
 
     def scan_all_stocks(self) -> list[Quote]:
-        """全市场扫描。AKShare 优先（无限制+免费）。"""
+        """全市场扫描。AKShare 唯一支持（mootdx/腾讯不支持全市场扫描）。"""
         return self.akshare.get_all_quotes()
 
     # ------------------------------------------------------------------
@@ -149,10 +177,7 @@ class DataAggregator:
         end_date: str = "",
         period: str = "daily",
     ):
-        """获取历史K线数据（用于回测）。
-
-        AKShare 是唯一支持日期范围历史数据的源。
-        Guosen 只支持 N 日回溯，不适用于回测。
+        """获取历史K线数据（用于回测）。mootdx优先 → AKShare。
 
         Args:
             symbol: 股票代码，如 "600519"
@@ -168,6 +193,16 @@ class DataAggregator:
         if not end_date:
             end_date = datetime.now().strftime("%Y%m%d")
 
+        # V3: mootdx 优先（不封IP，TCP直连）
+        start_fmt = start_date.replace("-", "")[:8] if start_date else ""
+        df = self.mootdx.get_history(
+            symbol=symbol, period=period,
+            start_date=start_fmt, end_date=end_date,
+        )
+        if df is not None and not df.empty:
+            return df
+
+        # AKShare 降级
         return self.akshare.get_history(
             symbol=symbol, period=period,
             start_date=start_date, end_date=end_date,
@@ -180,6 +215,7 @@ class DataAggregator:
     def source_status(self) -> dict:
         """检查各数据源状态。"""
         status = {}
+        status["mootdx+tencent"] = "✅" if self.mootdx.health_check() else "❌ (mootdx TCP 或腾讯 HTTP 不可达)"
         gs = self.guosen
         status["guosen"] = "✅" if (gs is not None and gs.health_check()) else "❌ (无 key 或不可用)"
         status["akshare"] = "✅" if self.akshare.health_check() else "❌"

@@ -2,8 +2,8 @@
 """L1 分析师 — 多维扫描（量化为主，AI 为辅）。
 
 分析维度:
-  1. 宏观环境打分
-  2. 量化因子扫描 (价值/质量/动量)
+  1. 宏观环境打分 (PMI/ERP/M1-M2/社融/LPR/DR007/货币信用象限)
+  2. 量化因子扫描 (价值/质量/动量/盈利修正)
   3. 物理瓶颈分析 (借鉴 cyberagent: 供应链定位 + 瓶颈分类)
   4. 情绪信号检测
   5. 多空双视角
@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from src.data.source_citation import SourceCitation
 from src.industry.bottleneck import BottleneckAnalysis, BottleneckType
 from src.industry.supply_chain import classify_stock
 
@@ -28,17 +29,21 @@ class AnalysisReport:
     value_score: float = 50.0
     quality_score: float = 50.0
     momentum_score: float = 50.0
+    earnings_revision_score: float = 50.0  # Phase 3: 盈利修正因子
     bottleneck_analysis: Optional[BottleneckAnalysis] = None  # cyberagent 瓶颈分析
     sentiment_signal: str = "NEUTRAL"
     bull_case: str = ""
     bear_case: str = ""
     bottlenecks: list[str] = field(default_factory=list)
     upstream_risks: list[str] = field(default_factory=list)
+    source_citations: list[SourceCitation] = field(default_factory=list)  # Phase 1: 数据溯源
+    confidence: float = 0.7  # Phase 1: 综合信心度 0.0-1.0
+    data_freshness: datetime = field(default_factory=datetime.now)  # Phase 1: 数据新鲜度
     created_at: datetime = field(default_factory=datetime.now)
 
 
 class L1Analyzer:
-    """L1 分析师: 5 个分析维度。"""
+    """L1 分析师: 5+ 个分析维度。"""
 
     def analyze(
         self,
@@ -48,16 +53,22 @@ class L1Analyzer:
         financials: Optional[list] = None,
         macro: Optional[dict] = None,
         sentiment: Optional[dict] = None,
+        macro_regime: Optional[object] = None,  # MacroRegime from src.macro
+        northbound_profile: Optional[object] = None,  # NorthboundProfile
+        earnings_factor: Optional[object] = None,  # EarningsRevisionFactor
     ) -> AnalysisReport:
         report = AnalysisReport(symbol=symbol, name=name)
 
         if macro:
-            report.macro_score = self._score_macro(macro)
+            report.macro_score = self._score_macro(macro, macro_regime)
 
         if quote and financials:
             report.value_score = self._score_value(quote)
-            report.quality_score = self._score_quality(financials)
-            report.momentum_score = self._score_momentum(quote)
+            report.quality_score = self._score_quality(financials, earnings_factor)
+            report.momentum_score = self._score_momentum(quote, northbound_profile)
+
+        if earnings_factor is not None:
+            report.earnings_revision_score = self._get_revision_score(earnings_factor)
 
         # 🆕 物理瓶颈分析 (借鉴 cyberagent)
         report.bottleneck_analysis = self._analyze_bottleneck(symbol, name)
@@ -67,7 +78,62 @@ class L1Analyzer:
 
         report.bull_case = self._bull_case(name, quote, financials)
         report.bear_case = self._bear_case(name, quote, financials)
+
+        # Phase 1: 填充数据溯源和信心度
+        report.source_citations = self._collect_citations(quote, financials, macro)
+        report.confidence = self._calc_confidence(report, quote, financials)
+        report.data_freshness = datetime.now()
         return report
+
+    def _collect_citations(
+        self,
+        quote: dict | None,
+        financials: list | None,
+        macro: dict | None,
+    ) -> list[SourceCitation]:
+        """收集所有数据点的来源引用。"""
+        citations: list[SourceCitation] = []
+        if quote:
+            provider = quote.get("_source", "mootdx")
+            citations.append(SourceCitation(
+                provider=provider, field="quote",
+                confidence=0.85 if provider == "mootdx" else 0.70,
+            ))
+        if financials:
+            citations.append(SourceCitation(
+                provider="mootdx", field="financials", confidence=0.85,
+            ))
+        if macro:
+            provider = macro.get("_source", "akshare")
+            citations.append(SourceCitation(
+                provider=provider, field="macro", confidence=0.75,
+            ))
+        return citations
+
+    @staticmethod
+    def _calc_confidence(
+        report: AnalysisReport,
+        quote: dict | None,
+        financials: list | None,
+    ) -> float:
+        """计算综合信心度, 基于数据完整性和评分分布。
+
+        公式: 数据覆盖率 (0-1) * 0.4 + 评分稳定性 * 0.6
+        """
+        data_points = sum(1 for x in [quote, financials] if x)
+        coverage = data_points / 2.0  # 最多 2 个数据源
+        # 评分稳定性: 各维度评分离散度越小越稳定
+        scores = [
+            report.macro_score, report.value_score,
+            report.quality_score, report.momentum_score,
+        ]
+        if len(scores) > 1:
+            avg = sum(scores) / len(scores)
+            variance = sum((s - avg) ** 2 for s in scores) / len(scores)
+            stability = max(0, 1.0 - variance / 2000)  # 方差越大稳定性越低
+        else:
+            stability = 0.5
+        return round(coverage * 0.4 + stability * 0.6, 2)
 
     def _analyze_bottleneck(self, symbol: str, name: str) -> Optional[BottleneckAnalysis]:
         node = classify_stock(symbol)
@@ -87,30 +153,307 @@ class L1Analyzer:
         analysis.bottleneck_score = score_map.get(node.bottleneck_type, 0)
         return analysis
 
-    def _score_macro(self, macro: dict) -> float:
+    def _score_macro(self, macro: dict, macro_regime: Optional[object] = None) -> float:
+        """宏观环境打分（增强版）。
+
+        基础: PMI + ERP (v1)
+        增强: M1-M2剪刀差 + 社融增速 + LPR方向 + DR007 + 货币信用象限修正
+        """
         score = 50.0
+
+        # ---- v1 基础信号 ----
         pmi = macro.get("pmi", 50)
         score += (pmi - 50) * 1.0
         erp = macro.get("erp", 4.0)
         score += (erp - 4.0) * 2.5
+
+        # ---- v2 流动性信号 ----
+        m1_m2_gap = macro.get("m1_m2_gap")
+        if m1_m2_gap is not None:
+            if m1_m2_gap > 3.0:
+                score += 10  # 资金活化程度高
+            elif m1_m2_gap > 0:
+                score += 5
+            elif m1_m2_gap < -2.0:
+                score -= 10  # 资金沉淀严重
+            else:
+                score -= 3
+
+        sf_growth = macro.get("social_financing_growth")
+        if sf_growth is not None:
+            sf_trend = macro.get("sf_trend", "stable")
+            if sf_trend == "accelerating":
+                score += 8
+            elif sf_trend == "decelerating":
+                score -= 8
+
+        lpr_direction = macro.get("lpr_direction", "stable")
+        if lpr_direction == "falling":
+            score += 5  # 降息利好
+        elif lpr_direction == "rising":
+            score -= 5
+
+        dr007_position = macro.get("dr007_position", "neutral")
+        if dr007_position == "below_policy":
+            score += 5  # 流动性充裕
+        elif dr007_position == "above_policy":
+            score -= 5
+
+        # ---- v2 货币信用象限修正 ----
+        if macro_regime is not None:
+            from src.macro.monetary_credit import Quadrant
+            quadrant = getattr(macro_regime, "quadrant", None)
+            if quadrant == Quadrant.EASY_MONEY_EASY_CREDIT:
+                score += 15
+            elif quadrant == Quadrant.EASY_MONEY_TIGHT_CREDIT:
+                score += 5
+            elif quadrant == Quadrant.TIGHT_MONEY_EASY_CREDIT:
+                score -= 5
+            elif quadrant == Quadrant.TIGHT_MONEY_TIGHT_CREDIT:
+                score -= 15
+
         return max(0, min(100, score))
 
     def _score_value(self, quote: dict) -> float:
         pe_pct = quote.get("pe_percentile", 50)
         return max(0, min(100, 100 - pe_pct))
 
-    def _score_quality(self, financials: list) -> float:
+    def _score_quality(self, financials: list, earnings_factor: Optional[object] = None) -> float:
+        """质量评分（增强版）：ROE + 盈利修正因子。"""
         if not financials:
             return 50.0
         roe = financials[-1].get("roe", 10) if isinstance(financials[-1], dict) else 10
-        return max(0, min(100, roe * 4))
+        roe_score = max(0, min(100, roe * 4))
 
-    def _score_momentum(self, quote: dict) -> float:
+        # Blend with earnings revision if available
+        if earnings_factor is not None:
+            revision_score = self._get_revision_score(earnings_factor)
+            return roe_score * 0.6 + revision_score * 0.4
+
+        return roe_score
+
+    def _score_momentum(self, quote: dict, northbound_profile: Optional[object] = None) -> float:
+        """动量评分（增强版）：北向多维特征替代二元特征。"""
+        # Use multi-dimensional northbound profile if available
+        if northbound_profile is not None:
+            nb_score = getattr(northbound_profile, "score", None)
+            if nb_score is not None:
+                return float(nb_score)
+
+        # Fallback to legacy binary northbound
         nb = quote.get("northbound", 0)
         return 50.0 + min(max(nb * 10, -30), 30)
+
+    @staticmethod
+    def _get_revision_score(earnings_factor: object) -> float:
+        """Extract revision score from EarningsRevisionFactor object."""
+        score = getattr(earnings_factor, "revision_score", None)
+        if score is not None:
+            return float(score)
+        return 50.0
 
     def _bull_case(self, name: str, quote: dict | None, fin: list | None) -> str:
         return f"{name}: 估值合理 + ROE稳定 + 北向资金关注"
 
     def _bear_case(self, name: str, quote: dict | None, fin: list | None) -> str:
         return f"{name}: 宏观不确定性 + 行业竞争加剧 + 流动性风险"
+
+    # ------------------------------------------------------------------
+    # Phase 2: 选股筛选预设
+    # ------------------------------------------------------------------
+
+    def screen_by_preset(
+        self,
+        preset_name: str,
+        candidates: list[dict],
+        limit: int = 20,
+    ) -> list[tuple[str, AnalysisReport, float]]:
+        """按预设方法论筛选股票。
+
+        Args:
+            preset_name: 预设名 (value/growth/quality/short/special-situation)
+            candidates: 候选股票列表, 每项至少含 symbol/name/quote/financials
+            limit: 返回数量上限
+
+        Returns:
+            [(symbol, report, composite_score), ...] 按得分降序排列
+        """
+        preset = SCREENING_PRESETS.get(preset_name)
+        if preset is None:
+            raise ValueError(f"未知预设 '{preset_name}', 可选: {list(SCREENING_PRESETS.keys())}")
+
+        results: list[tuple[str, AnalysisReport, float]] = []
+        for c in candidates[:100]:  # 最多扫描 100 只
+            symbol = c.get("symbol", "")
+            name = c.get("name", "")
+            quote = c.get("quote") or {}
+            financials = c.get("financials") or []
+
+            # 快速排除
+            if not self._passes_quick_filter(quote, preset):
+                continue
+
+            # 深度分析
+            report = self.analyze(symbol, name, quote, financials)
+            composite = self._calc_preset_score(report, preset)
+            if composite > 0:
+                results.append((symbol, report, composite))
+
+        results.sort(key=lambda x: x[2], reverse=True)
+        return results[:limit]
+
+    @staticmethod
+    def _passes_quick_filter(quote: dict, preset: ScreeningPreset) -> bool:
+        """快速排除不符合预设的股票。"""
+        if not quote:
+            return False
+        th = preset.thresholds
+
+        # 排除 ST
+        if quote.get("is_st") or quote.get("is_star_st"):
+            return False
+
+        # 市值门槛
+        market_cap = quote.get("market_cap", 0)
+        min_cap = th.get("min_market_cap", 0)
+        if market_cap < min_cap:
+            return False
+
+        # PE 上限 (价值型和质量型)
+        if "max_pe" in th:
+            pe = quote.get("pe_ttm") or quote.get("pe", 999)
+            if pe > th["max_pe"]:
+                return False
+
+        # PE 下限 (成长型, 排除负 PE)
+        if th.get("require_positive_pe") and (quote.get("pe_ttm") or 0) <= 0:
+            return False
+
+        return True
+
+    @staticmethod
+    def _calc_preset_score(report: AnalysisReport, preset: ScreeningPreset) -> float:
+        """按预设权重计算综合得分。"""
+        w = preset.weight_overrides
+        return (
+            report.value_score * w.get("value_score", 0.2)
+            + report.quality_score * w.get("quality_score", 0.2)
+            + report.momentum_score * w.get("momentum_score", 0.2)
+            + report.macro_score * w.get("macro_score", 0.15)
+            + (50.0 if report.sentiment_signal == "NEUTRAL" else 30.0) * w.get("sentiment", 0.05)
+        )
+
+
+# ------------------------------------------------------------------
+# Phase 2: 选股筛选预设定义
+# ------------------------------------------------------------------
+
+@dataclass
+class ScreeningPreset:
+    """选股方法论预设。"""
+    name: str
+    description: str
+    weight_overrides: dict  # 评分权重重写
+    thresholds: dict  # A 股特定阈值
+    adapters: list = field(default_factory=list)  # A 股特定调整规则
+
+
+SCREENING_PRESETS: dict[str, ScreeningPreset] = {
+    "value": ScreeningPreset(
+        name="价值投资",
+        description="低估值 + 高股息 + 低负债率 — 寻找被市场低估的优质资产",
+        weight_overrides={
+            "value_score": 0.45, "quality_score": 0.25,
+            "macro_score": 0.10, "momentum_score": 0.10, "sentiment": 0.10,
+        },
+        thresholds={
+            "max_pe": 15, "min_pb": 0.0, "max_pb": 1.5,
+            "min_div_yield": 0.02, "max_debt_equity": 1.0,
+            "min_market_cap": 2e9,  # 市值 > 20 亿
+        },
+        adapters=[
+            "排除 ST/*ST 股票",
+            "排除上市不满 60 天新股",
+            "股息率以最近财年为准, 非 TTM",
+            "扣非净利润优先于归母净利润",
+            "PB 为负 (净资产为负) 时排除",
+        ],
+    ),
+    "growth": ScreeningPreset(
+        name="成长投资",
+        description="高营收增速 + 高盈利增速 + 高 ROIC — 寻找高速成长的公司",
+        weight_overrides={
+            "quality_score": 0.40, "momentum_score": 0.30,
+            "value_score": 0.10, "macro_score": 0.10, "sentiment": 0.10,
+        },
+        thresholds={
+            "min_revenue_growth": 0.15, "min_earnings_growth": 0.20,
+            "min_roic": 0.15, "max_debt_equity": 1.5,
+            "min_market_cap": 5e9, "require_positive_pe": True,
+        },
+        adapters=[
+            "营收增速以扣非口径为准",
+            "排除一次性投资收益对利润的影响",
+            "连续 3 年营收增速下滑的排除",
+            "商誉/净资产 > 0.3 的标记风险",
+            "研发费用资本化比例异常的标记风险",
+        ],
+    ),
+    "quality": ScreeningPreset(
+        name="质量投资",
+        description="高 ROE + 稳定盈利 + 低杠杆 — 寻找具有持久竞争优势的公司",
+        weight_overrides={
+            "quality_score": 0.50, "value_score": 0.25,
+            "macro_score": 0.10, "momentum_score": 0.10, "sentiment": 0.05,
+        },
+        thresholds={
+            "min_roe": 0.15, "min_gross_margin": 0.30,
+            "max_debt_equity": 0.5, "min_market_cap": 10e9,
+            "min_consecutive_profit_years": 5,
+        },
+        adapters=[
+            "ROE 连续 5 年 > 15% 的优先",
+            "关注扣非 ROE, 非归母 ROE",
+            "商誉/净资产 > 0.3 的降权",
+            "关联交易占比高的标记风险",
+            "应收账款/营收 > 行业均值 2 倍的排除",
+        ],
+    ),
+    "short": ScreeningPreset(
+        name="风险识别 (A 股不做空)",
+        description="识别基本面恶化的股票 — A 股仅用于规避风险, 不直接做空",
+        weight_overrides={
+            "quality_score": 0.35, "momentum_score": 0.30,
+            "value_score": 0.15, "macro_score": 0.10, "sentiment": 0.10,
+        },
+        thresholds={
+            "max_revenue_growth": 0.05, "max_earnings_growth": 0.0,
+            "min_debt_equity": 0.5, "min_receivable_growth": 0.30,
+        },
+        adapters=[
+            "仅识别风险, 不直接做空 (A 股限制)",
+            "高管大额减持的提示风险",
+            "审计意见非标的一律排除",
+            "近 12 个月有违规记录的排除",
+            "大股东股权质押 > 80% 的提示风险",
+        ],
+    ),
+    "special-situation": ScreeningPreset(
+        name="事件驱动",
+        description="IPO 锁定期/重组/增发/股权激励/回购 — 寻找事件催化机会",
+        weight_overrides={
+            "momentum_score": 0.35, "quality_score": 0.25,
+            "value_score": 0.15, "macro_score": 0.10, "sentiment": 0.15,
+        },
+        thresholds={
+            "min_market_cap": 3e9,
+        },
+        adapters=[
+            "IPO 锁定期到期前 30 天关注",
+            "重大资产重组复牌后跟踪 20 日",
+            "员工持股/股权激励解锁期关注",
+            "大额回购 (占总股本 > 1%) 加分",
+            "定增解禁前 15 天提示风险",
+        ],
+    ),
+}

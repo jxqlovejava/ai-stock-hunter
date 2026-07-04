@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .l2_judge import Verdict
 
@@ -16,6 +16,8 @@ class TradeSignal:
     target_weight: float   # 目标仓位占比 (0.0 - 1.0)
     is_core: bool = False  # 是否核心仓操作
     limit: float = 0.0     # L4 施加的仓位上限
+    source_citations: list = field(default_factory=list)  # Phase 1: 继承引用链
+    confidence: float = 0.5  # Phase 1: 信号信心度
 
 
 class L3Trader:
@@ -59,6 +61,8 @@ class L3Trader:
             action=action,
             target_weight=round(base, 4),
             is_core=is_core,
+            source_citations=verdict.source_citations,  # Phase 1: 继承引用链
+            confidence=verdict.confidence,  # Phase 1: 继承信心度
         )
 
     def _score_to_action(self, score: int) -> str:

@@ -4,13 +4,17 @@
 ⚠️ 风险预警工具，非 Alpha 来源。
 
 追踪五大信息源的政策关键词，映射到受益/受损板块。
-Phase 2: 基础框架。Phase 3: 接入 last30days-cn 实时监控。
+Phase 2: 基础框架。Phase 3: 接入 last30days-cn 实时监控 + PolicyNlpEngine 动态获取。
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,8 +31,8 @@ class PolicySignal:
 class PolicyTracker:
     """政策关键词追踪器。
 
-    Phase 2: 手动维护 30 条映射规则。
-    Phase 3: 接入 last30days-cn 自动抓取。
+    Phase 2: 手动维护 30 条映射规则 + 静态文本扫描。
+    Phase 3: 接入 PolicyNlpEngine 动态获取 Guosen/Huatai 政策文本。
     """
 
     # 关键词 → 受益板块映射（手动维护）
@@ -111,3 +115,89 @@ class PolicyTracker:
             if kw in medium_impact:
                 return "MEDIUM"
         return "LOW"
+
+    # ------------------------------------------------------------------
+    # Phase 3: 动态政策获取
+    # ------------------------------------------------------------------
+
+    def __init__(self):
+        self._cache: dict[str, tuple[datetime, object]] = {}
+        self._cache_ttl = timedelta(hours=4)
+        self.urgency_map: dict[str, str] = {}  # source → urgency_level
+
+    def analyze_current(self) -> list[dict]:
+        """动态获取最新政策文本并分析。
+
+        调用 PolicyNlpEngine 对预设查询进行 NLP 分析，
+        返回结构化的政策分析结果列表。
+
+        Returns:
+            list[dict]: 每项包含 source, sentiment_score, urgency_level,
+                        affected_sectors, policy_cycle_phase, keywords
+        """
+        try:
+            from src.policy.nlp import PolicyNlpEngine
+            engine = PolicyNlpEngine()
+            analyses = engine.analyze_all()
+
+            results = []
+            for a in analyses:
+                result = {
+                    "source": a.source,
+                    "sentiment_score": a.sentiment_score,
+                    "urgency_level": a.urgency_level,
+                    "affected_sectors": [s[0] for s in a.affected_sectors],
+                    "affected_sectors_neg": [s[0] for s in a.affected_sectors_neg],
+                    "policy_cycle_phase": a.policy_cycle_phase,
+                    "keywords": a.keywords,
+                }
+                results.append(result)
+                # Update urgency map
+                self.urgency_map[a.source] = a.urgency_level
+
+            return results
+        except Exception as e:
+            logger.warning("PolicyTracker.analyze_current() failed: %s", e)
+            return []
+
+    def get_policy_summary(self) -> dict:
+        """获取政策综合评估摘要。
+
+        Returns:
+            dict with:
+                cycle_phase: 当前政策周期阶段
+                urgency: 最高紧急程度
+                top_affected: 受影响最大的板块
+        """
+        results = self.analyze_current()
+        if not results:
+            return {
+                "cycle_phase": "未知",
+                "urgency": "LOW",
+                "top_affected": [],
+            }
+
+        phases = [r.get("policy_cycle_phase", "中性") for r in results]
+        urgencies = [r.get("urgency_level", "LOW") for r in results]
+        all_sectors: list[str] = []
+        for r in results:
+            all_sectors.extend(r.get("affected_sectors", []))
+
+        # Most common phase
+        from collections import Counter
+        phase_counts = Counter(phases)
+        dominant_phase = phase_counts.most_common(1)[0][0] if phase_counts else "中性"
+
+        # Max urgency
+        urgency_order = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+        max_urgency = max(urgencies, key=lambda u: urgency_order.get(u, 0))
+
+        # Top affected sectors
+        sector_counts = Counter(all_sectors)
+        top_sectors = [s for s, _ in sector_counts.most_common(5)]
+
+        return {
+            "cycle_phase": dominant_phase,
+            "urgency": max_urgency,
+            "top_affected": top_sectors,
+        }

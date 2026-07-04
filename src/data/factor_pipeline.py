@@ -159,7 +159,7 @@ def build_factor_dataset(
         sample_dates = _sample_monthly_dates(start_date, end_date)
     print(f"  采样日期数: {len(sample_dates)}")
 
-    # Step 2: 获取北向资金数据
+    # Step 2: 获取北向资金数据（多维 → 0-100 得分）
     print("  获取北向资金...")
     nb_df = fetch_northbound_history(
         start_date.replace("-", ""),
@@ -170,6 +170,9 @@ def build_factor_dataset(
         for _, row in nb_df.iterrows():
             d = row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"])[:10]
             northbound_daily[d] = float(row.get("net_flow_100m", 0))
+
+    # Phase 3: 计算北向资金滚动得分 (0-100) 替代二元特征
+    northbound_scores = _compute_northbound_scores(nb_df) if nb_df is not None else {}
 
     # Step 3: 逐月获取 PE 数据并计算分位
     print("  逐月获取 PE 数据...")
@@ -187,10 +190,13 @@ def build_factor_dataset(
             pct = calculate_pe_percentile(code, row["price"], pe_values)
             if code not in all_data:
                 all_data[code] = {}
+            # Phase 3: northbound 从 binary 升级为 0-100 得分
+            nb_score = northbound_scores.get(date, 50.0)
             all_data[code][date] = {
                 "pe_pct": pct,
                 "roe": 12.0,  # placeholder: 需要财务数据计算
-                "northbound": 1.0 if northbound_daily.get(date, 0) > 0 else 0.0,
+                "northbound": nb_score,  # Phase 3: 0-100 得分 (曾为 binary)
+                "revision_score": 50.0,  # Phase 3: 盈利修正因子 (回测默认中性)
                 "price": row["price"],
             }
 
@@ -203,6 +209,86 @@ def build_factor_dataset(
     print(f"  缓存已保存: {cache_path}")
 
     return {"dates": sample_dates, "stocks": all_data}
+
+
+def _compute_northbound_scores(nb_df: pd.DataFrame) -> dict[str, float]:
+    """计算每日北向资金 0-100 得分（替代旧版 binary 特征）。
+
+    得分逻辑:
+      - 基础 50 分
+      - 当日净流入/流出信号 (±20)
+      - 5日滚动趋势 (±15)
+      - 方向连续性 (±10)
+
+    Returns:
+        {date_str: score_0_100}
+    """
+    scores: dict[str, float] = {}
+    if nb_df is None or len(nb_df) == 0:
+        return scores
+
+    # Extract dates and flows
+    dates = []
+    flows = []
+    for _, row in nb_df.iterrows():
+        d = row["date"]
+        d_str = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+        flow_val = 0.0
+        for col in nb_df.columns:
+            if "净" in str(col) or "flow" in str(col).lower():
+                try:
+                    flow_val = float(row[col])
+                    break
+                except (ValueError, TypeError):
+                    continue
+        dates.append(d_str)
+        flows.append(flow_val)
+
+    if len(flows) == 0:
+        return scores
+
+    for i, (d, f) in enumerate(zip(dates, flows)):
+        score = 50.0
+        # Flow magnitude signal
+        if abs(f) > 0:
+            score += max(-20, min(20, f / 10.0 * 2.0))
+
+        # 5-day trend signal
+        if i >= 4:
+            recent = flows[max(0, i - 4) : i + 1]
+            prev = flows[max(0, i - 9) : max(0, i - 4)]
+            if prev and len(prev) > 0 and sum(abs(x) for x in prev) > 0:
+                recent_avg = sum(recent) / len(recent)
+                prev_avg = sum(prev) / len(prev)
+                acceleration = (recent_avg - prev_avg) / (max(abs(f) for f in prev) + 0.01)
+                score += max(-15, min(15, acceleration * 10))
+
+        # Consecutive direction
+        consecutive = 0
+        if f > 0:
+            for j in range(i, -1, -1):
+                if flows[j] > 0:
+                    consecutive += 1
+                else:
+                    break
+            if consecutive >= 5:
+                score += 10
+            elif consecutive >= 3:
+                score += 5
+        elif f < 0:
+            for j in range(i, -1, -1):
+                if flows[j] < 0:
+                    consecutive -= 1
+                else:
+                    break
+            if consecutive <= -5:
+                score -= 10
+            elif consecutive <= -3:
+                score -= 5
+
+        scores[d] = max(0, min(100, score))
+
+    return scores
 
 
 def _sample_monthly_dates(start: str, end: str) -> list[str]:
@@ -235,7 +321,8 @@ def _to_dataframe(data: dict) -> pd.DataFrame:
                 "date": date,
                 "pe_pct": factors["pe_pct"],
                 "roe": factors["roe"],
-                "northbound": factors["northbound"],
+                "northbound": factors.get("northbound", 50.0),
+                "revision_score": factors.get("revision_score", 50.0),
                 "price": factors["price"],
             })
     return pd.DataFrame(rows)
@@ -254,6 +341,7 @@ def _parse_dataset(df: pd.DataFrame) -> dict:
             "pe_pct": row["pe_pct"],
             "roe": row["roe"],
             "northbound": row["northbound"],
+            "revision_score": row.get("revision_score", 50.0),
             "price": row["price"],
         }
     return {"dates": dates, "stocks": stocks}

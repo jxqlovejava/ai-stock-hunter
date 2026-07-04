@@ -145,17 +145,23 @@ class BacktestEngine:
                 df = df.set_index("date")
 
                 close = df["close"]
-                # PE 分位代理: (close - 252日低) / (252日高 - 252日低) * 100
-                roll_high = close.rolling(252).max()
-                roll_low = close.rolling(252).min()
-                denom = (roll_high - roll_low).clip(lower=0.01)
-                df["pe_pct"] = ((close - roll_low) / denom * 100).fillna(50)
+                # PE 分位代理: 多时间框架
+                for period in [63, 126, 252]:
+                    rh = close.rolling(period).max()
+                    rl = close.rolling(period).min()
+                    denom = (rh - rl).clip(lower=0.01)
+                    key = f"pe{period}" if period != 252 else "pe_pct"
+                    df[key] = ((close - rl) / denom * 100).fillna(50)
 
-                # ROE 代理: 252日涨跌幅 (%)
+                # ROE 代理: 252日涨跌幅
                 df["roe"] = (close.pct_change(252) * 100).fillna(0)
 
-                # 动量: 21日涨跌幅 (%)
+                # 动量: 21日涨跌幅
                 df["momentum"] = (close.pct_change(21) * 100).fillna(0)
+
+                # 金额: 用于流动性过滤
+                if "amount" not in df.columns and "volume" in df.columns:
+                    df["amount"] = (df["volume"] * close).fillna(0)
 
                 self.add_data(code, df)
             except Exception:

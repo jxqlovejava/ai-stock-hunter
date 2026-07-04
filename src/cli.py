@@ -43,11 +43,61 @@ from src.sentiment.signals import SentimentDetector
 
 def cmd_scan(args: list[str]):
     """全市场选股扫描。"""
-    print("🔍 全市场选股扫描")
+    import argparse
+    from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
+
+    parser = argparse.ArgumentParser(description="全市场选股扫描")
+    parser.add_argument(
+        "--preset", choices=list(SCREENING_PRESETS.keys()),
+        default="value", help="选股方法论预设"
+    )
+    parser.add_argument("--limit", type=int, default=20, help="返回数量上限")
+    parsed = parser.parse_args(args)
+
+    preset = SCREENING_PRESETS[parsed.preset]
+    print(f"🔍 全市场选股扫描 [{preset.name}]: {preset.description}")
+    print(f"A 股适配规则: {', '.join(preset.adapters[:3])}...")
+    print(f"权重配置: {preset.weight_overrides}")
+    print(f"阈值配置: {preset.thresholds}")
+
+    # Phase 2: 获取全市场行情
     agg = DataAggregator()
     status = agg.source_status()
     print(f"数据源: {status}")
-    print("(Phase 3: 待接入因子筛选引擎)")
+
+    try:
+        stocks = agg.scan_all_stocks() or []
+        print(f"扫描范围: {len(stocks)} 只股票")
+    except Exception as e:
+        print(f"⚠️ 全市场扫描失败: {e}")
+        print("(需要至少一个数据源可用)")
+        return
+
+    if not stocks:
+        print("⚠️ 无可用股票数据")
+        return
+
+    # Phase 2: 按预设筛选
+    analyzer = L1Analyzer()
+    try:
+        results = analyzer.screen_by_preset(parsed.preset, stocks, limit=parsed.limit)
+    except Exception as e:
+        print(f"⚠️ 筛选失败: {e}")
+        return
+
+    if not results:
+        print("⚠️ 无股票通过筛选")
+        return
+
+    print(f"\n🏆 前 {len(results)} 名:")
+    for rank, (symbol, report, score) in enumerate(results, 1):
+        print(
+            f"  {rank:2d}. {symbol} {report.name:<8s} "
+            f"综合 {score:.1f} | "
+            f"价值 {report.value_score:.0f} 质量 {report.quality_score:.0f} "
+            f"动量 {report.momentum_score:.0f} 宏观 {report.macro_score:.0f} | "
+            f"信心度 {report.confidence:.2f}"
+        )
 
 
 def cmd_analyze(symbol: str):

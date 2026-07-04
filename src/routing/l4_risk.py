@@ -15,6 +15,7 @@ class RiskCheck:
     passed: bool
     violations: list[str] = field(default_factory=list)
     adjusted_weight: float = 0.0
+    source_citations: list = field(default_factory=list)  # Phase 1: 继承引用链
 
 
 class L4RiskOfficer:
@@ -80,4 +81,5 @@ class L4RiskOfficer:
             passed=len([v for v in violations if "熔断" in v or "止损" in v]) == 0,
             violations=violations,
             adjusted_weight=max(0.0, weight),
+            source_citations=signal.source_citations,  # Phase 1: 继承引用链
         )

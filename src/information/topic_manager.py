@@ -140,6 +140,161 @@ class TopicManager:
         """停用主题（不再追踪，但不删除）。"""
         return self.update(topic_id, is_active=False)
 
+    # ── Phase 3: 生命周期 → 权重调整 ──────────────────────────────────────
+
+    # 生命周期阶段 → L2 行业权重调整值
+    LIFECYCLE_WEIGHT_ADJ: dict[LifecycleStage, float] = {
+        LifecycleStage.EMERGING: +0.10,
+        LifecycleStage.SPREADING: 0.0,
+        LifecycleStage.CONSENSUS: -0.10,
+        LifecycleStage.CROWDED: -0.20,
+        LifecycleStage.FADING: -1.0,
+    }
+
+    def get_lifecycle_adjustments(self) -> dict[str, float]:
+        """获取所有活跃主题的生命周期权重调整。
+
+        Returns:
+            {topic_id: weight_bonus} dict
+            bonus ∈ [-1.0, +0.1]
+            -1.0 = FADING (应完全中性化)
+            -0.2 = CROWDED
+            -0.1 = CONSENSUS
+            0.0 = SPREADING
+            +0.1 = EMERGING
+        """
+        active_topics = self.list_active()
+        adjustments: dict[str, float] = {}
+        for topic in active_topics:
+            bonus = self.LIFECYCLE_WEIGHT_ADJ.get(topic.lifecycle_stage, 0.0)
+            adjustments[topic.id] = bonus
+        return adjustments
+
+    def get_topic_summary_for_routing(self) -> dict:
+        """获取主题概要，供路由层使用。
+
+        Returns:
+            dict with:
+                adjustments: {topic_id: bonus}
+                crowded: list of crowded topic names
+                fading: list of fading topic names
+                emerging: list of emerging topic names
+        """
+        active = self.list_active()
+        result: dict = {
+            "adjustments": {},
+            "crowded": [],
+            "fading": [],
+            "emerging": [],
+        }
+        for t in active:
+            bonus = self.LIFECYCLE_WEIGHT_ADJ.get(t.lifecycle_stage, 0.0)
+            result["adjustments"][t.id] = bonus
+            if t.lifecycle_stage == LifecycleStage.EMERGING:
+                result["emerging"].append(t.name)
+            elif t.lifecycle_stage == LifecycleStage.CROWDED:
+                result["crowded"].append(t.name)
+            elif t.lifecycle_stage == LifecycleStage.FADING:
+                result["fading"].append(t.name)
+        return result
+
+    # ── Phase 3: 同花顺热点 reason tags → 自动主题发现 ───────────────────
+
+    def discover_hot_topics(self, date: str = "") -> list[Topic]:
+        """从同花顺热点 reason tags 自动发现新兴主题。
+
+        流程:
+          1. 拉取当日同花顺强势股 reason tags
+          2. 词频统计 reason 中的题材关键词
+          3. 对高频新词自动创建 EMERGING 主题
+          4. 对已有主题更新热度
+
+        Args:
+            date: YYYY-MM-DD 格式，空=今天
+
+        Returns:
+            新创建或更新的主题列表
+        """
+        try:
+            import requests
+            from collections import Counter
+
+            if not date:
+                from datetime import date as _date
+                date = _date.today().strftime("%Y-%m-%d")
+
+            # Fetch hot stock reason tags
+            url = (
+                f"http://zx.10jqka.com.cn/event/api/getharden/"
+                f"date/{date}/orderby/date/orderway/desc/charset/GBK/"
+            )
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
+            }
+            r = requests.get(url, headers=headers, timeout=10)
+            data = r.json()
+            if data.get("errocode", 0) != 0:
+                return []
+
+            rows = data.get("data") or []
+            if not rows:
+                return []
+
+            # Extract and count reason tags
+            all_tags: list[str] = []
+            for row in rows:
+                reason = row.get("reason", "")
+                if reason:
+                    tags = [t.strip() for t in str(reason).split("+") if t.strip()]
+                    all_tags.extend(tags)
+
+            if not all_tags:
+                return []
+
+            counter = Counter(all_tags)
+            hot_threshold = max(3, len(rows) // 30)  # Appears in ≥3 stocks or top 3%
+
+            # Get existing topic keywords for dedup
+            existing = {t.id for t in self.list_all()}
+            existing_names = {t.name for t in self.list_all()}
+
+            created_or_updated: list[Topic] = []
+            for tag, count in counter.most_common(30):
+                if count < hot_threshold:
+                    continue
+
+                tag_id = _sanitize_id(tag)
+
+                # Update existing topic
+                if tag_id in existing or tag in existing_names:
+                    topic = self.get(tag_id) or self.get(_sanitize_id(tag))
+                    if topic is not None:
+                        # Boost: if high frequency, move EMERGING→SPREADING
+                        if topic.lifecycle_stage == LifecycleStage.EMERGING and count >= hot_threshold * 2:
+                            self.update_lifecycle(topic.id, LifecycleStage.SPREADING,
+                                                  f"同花顺热点频率{count}次")
+                        created_or_updated.append(topic)
+                    continue
+
+                # Create new EMERGING topic
+                try:
+                    topic = self.create(
+                        name=tag,
+                        topic_id=tag_id,
+                        description=f"同花顺热点自动发现 ({date}, {count}只强势股)",
+                        keywords=[tag],
+                        tags=["auto-discovered", "tonghuashun"],
+                    )
+                    created_or_updated.append(topic)
+                except FileExistsError:
+                    pass
+
+            return created_or_updated
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug("Hot topic discovery failed: %s", e)
+            return []
+
     # ── 生命周期状态机 ─────────────────────────────────────────────────────
 
     def update_lifecycle(

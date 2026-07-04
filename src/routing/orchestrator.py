@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""编排器 — 画像→军规→L0→L1→L2→L3→L4 全链路。"""
+"""编排器 — 画像→军规→L0→L1→L2→L3→L4 全链路。
+
+Phase 3: 注入 MacroRegime, NorthboundProfile, DominanceProfile,
+         EarningsRevisionFactor, Topic 生命周期调整。
+"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -15,6 +20,9 @@ from .l1_analyze import AnalysisReport, L1Analyzer
 from .l2_judge import L2Judge, Verdict
 from .l3_trade import L3Trader, TradeSignal
 from .l4_risk import L4RiskOfficer, RiskCheck
+from .guardrails import GuardrailEnforcer, GuardrailViolation
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +40,11 @@ class OrchestratorResult:
     risk: Optional[RiskCheck] = None
     blocked_by: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Phase 3: optional context from enhanced modules
+    macro_regime_info: Optional[dict] = None
+    dominance_info: Optional[dict] = None
+    # Phase 1: guardrail violations
+    violations: list[GuardrailViolation] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -45,6 +58,8 @@ class Orchestrator:
         result = orch.run("600519", "SH")
         if result.passed:
             print(f"建议: {result.signal.action} {result.risk.adjusted_weight:.1%}")
+
+    Phase 3 增强: 自动注入 MacroRegime / NorthboundProfile / Topic 生命周期。
     """
 
     def __init__(self):
@@ -55,6 +70,7 @@ class Orchestrator:
         self.l2 = L2Judge()
         self.l3 = L3Trader()
         self.l4 = L4RiskOfficer()
+        self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
 
     def run(
         self,
@@ -108,6 +124,28 @@ class Orchestrator:
             result.blocked_by = gate_result.flags
             return result
 
+        # ---- Phase 3: 增强上下文 ----
+        macro_regime = self._get_macro_regime()
+        nb_profile = self._get_northbound_profile()
+        earnings_factor = self._get_earnings_revision(symbol)
+        topic_adj = self._get_topic_adjustments()
+
+        # 增强宏观 dict
+        enriched_macro = macro or {}
+        if macro_regime is not None:
+            enriched_macro.update({
+                "m1_m2_gap": macro_regime.m1_m2_gap,
+                "social_financing_growth": macro_regime.social_financing_growth,
+                "dr007": macro_regime.dr007,
+                "dr007_position": self._dr007_position(macro_regime.dr007),
+                "lpr_direction": self._lpr_direction(macro_regime),
+                "sf_trend": "accelerating" if (macro_regime.social_financing_growth or 0) > 6 else "stable",
+            })
+            result.macro_regime_info = {
+                "quadrant": macro_regime.quadrant.value,
+                "confidence": macro_regime.confidence,
+            }
+
         # Step 3: L1 分析师
         quote_dict = {
             "pe_percentile": 40,  # placeholder
@@ -115,24 +153,66 @@ class Orchestrator:
         }
         fin_list = [{"roe": 15}]  # placeholder
         sentiment_dict = {"level": "NORMAL"}
-        report = self.l1.analyze(symbol, name, quote_dict, fin_list, macro, sentiment_dict)
+        report = self.l1.analyze(
+            symbol, name,
+            quote_dict, fin_list,
+            enriched_macro,
+            sentiment_dict,
+            macro_regime=macro_regime,
+            northbound_profile=nb_profile,
+            earnings_factor=earnings_factor,
+        )
         result.report = report
 
+        # Phase 1: L1 护栏检查
+        l1_violations = self.enforcer.enforce(
+            stage="L1",
+            source_citations=report.source_citations,
+            confidence=report.confidence,
+        )
+        result.violations.extend(l1_violations)
+
         # Step 4: L2 法官
-        verdict = self.l2.judge(report)
+        verdict = self.l2.judge(report, topic_adj=topic_adj)
         result.verdict = verdict
         if verdict.confidence < L2Judge.MIN_CONFIDENCE:
             result.passed = False
             result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})")
             return result
 
+        # Phase 1: L2 护栏检查
+        l2_violations = self.enforcer.enforce(
+            stage="L2",
+            source_citations=verdict.source_citations,
+            confidence=verdict.confidence,
+        )
+        result.violations.extend(l2_violations)
+
         # Step 5: L3 交易员
         signal = self.l3.generate_signal(verdict)
         result.signal = signal
 
+        # Phase 1: L3 护栏检查
+        l3_violations = self.enforcer.enforce(
+            stage="L3",
+            source_citations=signal.source_citations,
+            confidence=signal.confidence,
+        )
+        result.violations.extend(l3_violations)
+        if self.enforcer.is_blocked(l3_violations):
+            result.passed = False
+            result.blocked_by.extend(self.enforcer.get_warnings(l3_violations))
+
         # Step 6: L4 风控官
         risk = self.l4.check(signal, portfolio)
         result.risk = risk
+
+        # Phase 1: L4 护栏检查
+        l4_violations = self.enforcer.enforce(
+            stage="L4",
+            source_citations=risk.source_citations,
+        )
+        result.violations.extend(l4_violations)
 
         result.passed = True
         return result
@@ -151,3 +231,72 @@ class Orchestrator:
         if not result.passed:
             result.blocked_by = gate_result.flags
         return result
+
+    # ------------------------------------------------------------------
+    # Phase 3: 增强上下文注入
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_macro_regime():
+        """获取当前宏观货币信用象限。"""
+        try:
+            from src.macro.monetary_credit import MonetaryCreditAnalyzer
+            analyzer = MonetaryCreditAnalyzer()
+            return analyzer.analyze()
+        except Exception as e:
+            logger.debug("Macro regime unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_northbound_profile():
+        """获取多维北向资金画像。"""
+        try:
+            from src.game_theory.northbound import NorthboundAnalyzer
+            analyzer = NorthboundAnalyzer()
+            return analyzer.analyze()
+        except Exception as e:
+            logger.debug("Northbound profile unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_earnings_revision(symbol: str):
+        """获取盈利修正因子。"""
+        try:
+            from src.data.earnings_revision import EarningsRevisionAnalyzer
+            analyzer = EarningsRevisionAnalyzer()
+            return analyzer.analyze(symbol)
+        except Exception as e:
+            logger.debug("Earnings revision unavailable for %s: %s", symbol, e)
+        return None
+
+    @staticmethod
+    def _get_topic_adjustments() -> dict:
+        """从 TopicManager 获取主题生命周期权重调整。"""
+        try:
+            from src.information.topic_manager import TopicManager
+            mgr = TopicManager()
+            return mgr.get_lifecycle_adjustments()
+        except Exception as e:
+            logger.debug("Topic adjustments unavailable: %s", e)
+        return {}
+
+    @staticmethod
+    def _dr007_position(dr007: Optional[float]) -> str:
+        """判断 DR007 相对政策利率的位置。"""
+        if dr007 is None:
+            return "neutral"
+        policy_rate = 1.50  # 7-day reverse repo rate
+        if dr007 < policy_rate - 0.05:
+            return "below_policy"
+        elif dr007 > policy_rate + 0.15:
+            return "above_policy"
+        return "neutral"
+
+    @staticmethod
+    def _lpr_direction(macro_regime) -> str:
+        """判断 LPR 变动方向（简化版）。"""
+        if macro_regime is None:
+            return "stable"
+        lpr_1y = getattr(macro_regime, "lpr_1y", None)
+        # Default to stable - actual trend needs historical comparison
+        return "stable"
