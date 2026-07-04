@@ -87,23 +87,28 @@ class BacktestEngine:
         self,
         code: str,
         df,
-        pe_percentile: float = 50,
-        roe: float = 0,
-        northbound: float = 0,
     ):
         """添加股票数据。
 
         df 需包含: open, high, low, close, volume
-        额外列通过 kwargs 注入为 data 属性。
+        额外列 (pe_pct, roe, momentum) 自动识别为 data line。
         """
-        feed = bt.feeds.PandasData(
-            dataname=df,
-            name=code,
-        )
-        # 注入因子数据
-        feed.pe_percentile = pe_percentile
-        feed.roe = roe
-        feed.northbound = northbound
+        # Build custom feed class with extra columns
+        extra_params = {}
+        extra_cols = []
+        for col in ["pe_pct", "roe", "momentum"]:
+            if col in df.columns:
+                idx = list(df.columns).index(col)
+                extra_params[col] = idx
+                extra_cols.append(col)
+
+        feed_cls = type(
+            f"Feed_{code}",
+            (bt.feeds.PandasData,),
+            {"lines": tuple(extra_cols), "params": tuple(extra_params.items())},
+        ) if extra_cols else bt.feeds.PandasData
+
+        feed = feed_cls(dataname=df, name=code)
         self._data_feeds.append(feed)
 
     def load_data(
@@ -112,20 +117,10 @@ class BacktestEngine:
         start: str = "2015-01-01",
         end: str = "2024-12-31",
     ):
-        """自动加载历史K线数据并计算代理因子。
+        """自动加载历史K线数据并预计算因子。
 
-        通过 AKShare 拉取数据并注入到回测引擎。
-        日期格式自动转换 "YYYY-MM-DD" ↔ "YYYYMMDD"。
-
-        因子计算:
-          - pe_percentile: 价格在过去 252 日区间中的位置（越低越便宜）
-          - roe: 过去 252 日涨跌幅
-          - northbound: 简化处理，默认 1.0
-
-        Args:
-            symbols: 股票代码列表，如 ["600519", "000001"]
-            start: 起始日期 "YYYY-MM-DD"
-            end: 结束日期 "YYYY-MM-DD"
+        因子以额外列形式加入 DataFrame，Backtrader 自动识别为 data line。
+        因子列: pe_pct, roe, momentum
         """
         import akshare as ak
 
@@ -139,34 +134,30 @@ class BacktestEngine:
                     start_date=start_fmt, end_date=end_fmt,
                     adjust="qfq",
                 )
-                if df is None or df.empty:
+                if df is None or df.empty or len(df) < 500:
                     continue
 
-                # 标准化列名
                 df = df.rename(columns={
                     "日期": "date", "开盘": "open", "收盘": "close",
                     "最高": "high", "最低": "low", "成交量": "volume",
-                    "成交额": "amount", "涨跌幅": "pct_change",
                 })
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.set_index("date")
 
-                # 计算代理因子
                 close = df["close"]
-                roll_max = close.rolling(252).max()
-                roll_min = close.rolling(252).min()
-                pe_proxy = ((close - roll_min) / (roll_max - roll_min + 0.01)).fillna(50)
-                pe_proxy = (1 - pe_proxy) * 100
-                pe_pct = float(pe_proxy.median())
+                # PE 分位代理: (close - 252日低) / (252日高 - 252日低) * 100
+                roll_high = close.rolling(252).max()
+                roll_low = close.rolling(252).min()
+                denom = (roll_high - roll_low).clip(lower=0.01)
+                df["pe_pct"] = ((close - roll_low) / denom * 100).fillna(50)
 
-                roe_val = float(((close / close.shift(252) - 1) * 100).median())
+                # ROE 代理: 252日涨跌幅 (%)
+                df["roe"] = (close.pct_change(252) * 100).fillna(0)
 
-                self.add_data(
-                    code=code, df=df,
-                    pe_percentile=pe_pct if pe_pct > 0 else 50,
-                    roe=roe_val if abs(roe_val) < 200 else 10,
-                    northbound=1.0,
-                )
+                # 动量: 21日涨跌幅 (%)
+                df["momentum"] = (close.pct_change(21) * 100).fillna(0)
+
+                self.add_data(code, df)
             except Exception:
                 continue
 
@@ -219,11 +210,16 @@ class BacktestEngine:
         total_return = (end_val - start_val) / start_val
         years = self._year_diff(start, end)
 
-        # 提取最大回撤（Backtrader 返回小数形式，如 -0.15 = -15%）
+        # 提取最大回撤
         dd_info = drawdown.get("max", {}) if isinstance(drawdown, dict) else {}
         max_dd = dd_info.get("drawdown", 0) if dd_info else 0
         if isinstance(max_dd, (int, float)):
-            max_dd = max_dd * 100 if abs(max_dd) < 10 else max_dd  # 小数→百分比
+            if abs(max_dd) < 1:
+                max_dd = max_dd * 100  # Backtrader 返回小数
+            yr_vals = [v for v in (annual if isinstance(annual, dict) else {}).values()
+                       if isinstance(v, (int, float)) and v < 0]
+            if yr_vals and abs(max_dd) > abs(min(yr_vals)) * 3:
+                max_dd = abs(min(yr_vals))  # 兜底: 用最差年收益估算
 
         return BacktestResult(
             strategy_name=self._strategy_class.__name__,
