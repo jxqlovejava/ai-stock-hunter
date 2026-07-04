@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyberagent"
+version = "0.1.4"
+description = "Physical-bottleneck, reverse-consensus investment analysis for every market — an LLM agent chain that traces any stock (A-share / HK / US) to its supply-chain constraint and refuses to chase narrative-driven tops. Bring your own LLM key."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "CyberK13", email = "klchen0113@gmail.com"},
+]
+keywords = [
+    "ai-agent",
+    "llm",
+    "equity-analysis",
+    "stock-analysis",
+    "multi-agent",
+    "langchain",
+    "crewai",
+    "mcp",
+    "chain-of-thought",
+    "investment-research",
+    "quantitative-finance",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+stocks   = ["yfinance>=0.2", "akshare>=1.14"]   # akshare: A-share news/fundamentals (free, no key)
+web      = ["flask>=3.0"]
+openai   = ["openai>=1.0"]
+deepseek = ["openai>=1.0"]   # DeepSeek is OpenAI-API compatible — alias for the openai client
+gemini   = ["google-genai>=0.2"]
+claude   = ["anthropic>=0.8"]
+test     = ["pytest>=7.0"]
+dev      = ["pytest>=7.0", "ruff>=0.6"]
+all      = ["yfinance>=0.2", "akshare>=1.14", "flask>=3.0", "openai>=1.0", "google-genai>=0.2", "anthropic>=0.8"]
+
+[project.urls]
+Homepage      = "https://github.com/CyberK13/cyberagent"
+Source        = "https://github.com/CyberK13/cyberagent"
+Documentation = "https://github.com/CyberK13/cyberagent#readme"
+Issues        = "https://github.com/CyberK13/cyberagent/issues"
+Changelog     = "https://github.com/CyberK13/cyberagent/blob/main/CHANGELOG.md"
+
+[project.scripts]
+cyberagent = "cyberagent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"cyberagent" = ["py.typed"]

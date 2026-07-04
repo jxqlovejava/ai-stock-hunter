@@ -1,0 +1,116 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-xquant"
+version = "0.1.0"
+description = "Agentic Quant Research Kernel — declarative, deterministic, auditable research runtime for AI coding agents"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [
+    { name = "open-xquant contributors" },
+]
+keywords = ["quant", "trading", "backtest", "agent", "research"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "pyarrow>=14.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+    "exchange-calendars>=4.5",
+]
+
+[project.scripts]
+oxq = "oxq.cli.main:main"
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.0",
+]
+yfinance = [
+    "yfinance>=0.2",
+]
+akshare = [
+    "akshare>=1.10",
+]
+chart = [
+    "mplfinance>=0.12",
+    "matplotlib>=3.7",
+    "seaborn>=0.13",
+]
+scipy = [
+    "scipy>=1.11",
+]
+talib = [
+    "TA-Lib",
+]
+live = [
+    "httpx[socks]>=0.27",
+    "websockets>=13.0",
+]
+agent = [
+    "streamlit>=1.30",
+    "openai>=1.0",
+    "mcp>=1.0",
+    "nest-asyncio>=1.5",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "pandas-stubs",
+    "mcp>=1.0",
+    "httpx[socks]>=0.27",
+    "websockets>=13.0",
+    "tabulate>=0.9",
+]
+docs = [
+    "mkdocs-material",
+]
+
+[project.urls]
+Homepage = "https://github.com/xingwudao/open-xquant"
+Repository = "https://github.com/xingwudao/open-xquant"
+Issues = "https://github.com/xingwudao/open-xquant/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oxq"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"agent/skills" = "agent/skills"
+"agent/roles" = "agent/roles"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 140
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v -m 'not e2e and not integration'"
+markers = [
+    "e2e: end-to-end tests requiring live LLM API (deselected by default)",
+    "integration: integration tests requiring external API (deselected by default)",
+]

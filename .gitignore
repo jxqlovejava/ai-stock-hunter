@@ -1,0 +1,12 @@
+# Secrets
+SECRET.md
+memory.md
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
