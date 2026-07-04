@@ -233,6 +233,169 @@ class Orchestrator:
         return result
 
     # ------------------------------------------------------------------
+    # Phase 7: Agent-Worker 模式 — 管道阶段映射到 Agent 边界
+    # ------------------------------------------------------------------
+
+    def _data_worker_fetch(self, symbol: str, market: str = "SH") -> dict:
+        """Data Worker: 获取行情和财务数据 (只读)。
+
+        映射到 data-worker Agent 的职责边界。
+        """
+        quote = self.data.get_quote(symbol, market)
+        if quote is None:
+            return {"error": "数据不可用"}
+        return {
+            "symbol": symbol,
+            "name": quote.name,
+            "quote": quote,
+            "market": market,
+        }
+
+    def _analysis_worker_score(
+        self,
+        symbol: str,
+        name: str,
+        data: dict,
+        macro: dict | None = None,
+        topic_adj: dict | None = None,
+    ) -> dict:
+        """Analysis Worker: 军规→L0→L1→L2 (只读)。
+
+        映射到 analysis-worker Agent 的职责边界。
+        返回 verdict 或 blocked 信息。
+        """
+        quote = data.get("quote")
+        portfolio = data.get("portfolio", {})
+
+        # 军规
+        ctx = {"stock_name": name, **portfolio}
+        doctrine_result = self.doctrine.check(symbol, ctx)
+        if not doctrine_result.passed:
+            return {
+                "blocked": True,
+                "blocked_by": [r.name for r in doctrine_result.blocked_by],
+                "warnings": [r.name for r in doctrine_result.warnings],
+            }
+
+        # L0 门禁
+        gate_ctx = {
+            "is_limit_up": False, "is_limit_down": False,
+            "is_suspended": False, "listing_days": 365,
+        }
+        gate_result = self.l0.check(symbol, name, gate_ctx)
+        if gate_result.status.value == "REJECTED":
+            return {"blocked": True, "blocked_by": gate_result.flags}
+
+        # Phase 3 上下文注入
+        macro_regime = self._get_macro_regime()
+        nb_profile = self._get_northbound_profile()
+        earnings_factor = self._get_earnings_revision(symbol)
+        topic_adj = topic_adj or self._get_topic_adjustments()
+
+        enriched_macro = macro or {}
+        if macro_regime is not None:
+            enriched_macro.update({
+                "m1_m2_gap": macro_regime.m1_m2_gap,
+                "social_financing_growth": macro_regime.social_financing_growth,
+                "dr007": macro_regime.dr007,
+                "dr007_position": self._dr007_position(macro_regime.dr007),
+                "lpr_direction": self._lpr_direction(macro_regime),
+                "sf_trend": "accelerating" if (macro_regime.social_financing_growth or 0) > 6 else "stable",
+            })
+
+        # L1
+        quote_dict = {"pe_percentile": 40, "northbound": 1}
+        fin_list = [{"roe": 15}]
+        sentiment_dict = {"level": "NORMAL"}
+        report = self.l1.analyze(
+            symbol, name, quote_dict, fin_list,
+            enriched_macro, sentiment_dict,
+            macro_regime=macro_regime,
+            northbound_profile=nb_profile,
+            earnings_factor=earnings_factor,
+        )
+
+        # L1 护栏
+        l1_violations = self.enforcer.enforce(
+            stage="L1",
+            source_citations=report.source_citations,
+            confidence=report.confidence,
+        )
+
+        # L2
+        verdict = self.l2.judge(report, topic_adj=topic_adj)
+
+        # L2 护栏
+        l2_violations = self.enforcer.enforce(
+            stage="L2",
+            source_citations=verdict.source_citations,
+            confidence=verdict.confidence,
+        )
+
+        if verdict.confidence < L2Judge.MIN_CONFIDENCE:
+            return {
+                "blocked": True,
+                "blocked_by": [f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})"],
+            }
+
+        return {
+            "blocked": False,
+            "report": report,
+            "verdict": verdict,
+            "violations": l1_violations + l2_violations,
+            "macro_regime_info": (
+                {"quadrant": macro_regime.quadrant.value, "confidence": macro_regime.confidence}
+                if macro_regime else None
+            ),
+        }
+
+    def _signal_writer_produce(
+        self,
+        symbol: str,
+        name: str,
+        analysis_result: dict,
+        portfolio: dict | None = None,
+    ) -> dict:
+        """Signal Writer: L3→L4→护栏审查 (唯一写权限)。
+
+        映射到 signal-writer Agent 的职责边界。
+        """
+        verdict = analysis_result.get("verdict")
+        if verdict is None:
+            return {"blocked": True, "blocked_by": ["无裁决结果"]}
+
+        # L3
+        signal = self.l3.generate_signal(verdict)
+        l3_violations = self.enforcer.enforce(
+            stage="L3",
+            source_citations=signal.source_citations,
+            confidence=signal.confidence,
+        )
+
+        # L4
+        risk = self.l4.check(signal, portfolio)
+        l4_violations = self.enforcer.enforce(
+            stage="L4",
+            source_citations=risk.source_citations,
+        )
+
+        all_violations = (
+            analysis_result.get("violations", [])
+            + l3_violations + l4_violations
+        )
+
+        return {
+            "symbol": symbol,
+            "name": name,
+            "passed": not self.enforcer.is_blocked(all_violations),
+            "report": analysis_result.get("report"),
+            "verdict": verdict,
+            "signal": signal,
+            "risk": risk,
+            "violations": all_violations,
+        }
+
+    # ------------------------------------------------------------------
     # Phase 3: 增强上下文注入
     # ------------------------------------------------------------------
 
