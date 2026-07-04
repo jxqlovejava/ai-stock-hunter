@@ -195,10 +195,11 @@ SourceCitation(
 
 | Phase | 主题 | 状态 |
 |-------|------|------|
-| Phase 1 | MVP：3 因子 + 回测 + 军规 | ✅ 完成 |
-| Phase 2 | 数据聚合层、华泰/国信适配器、龙虎榜验证 | 🚧 进行中 |
-| Phase 3 | 宏观货币信用、北向多维、盈利修正、主题生命周期 | 🔜 规划中 |
-| Phase 4 | 多 Agent 并行研究、策略自我进化、Web UI | 📋 远期 |
+| Phase 1 | MVP：3 因子 + 回测 + 军规 + 护栏体系 | ✅ 完成 |
+| Phase 2 | 数据聚合层（国信/mootdx/AKShare/腾讯/华泰）+ 龙虎榜验证 | ✅ 完成 |
+| Phase 3 | 宏观货币信用 + 北向多维 + 盈利修正 + 主题生命周期 + 博弈论全景 | ✅ 完成 |
+| Phase 4 | 策略进化飞轮 + 用户反馈闭环 + 政策 NLP + 信息速度监控 | ✅ 完成 |
+| Phase 5 | Web 可视界面 + 实盘券商 API 对接 + 跨资产信号 + 组合优化 | 🔜 规划中 |
 
 完整规划与设计决策：[`.claude/plans/ai-stock-hunter.plan.md`](.claude/plans/ai-stock-hunter.plan.md)（含 16 轮毒辣拷打与回应）
 
