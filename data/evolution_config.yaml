@@ -1,0 +1,21 @@
+# 策略进化模块 — 可配置阈值
+# 修改此文件后下次进化即生效，无需重启
+
+backtest:
+  min_sharpe_ratio: 0.5
+  min_total_return: 0.10
+  max_max_drawdown: 0.25
+  min_trades: 20
+  benchmark: "000300.SH"
+
+trial:
+  min_duration_days: 30
+  min_trades: 10
+  sharpe_superiority: 0.10
+  max_drawdown_limit: 0.20
+  benchmark: "000300.SH"
+
+monitoring:
+  check_interval_hours: 24
+  degradation_window_days: 14
+  auto_optimize_on_degrade: true
