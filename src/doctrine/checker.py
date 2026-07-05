@@ -52,12 +52,15 @@ class DoctrineChecker:
         self,
         symbol: str = "",
         context: dict | None = None,
+        enabled_rules: set[str] | None = None,
     ) -> DoctrineResult:
         """执行军规审查。
 
         Args:
             symbol: 股票代码
             context: 包含持仓/市场/用户画像等信息的字典
+            enabled_rules: 启用的规则 ID 集合。None = 全部启用。
+                           可用于按投资者层级过滤规则。
 
         Returns:
             DoctrineResult with pass/fail status
@@ -66,6 +69,8 @@ class DoctrineChecker:
         result = DoctrineResult()
 
         for rule in MILITARY_RULES:
+            if enabled_rules is not None and rule.id not in enabled_rules:
+                continue
             triggered = self._evaluate(rule, symbol, ctx)
             if not triggered:
                 continue

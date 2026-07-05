@@ -45,6 +45,8 @@ class OrchestratorResult:
     dominance_info: Optional[dict] = None
     # Phase 1: guardrail violations
     violations: list[GuardrailViolation] = field(default_factory=list)
+    # 投资者偏好
+    investor_prefs_applied: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -100,9 +102,41 @@ class Orchestrator:
             name = quote.name
             result.name = name
 
+        # 加载投资者偏好
+        investor = self._get_investor_prefs()
+        position_limits = None
+        weights = None
+        risk_mult = 1.0
+        enabled_rules = None
+        if investor is not None:
+            try:
+                from src.learner.preference.adapter import (
+                    resolve_weights,
+                    resolve_rule_filter,
+                    resolve_position_limits,
+                    resolve_macro_cap_multiplier,
+                )
+                position_limits = resolve_position_limits(investor)
+                weights = resolve_weights(investor)
+                risk_mult = resolve_macro_cap_multiplier(investor)
+                enabled_rules = resolve_rule_filter(investor)
+                result.investor_prefs_applied = {
+                    "risk_profile": investor.risk_profile.value,
+                    "investment_goal": investor.investment_goal.value,
+                    "tier": investor.tier.value,
+                    "weights_applied": weights,
+                    "risk_multiplier": risk_mult,
+                }
+            except Exception as e:
+                logger.debug("Failed to resolve investor preferences: %s", e)
+
         # Step 1: 军规门禁
         ctx = {"stock_name": name, **(portfolio or {})}
-        doctrine_result = self.doctrine.check(symbol, ctx)
+        if investor is not None:
+            ctx["tier"] = investor.tier.value
+            ctx["max_single_pct"] = investor.position_limits.max_single_pct
+            ctx["portfolio_drawdown_pct"] = investor.position_limits.portfolio_drawdown_pct
+        doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             result.passed = False
             result.blocked_by = [r.name for r in doctrine_result.blocked_by]
@@ -173,7 +207,7 @@ class Orchestrator:
         result.violations.extend(l1_violations)
 
         # Step 4: L2 法官
-        verdict = self.l2.judge(report, topic_adj=topic_adj)
+        verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
         result.verdict = verdict
         if verdict.confidence < L2Judge.MIN_CONFIDENCE:
             result.passed = False
@@ -189,7 +223,13 @@ class Orchestrator:
         result.violations.extend(l2_violations)
 
         # Step 5: L3 交易员
-        signal = self.l3.generate_signal(verdict)
+        effective_macro_cap = 0.80 * risk_mult
+        signal = self.l3.generate_signal(
+            verdict,
+            macro_cap=effective_macro_cap,
+            position_limits=position_limits,
+            risk_multiplier=risk_mult,
+        )
         result.signal = signal
 
         # Phase 1: L3 护栏检查
@@ -204,7 +244,7 @@ class Orchestrator:
             result.blocked_by.extend(self.enforcer.get_warnings(l3_violations))
 
         # Step 6: L4 风控官
-        risk = self.l4.check(signal, portfolio)
+        risk = self.l4.check(signal, portfolio, position_limits=position_limits)
         result.risk = risk
 
         # Phase 1: L4 护栏检查
@@ -267,9 +307,21 @@ class Orchestrator:
         quote = data.get("quote")
         portfolio = data.get("portfolio", {})
 
+        # 投资者偏好
+        investor = self._get_investor_prefs()
+        enabled_rules = None
+        if investor is not None:
+            try:
+                from src.learner.preference.adapter import resolve_rule_filter
+                enabled_rules = resolve_rule_filter(investor)
+            except Exception as e:
+                logger.debug("Rule filter unavailable: %s", e)
+
         # 军规
         ctx = {"stock_name": name, **portfolio}
-        doctrine_result = self.doctrine.check(symbol, ctx)
+        if investor is not None:
+            ctx["tier"] = investor.tier.value
+        doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             return {
                 "blocked": True,
@@ -322,8 +374,15 @@ class Orchestrator:
             confidence=report.confidence,
         )
 
-        # L2
-        verdict = self.l2.judge(report, topic_adj=topic_adj)
+        # L2 (with investor preference weights)
+        weights = None
+        if investor is not None:
+            try:
+                from src.learner.preference.adapter import resolve_weights
+                weights = resolve_weights(investor)
+            except Exception:
+                pass
+        verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
 
         # L2 护栏
         l2_violations = self.enforcer.enforce(
@@ -364,16 +423,33 @@ class Orchestrator:
         if verdict is None:
             return {"blocked": True, "blocked_by": ["无裁决结果"]}
 
-        # L3
-        signal = self.l3.generate_signal(verdict)
+        # L3 (with investor preference limits)
+        position_limits = None
+        risk_mult = 1.0
+        if investor is not None:
+            try:
+                from src.learner.preference.adapter import (
+                    resolve_macro_cap_multiplier,
+                    resolve_position_limits,
+                )
+                position_limits = resolve_position_limits(investor)
+                risk_mult = resolve_macro_cap_multiplier(investor)
+            except Exception:
+                pass
+        signal = self.l3.generate_signal(
+            verdict,
+            macro_cap=0.80 * risk_mult,
+            position_limits=position_limits,
+            risk_multiplier=risk_mult,
+        )
         l3_violations = self.enforcer.enforce(
             stage="L3",
             source_citations=signal.source_citations,
             confidence=signal.confidence,
         )
 
-        # L4
-        risk = self.l4.check(signal, portfolio)
+        # L4 (with investor preference limits)
+        risk = self.l4.check(signal, portfolio, position_limits=position_limits)
         l4_violations = self.enforcer.enforce(
             stage="L4",
             source_citations=risk.source_citations,
@@ -442,6 +518,17 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Topic adjustments unavailable: %s", e)
         return {}
+
+    @staticmethod
+    def _get_investor_prefs():
+        """加载投资者偏好画像。"""
+        try:
+            from src.learner.preference.loader import InvestorPreferenceLoader
+            loader = InvestorPreferenceLoader()
+            return loader.load()
+        except Exception as e:
+            logger.debug("Investor preferences unavailable: %s", e)
+        return None
 
     @staticmethod
     def _dr007_position(dr007: Optional[float]) -> str:

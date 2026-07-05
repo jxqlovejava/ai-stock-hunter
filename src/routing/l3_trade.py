@@ -40,17 +40,39 @@ class L3Trader:
         macro_cap: float = 0.80,
         is_core: bool = False,
         is_gem: bool = False,
+        position_limits: Optional[dict] = None,
+        risk_multiplier: float = 1.0,
     ) -> TradeSignal:
-        """生成交易信号。"""
+        """生成交易信号。
+
+        Args:
+            verdict: L2 裁决结果
+            macro_cap: 宏观仓位上限 (0.0-1.0)
+            is_core: 是否核心仓 (阻止 REDUCE/CLOSE)
+            is_gem: 是否双创 (创业板/科创板折扣)
+            position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., ...}
+            risk_multiplier: 风险偏好仓位乘数 (conservative=0.7, balanced=1.0, aggressive=1.2)
+        """
         score = verdict.score
         action = self._score_to_action(score)
 
         # 基础仓位
         base = max(0, (score - 50) / 50 * macro_cap)
 
+        # 风险偏好乘数
+        base = base * risk_multiplier
+
         # 双创折扣
         if is_gem:
-            base *= 0.8
+            gem_discount = 0.8
+            if position_limits:
+                gem_discount = position_limits.get("gem_discount", 0.8)
+            base *= gem_discount
+
+        # 用户偏好单票上限
+        if position_limits:
+            max_single = position_limits.get("single_stock_cap", 1.0)
+            base = min(base, max_single)
 
         # 核心仓/交易仓区分
         if is_core:

@@ -53,6 +53,7 @@ class L2Judge:
         report: AnalysisReport,
         sector_score: float = 50.0,
         topic_adj: Optional[dict] = None,
+        weights_override: Optional[dict] = None,
     ) -> Verdict:
         """综合评分，生成裁决。
 
@@ -60,6 +61,8 @@ class L2Judge:
             report: L1 分析报告
             sector_score: 行业景气评分 (0-100)
             topic_adj: 主题生命周期权重调整 {topic_id: bonus}, bonus in [-0.2, +0.1]
+            weights_override: 自定义权重 dict，覆盖 class-level WEIGHTS。
+                              None 时使用默认权重。非 None 时自动归一化。
         """
         fundamental = (report.value_score + report.quality_score) / 2
         technical = report.momentum_score
@@ -72,12 +75,20 @@ class L2Judge:
         if topic_adj:
             adjusted_sector, topic_info = self._apply_topic_adjustment(sector_score, topic_adj)
 
+        # 解析权重
+        weights = self.WEIGHTS.copy()
+        if weights_override:
+            weights.update(weights_override)
+            total = sum(weights.values())
+            if abs(total - 1.0) > 0.01:
+                weights = {k: v / total for k, v in weights.items()}
+
         score = (
-            fundamental * self.WEIGHTS["fundamental"]
-            + technical * self.WEIGHTS["technical"]
-            + macro * self.WEIGHTS["macro"]
-            + adjusted_sector * self.WEIGHTS["sector"]
-            + sentiment * self.WEIGHTS["sentiment"]
+            fundamental * weights["fundamental"]
+            + technical * weights["technical"]
+            + macro * weights["macro"]
+            + adjusted_sector * weights["sector"]
+            + sentiment * weights["sentiment"]
         )
 
         # 置信度 = 信息完整度的函数
