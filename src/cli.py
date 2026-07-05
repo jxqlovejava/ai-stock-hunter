@@ -13,6 +13,7 @@
   python -m src.cli game-theory       # 博弈论知识摘要
   python -m src.cli calibrate         # 置信度校准报告
   python -m src.cli profile           # 用户能力画像
+  python -m src.cli preference        # 投资者偏好管理
   python -m src.cli feedback add      # 添加交易反馈
   python -m src.cli feedback summary  # 查看反馈统计
   python -m src.cli evolve            # 运行策略进化
@@ -21,6 +22,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from src.data.aggregator import DataAggregator
@@ -222,7 +224,27 @@ def cmd_profile():
     print(profile.summary)
 
 
-def cmd_feedback(args: list[str]):
+def cmd_preference(args: list[str]):
+    """投资者偏好管理。"""
+    from src.learner.preference.loader import InvestorPreferenceLoader
+
+    loader = InvestorPreferenceLoader()
+    sub = args[0] if args else "view"
+
+    if sub == "view":
+        prefs = loader.load()
+        print(loader.summary(prefs))
+    elif sub == "edit":
+        path = os.path.abspath(loader.path)
+        editor = os.environ.get("EDITOR", "nano")
+        os.system(f"{editor} {path}")
+    elif sub == "reset":
+        loader.reset()
+        print("✅ 偏好已重置为默认值")
+    elif sub == "path":
+        print(os.path.abspath(loader.path))
+    else:
+        print(f"未知子命令: {sub}，可用: view | edit | reset | path")
     """用户反馈管理。"""
     sub = args[0] if args else "summary"
     collector = FeedbackCollector(db_path=":memory:")
@@ -267,7 +289,7 @@ def main():
         print("用法: python -m src.cli <command> [args]")
         print("  scan | analyze <code> | macro | sentiment | backtest")
         print("  backtest-optimize | backtest-compare")
-        print("  diagnose <code> | game-theory | calibrate | profile")
+        print("  diagnose <code> | game-theory | calibrate | profile | preference")
         print("  feedback <add|summary> | evolve | learn <report>")
         return
 
@@ -286,6 +308,7 @@ def main():
         "game-theory": cmd_game_theory,
         "calibrate": cmd_calibrate,
         "profile": cmd_profile,
+        "preference": lambda: cmd_preference(args),
         "feedback": lambda: cmd_feedback(args),
         "evolve": cmd_evolve,
         "learn": lambda: cmd_learn(args),
