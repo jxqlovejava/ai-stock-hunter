@@ -73,3 +73,47 @@ class FundamentalMetrics(BaseModel):
     sources: list[str] = Field(default_factory=list, description="数据来源列表")
     cross_validated: bool = Field(default=False, description="是否经过 ≥2 源交叉验证")
     dispute: bool = Field(default=False, description="多源差异 > 5%，数据可信度低")
+
+
+# ---------------------------------------------------------------------------
+# 妙想 Skill 扩展 DTO (Phase: miaoxiang-integration)
+# ---------------------------------------------------------------------------
+
+
+class NewsItem(BaseModel):
+    """mx-search 资讯搜索结果条目。"""
+
+    title: str = Field(..., description="资讯标题")
+    source: str = Field(default="", description="来源（如东方财富、证券时报）")
+    date: str = Field(default="", description="发布日期")
+    content: str = Field(default="", description="正文/摘要内容")
+    secu_list: list[dict] = Field(default_factory=list, description="关联证券列表")
+    url: str = Field(default="", description="原文链接")
+    provider: str = Field(default="miaoxiang-search", description="数据提供方")
+
+
+class RelatedParty(BaseModel):
+    """mx-data 关联关系实体。"""
+
+    entity_name: str = Field(..., description="关联方名称")
+    relation_type: str = Field(default="", description="关系类型：股东/高管/子公司/关联交易")
+    stake_pct: Optional[float] = Field(default=None, description="持股比例 (%)")
+    position: str = Field(default="", description="职务")
+    description: str = Field(default="", description="关系描述")
+    provider: str = Field(default="miaoxiang-data", description="数据提供方")
+
+
+class ScreeningResult(BaseModel):
+    """mx-xuangu 选股筛选结果。"""
+
+    symbol: str = Field(..., description="股票代码")
+    name: str = Field(default="", description="股票简称")
+    market: str = Field(default="", description="市场（SH/SZ）")
+    price: Optional[float] = Field(default=None, description="最新价")
+    change_pct: Optional[float] = Field(default=None, description="涨跌幅 (%)")
+    pe_ttm: Optional[float] = Field(default=None, description="市盈率 TTM")
+    pb: Optional[float] = Field(default=None, description="市净率")
+    roe: Optional[float] = Field(default=None, description="净资产收益率 (%)")
+    market_cap: Optional[float] = Field(default=None, description="总市值")
+    extra_fields: dict = Field(default_factory=dict, description="来源返回的其他字段")
+    provider: str = Field(default="miaoxiang-xuangu", description="数据提供方")

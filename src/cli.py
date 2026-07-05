@@ -245,6 +245,9 @@ def cmd_preference(args: list[str]):
         print(os.path.abspath(loader.path))
     else:
         print(f"未知子命令: {sub}，可用: view | edit | reset | path")
+
+
+def cmd_feedback(args: list[str]):
     """用户反馈管理。"""
     sub = args[0] if args else "summary"
     collector = FeedbackCollector(db_path=":memory:")
@@ -284,6 +287,246 @@ def cmd_learn(args: list[str]):
         print(f"未知子命令: {sub}，可用: report")
 
 
+# ------------------------------------------------------------------
+# V4 新增: 妙想 Skill CLI 命令
+# ------------------------------------------------------------------
+
+def cmd_search_news(args: list[str]):
+    """mx-search 金融资讯搜索。"""
+    if not args:
+        print("用法: search-news <query> [--limit N]")
+        print("示例: search-news \"贵州茅台最新研报\"")
+        return
+
+    import argparse
+    parser = argparse.ArgumentParser(description="金融资讯搜索")
+    parser.add_argument("query", nargs="*", help="搜索查询（自然语言）")
+    parser.add_argument("--limit", type=int, default=10, help="返回数量上限")
+    parsed = parser.parse_args(args)
+
+    query = " ".join(parsed.query) if parsed.query else ""
+    if not query:
+        print("请提供搜索查询")
+        return
+
+    print(f"🔍 搜索: {query}")
+    agg = DataAggregator()
+    items = agg.search_news(query, max_results=parsed.limit)
+
+    if not items:
+        print("📭 无结果（mx-search 不可用或无匹配内容）")
+        return
+
+    print(f"\n📰 找到 {len(items)} 条资讯:\n")
+    for i, item in enumerate(items, 1):
+        print(f"{'─' * 60}")
+        print(f"  {i}. {item.title}")
+        if item.source:
+            print(f"     来源: {item.source}  |  日期: {item.date}")
+        if item.content:
+            content = item.content[:200].replace("\n", " ")
+            print(f"     {content}...")
+        if item.secu_list:
+            symbols = [s.get("secuCode", "") for s in item.secu_list[:3]]
+            print(f"     关联: {', '.join(symbols)}")
+
+
+def cmd_screen(args: list[str]):
+    """mx-xuangu 条件选股。"""
+    if not args:
+        print("用法: screen <conditions> [--industry INDUSTRY]")
+        print("示例: screen \"市盈率<20,ROE>15%\"")
+        print("      screen --industry 新能源 \"涨幅>1%\"")
+        return
+
+    import argparse
+    parser = argparse.ArgumentParser(description="条件选股")
+    parser.add_argument("conditions", nargs="*", help="选股条件（自然语言）")
+    parser.add_argument("--industry", type=str, default="", help="限定行业/板块")
+    parsed = parser.parse_args(args)
+
+    conditions = " ".join(parsed.conditions) if parsed.conditions else ""
+    if parsed.industry and conditions:
+        conditions = f"{parsed.industry}板块 {conditions}"
+    elif parsed.industry:
+        conditions = f"{parsed.industry}板块"
+
+    if not conditions:
+        print("请提供选股条件")
+        return
+
+    print(f"🔍 选股: {conditions}")
+    agg = DataAggregator()
+
+    if parsed.industry and not any(w in conditions for w in ["板块", "行业"]):
+        results = agg.screen_by_industry(parsed.industry)
+    else:
+        results = agg.screen_stocks(conditions)
+
+    if not results:
+        print("📭 无股票满足条件")
+        return
+
+    print(f"\n🏆 筛选结果: {len(results)} 只股票\n")
+    print(f"{'代码':<8s} {'名称':<10s} {'最新价':>8s} {'涨跌幅':>8s} {'市场':<4s}")
+    print("-" * 42)
+    for r in results[:30]:
+        price = f"{r.price:.2f}" if r.price else "N/A"
+        chg = f"{r.change_pct:+.2f}%" if r.change_pct is not None else "N/A"
+        print(f"{r.symbol:<8s} {r.name:<10s} {price:>8s} {chg:>8s} {r.market:<4s}")
+    if len(results) > 30:
+        print(f"... 还有 {len(results) - 30} 只")
+
+
+def cmd_related(args: list[str]):
+    """mx-data 关联关系查询。"""
+    if not args:
+        print("用法: related <symbol>")
+        print("示例: related 600519")
+        return
+
+    symbol = args[0]
+    print(f"🔗 关联关系: {symbol}")
+    agg = DataAggregator()
+    parties = agg.get_related_parties(symbol)
+
+    if not parties:
+        print("📭 无关联关系数据（mx-data 不可用或无数据）")
+        return
+
+    print(f"\n👥 关联方: {len(parties)} 个\n")
+    for p in parties:
+        type_icon = {"股东": "💰", "高管": "👔", "子公司": "🏢"}.get(p.relation_type, "📌")
+        print(f"  {type_icon} {p.entity_name}")
+        if p.relation_type:
+            print(f"     类型: {p.relation_type}")
+        if p.stake_pct:
+            print(f"     持股: {p.stake_pct:.2f}%")
+        if p.position:
+            print(f"     分类: {p.position}")
+
+
+def cmd_paper_trade(args: list[str]):
+    """mx-moni 模拟交易管理。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="模拟交易管理")
+    parser.add_argument("action", nargs="?", default="status",
+                        choices=["status", "positions", "balance", "orders", "buy", "sell", "cancel"])
+    parser.add_argument("--code", type=str, help="股票代码")
+    parser.add_argument("--price", type=float, help="委托价格")
+    parser.add_argument("--qty", type=int, default=100, help="委托数量")
+    parser.add_argument("--market", action="store_true", help="以市价委托")
+    parser.add_argument("--order-id", type=str, help="委托单ID（撤单时使用）")
+    parser.add_argument("--cancel-all", action="store_true", help="一键撤单")
+    parsed = parser.parse_args(args)
+
+    try:
+        from src.data.miaoxiang_provider import MiaoXiangProvider
+        mx = MiaoXiangProvider()
+    except Exception as e:
+        print(f"❌ 妙想 Provider 不可用: {e}")
+        return
+
+    action = parsed.action
+
+    if action == "status":
+        balance = mx.moni_get_balance()
+        positions = mx.moni_get_positions()
+        if balance:
+            data = balance.get("data", balance)
+            print(f"💰 资金: 总资产 {data.get('totalAssets', 'N/A')}  可用 {data.get('availBalance', 'N/A')}")
+        if positions:
+            data = positions.get("data", positions)
+            pos_list = data.get("posList", [])
+            print(f"📊 持仓: {data.get('posCount', len(pos_list))} 只")
+            for p in (pos_list or []):
+                print(f"  {p.get('secCode', '')} {p.get('secName', '')} "
+                      f"数量:{p.get('count', 0)} 成本:{p.get('costPrice', 0)} 盈亏:{p.get('profit', 0)}")
+
+    elif action == "positions":
+        result = mx.moni_get_positions()
+        print(result or "获取持仓失败")
+
+    elif action == "balance":
+        result = mx.moni_get_balance()
+        print(result or "获取资金失败")
+
+    elif action == "orders":
+        result = mx.moni_get_orders()
+        print(result or "获取委托失败")
+
+    elif action in ("buy", "sell"):
+        if not parsed.code:
+            print("❌ 请提供股票代码 --code")
+            return
+        if not parsed.market and not parsed.price:
+            print("❌ 请提供委托价格 --price 或使用 --market 市价委托")
+            return
+        result = mx.moni_place_trade(
+            stock_code=parsed.code,
+            trade_type=action,
+            price=parsed.price or 0.0,
+            quantity=parsed.qty,
+            use_market_price=parsed.market,
+        )
+        print(result or "委托失败")
+
+    elif action == "cancel":
+        if not parsed.cancel_all and not parsed.order_id:
+            print("❌ 请提供 --order-id 或 --cancel-all 一键撤单")
+            return
+        result = mx.moni_cancel_order(
+            order_id=parsed.order_id or "",
+            cancel_all=parsed.cancel_all,
+        )
+        print(result or "撤单失败")
+
+
+def cmd_poster(args: list[str]):
+    """mx-poster AI 社区发帖。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="AI 社区发帖")
+    parser.add_argument("--title", type=str, help="帖子标题")
+    parser.add_argument("--text", type=str, help="正文 HTML")
+    parser.add_argument("--from-verdict", type=str, help="从分析结果生成帖子 (symbol)")
+    parsed = parser.parse_args(args)
+
+    try:
+        from src.data.miaoxiang_provider import MiaoXiangProvider
+        mx = MiaoXiangProvider()
+    except Exception as e:
+        print(f"❌ 妙想 Provider 不可用: {e}")
+        return
+
+    if parsed.from_verdict:
+        symbol = parsed.from_verdict
+        print(f"📝 从 {symbol} 分析结果生成社区帖子...")
+        orch = Orchestrator()
+        result = orch.run(symbol)
+        if not result.verdict:
+            print("❌ 无分析结果")
+            return
+        v = result.verdict
+        title = f"{result.name} 投资价值分析"
+        text = (
+            f"<h3>综合评分: {v.score}/100</h3>"
+            f"<p>推荐: {v.recommendation}</p>"
+            f"<p>置信度: {v.confidence:.0%}</p>"
+            f"<p><strong>风险提示：</strong>以上为AI分析结果，不构成投资建议。投资有风险，入市需谨慎。</p>"
+        )
+        parsed = argparse.Namespace(title=title, text=text, from_verdict=None)
+
+    if not parsed.title or not parsed.text:
+        print("❌ 请提供 --title 和 --text，或使用 --from-verdict <symbol>")
+        return
+
+    result = mx.poster_post(parsed.title, parsed.text)
+    if result:
+        print(f"✅ 已发布: {parsed.title}")
+    else:
+        print("❌ 发布失败（检查授权和 MX_APIKEY）")
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法: python -m src.cli <command> [args]")
@@ -291,6 +534,8 @@ def main():
         print("  backtest-optimize | backtest-compare")
         print("  diagnose <code> | game-theory | calibrate | profile | preference")
         print("  feedback <add|summary> | evolve | learn <report>")
+        print("  search-news <query> | screen <conditions> | related <symbol>")
+        print("  paper-trade <action> | poster --title --text")
         return
 
     cmd = sys.argv[1]
@@ -312,6 +557,12 @@ def main():
         "feedback": lambda: cmd_feedback(args),
         "evolve": cmd_evolve,
         "learn": lambda: cmd_learn(args),
+        # V4 妙想 Skill 命令
+        "search-news": lambda: cmd_search_news(args),
+        "screen": lambda: cmd_screen(args),
+        "related": lambda: cmd_related(args),
+        "paper-trade": lambda: cmd_paper_trade(args),
+        "poster": lambda: cmd_poster(args),
     }
 
     handler = commands.get(cmd)

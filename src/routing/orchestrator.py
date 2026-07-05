@@ -164,6 +164,10 @@ class Orchestrator:
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = self._get_topic_adjustments()
 
+        # ---- V4 妙想增强: 资讯上下文 + 关联关系 ----
+        news_context = self._get_news_context(symbol, name)
+        related_parties = self._get_related_parties(symbol)
+
         # 增强宏观 dict
         enriched_macro = macro or {}
         if macro_regime is not None:
@@ -195,6 +199,7 @@ class Orchestrator:
             macro_regime=macro_regime,
             northbound_profile=nb_profile,
             earnings_factor=earnings_factor,
+            news_context=news_context,  # V4: 妙想资讯上下文
         )
         result.report = report
 
@@ -244,7 +249,10 @@ class Orchestrator:
             result.blocked_by.extend(self.enforcer.get_warnings(l3_violations))
 
         # Step 6: L4 风控官
-        risk = self.l4.check(signal, portfolio, position_limits=position_limits)
+        enriched_portfolio = (portfolio or {}).copy()
+        if related_parties:
+            enriched_portfolio["related_parties"] = related_parties  # V4: 关联关系风险
+        risk = self.l4.check(signal, enriched_portfolio, position_limits=position_limits)
         result.risk = risk
 
         # Phase 1: L4 护栏检查
@@ -550,3 +558,35 @@ class Orchestrator:
         lpr_1y = getattr(macro_regime, "lpr_1y", None)
         # Default to stable - actual trend needs historical comparison
         return "stable"
+
+    # ------------------------------------------------------------------
+    # V4 妙想增强: 资讯上下文 + 关联关系
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_news_context(symbol: str, name: str) -> list[dict]:
+        """从 mx-search 获取个股最新资讯上下文。"""
+        try:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            mx = agg.miaoxiang
+            if mx is None:
+                return []
+            # 合并公告 + 研报 + 新闻
+            items = mx.search_news(f"{name} {symbol} 最新公告 研报 新闻", max_results=5)
+            return [item.model_dump() if hasattr(item, "model_dump") else item for item in items]
+        except Exception as e:
+            logger.debug("News context unavailable for %s: %s", symbol, e)
+        return []
+
+    @staticmethod
+    def _get_related_parties(symbol: str) -> list[dict]:
+        """从 mx-data 获取个股关联方信息。"""
+        try:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            parties = agg.get_related_parties(symbol)
+            return [p.model_dump() if hasattr(p, "model_dump") else p for p in parties]
+        except Exception as e:
+            logger.debug("Related parties unavailable for %s: %s", symbol, e)
+        return []

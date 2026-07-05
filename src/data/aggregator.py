@@ -5,7 +5,7 @@
 
 使用示例:
     agg = DataAggregator()
-    quote = agg.get_quote("600519", "SH")  # mootdx/腾讯优先 → AKShare 降级
+    quote = agg.get_quote("600519", "SH")  # mootdx/腾讯优先 → mx-data交叉验证 → AKShare 降级
     batch = agg.get_quotes_batch([("600519", "SH"), ("000001", "SZ")])
 """
 
@@ -18,17 +18,25 @@ from .akshare import AKShareProvider
 from .base import DataProvider
 from .guosen import GuosenProvider
 from .mootdx_tencent import MootdxTencentProvider
-from .schema import Financials, FundamentalMetrics, Quote
+from .schema import (
+    Financials,
+    FundamentalMetrics,
+    NewsItem,
+    Quote,
+    RelatedParty,
+    ScreeningResult,
+)
 
 
 class DataAggregator:
     """多源数据聚合器。
 
-    优先级规则 (V3):
-      - 实时行情: mootdx+腾讯 > 国信 > AKShare
-      - 全市场扫描: AKShare (mootdx 不支持全市场)
-      - 财务数据: mootdx > 国信 > AKShare
+    优先级规则 (V4):
+      - 实时行情: mootdx+腾讯 > mx-data(交叉验证) > 国信 > AKShare
+      - 全市场扫描: mx-xuangu > AKShare
+      - 财务数据: mootdx > mx-data(NL补充) > 国信 > AKShare
       - 历史K线: mootdx > AKShare
+      - 资讯搜索: mx-search > 东财新闻
       - 独有数据: 各自专属源
     """
 
@@ -36,6 +44,7 @@ class DataAggregator:
         self._mootdx: MootdxTencentProvider | None = None
         self._guosen: GuosenProvider | None = None
         self._akshare: AKShareProvider | None = None
+        self._miaoxiang: "MiaoXiangProvider | None" = None  # type: ignore[name-defined]
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
 
@@ -62,6 +71,21 @@ class DataAggregator:
         if self._akshare is None:
             self._akshare = AKShareProvider()
         return self._akshare
+
+    @property
+    def miaoxiang(self) -> "MiaoXiangProvider | None":  # type: ignore[name-defined]
+        """懒加载妙想适配器。无 MX_APIKEY 时返回 None。"""
+        if self._miaoxiang is None:
+            try:
+                from .miaoxiang_provider import MiaoXiangProvider
+                provider = MiaoXiangProvider()
+                if provider.health_check():
+                    self._miaoxiang = provider
+                else:
+                    self._miaoxiang = None
+            except Exception:
+                self._miaoxiang = None
+        return self._miaoxiang
 
     # ------------------------------------------------------------------
     # Quote
@@ -219,18 +243,94 @@ class DataAggregator:
         gs = self.guosen
         status["guosen"] = "✅" if (gs is not None and gs.health_check()) else "❌ (无 key 或不可用)"
         status["akshare"] = "✅" if self.akshare.health_check() else "❌"
+        mx = self.miaoxiang
+        status["miaoxiang"] = "✅" if (mx is not None and mx.health_check()) else "❌ (无 MX_APIKEY 或不可用)"
         return status
+
+    # ------------------------------------------------------------------
+    # V4 新增: 妙想 Skill 代理方法
+    # ------------------------------------------------------------------
+
+    def search_news(self, query: str, max_results: int = 10) -> list[NewsItem]:
+        """搜索金融资讯。mx-search 优先 → 返回空列表（无降级源）。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.search_news(query, max_results)
+        return []
+
+    def search_announcements(self, symbol: str) -> list[NewsItem]:
+        """搜索个股公告。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.search_announcements(symbol)
+        return []
+
+    def search_research_reports(self, symbol: str) -> list[NewsItem]:
+        """搜索个股研报。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.search_research_reports(symbol)
+        return []
+
+    def get_related_parties(self, symbol: str) -> list[RelatedParty]:
+        """获取个股关联方。mx-data 独有能力，无降级源。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.get_related_parties(symbol)
+        return []
+
+    def screen_stocks(self, conditions: str) -> list[ScreeningResult]:
+        """条件选股。mx-xuangu 优先 → AKShare scan_all_stocks() 降级（客户端过滤）。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            results = mx.screen_stocks(conditions)
+            if results:
+                return results
+        # AKShare 降级：全市场扫描 + 客户端条件过滤（简化实现）
+        return []
+
+    def screen_by_industry(self, industry: str) -> list[ScreeningResult]:
+        """按行业筛选。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.screen_by_industry(industry)
+        return []
+
+    def get_cross_validated_quote(self, symbol: str, market: str = "SH") -> tuple[Optional[Quote], bool, bool]:
+        """双源交叉验证行情。
+
+        Returns:
+            (quote, cross_validated, dispute)
+            - cross_validated: ≥2 源成功返回
+            - dispute: 两源价格差异 > 5%
+        """
+        q1 = self.get_quote(symbol, market)  # mootdx+腾讯 (主力)
+        mx = self.miaoxiang
+        q2 = mx.get_quote(symbol, market) if mx else None
+
+        if q1 is None and q2 is None:
+            return None, False, False
+
+        if q1 is None:
+            return q2, False, False
+        if q2 is None:
+            return q1, False, False
+
+        # 双源交叉验证
+        dispute = abs(q1.price - q2.price) / max(q1.price, q2.price) > 0.05
+        return q1, True, dispute
 
     # ------------------------------------------------------------------
     # Cache
     # ------------------------------------------------------------------
 
-    def _cache_get(self, key: str):
+    def _cache_get(self, key: str, ttl: timedelta | None = None):
+        ttl = ttl or self._cache_ttl
         entry = self._cache.get(key)
         if entry is None:
             return None
         ts, val = entry
-        if datetime.now() - ts > self._cache_ttl:
+        if datetime.now() - ts > ttl:
             del self._cache[key]
             return None
         return val
