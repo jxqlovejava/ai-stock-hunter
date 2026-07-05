@@ -38,6 +38,24 @@ from .feedback import (
     FeedbackSummary,
     FeedbackType,
 )
+from .preference.adapter import (
+    resolve_competence_penalty,
+    resolve_macro_cap_multiplier,
+    resolve_position_limits,
+    resolve_rule_filter,
+    resolve_weights,
+)
+from .preference.loader import InvestorPreferenceLoader
+from .preference.model import (
+    CircleOfCompetence,
+    InvestmentGoal,
+    InvestorPreference,
+    InvestorTier,
+    PositionLimits,
+    RiskProfile,
+    ScoreWeights,
+    TradingStyle,
+)
 from .profile import ProfileTracker, UserProfile
 from .report import LearningReport, ReportGenerator
 from .signal_tracker import (
@@ -109,6 +127,20 @@ class DecisionJournal:
 
 __all__ = [
     "DecisionJournal",
+    "InvestorPreference",
+    "RiskProfile",
+    "InvestmentGoal",
+    "TradingStyle",
+    "InvestorTier",
+    "PositionLimits",
+    "CircleOfCompetence",
+    "ScoreWeights",
+    "InvestorPreferenceLoader",
+    "resolve_weights",
+    "resolve_rule_filter",
+    "resolve_position_limits",
+    "resolve_macro_cap_multiplier",
+    "resolve_competence_penalty",
     "ProfileTracker",
     "UserProfile",
     "FeedbackCollector",
