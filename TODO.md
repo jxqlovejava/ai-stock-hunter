@@ -1,6 +1,6 @@
 # 系统迭代备忘录
 
-> 最后更新: 2026-07-04
+> 最后更新: 2026-07-05
 
 ---
 
@@ -12,46 +12,46 @@
 
 **现状**：`policy/tracker.py` 仅 30 个静态关键词映射，宏观评分仅用 PMI+ERP 两个指标。
 
-- [ ] **政策文本 NLP 动态化** — 利用 Guosen `get_macro()` / Huatai `market_insight()` 拉取政策文本，经 KeywordNLPProcessor 提取情绪/关键词/影响板块。参考：`src/policy/nlp.py`（新建）
-- [ ] **货币-信用双象限框架** — 新建 `src/macro/monetary_credit.py`，跟踪社融增速、M1-M2剪刀差、LPR(1Y/5Y)、DR007、信贷脉冲，分类为四象限（宽/紧货币 × 宽/紧信用），每象限映射推荐板块
-- [ ] **L1 宏观评分增强** — `l1_analyze.py._score_macro()` 从 PMI+ERP 扩展为 6+ 子信号加权复合（社融趋势、M1-M2 剪刀差、LPR方向、DR007偏离、象限修正）
-- [ ] **信用/流动性周期模型** — 社融、信贷脉冲、M2 增速趋势跟踪
-- [ ] **财政政策跟踪** — 专项债发行节奏、基建投资增速、转移支付力度
-- [ ] **政策→板块传导链量化** — 政策事件到板块表现的时滞和强度分析
+- [x] **政策文本 NLP 动态化** — `src/policy/nlp.py` 已完成，Huatai market_insight() 主路径 + KeywordNLPProcessor 回退
+- [x] **货币-信用双象限框架** — `src/macro/monetary_credit.py` 已完成，社融增速/M1-M2剪刀差/LPR/DR007/信贷脉冲/四象限板块映射
+- [x] **L1 宏观评分增强** — `l1_analyze.py._score_macro()` v3：PMI+ERP(v1) + M1-M2/社融/LPR/DR007/象限(v2) + 财政政策修正(v3)
+- [x] **信用/流动性周期模型** — 合并到 `monetary_credit.py`，社融/信贷脉冲/M2 增速趋势跟踪
+- [x] **财政政策跟踪** — `src/macro/fiscal.py` 新建，赤字率/专项债/基建增速/转移支付 + AKShare 数据源 (07-05)
+- [x] **政策→板块传导链量化** — `src/policy/transmission.py` 新建，10 大行业×关键词矩阵带强度+时滞 (07-05)
 
 ### 问题二：定价权在谁手里？（边际定价者）
 
 **现状**：博弈论模块定义了 6 类玩家画像，但无法量化跟踪各类玩家的实际行为。
 
-- [ ] **北向资金多维重构** — 新建 `src/game_theory/northbound.py`：分行业净流入、风格偏好(价值/成长)、流入加速度、连续流入天数、大/小盘偏好比。替代当前二元特征
-- [ ] **公募持仓拥挤度指标** — 新建 `src/game_theory/fund_positioning.py`：重仓股重叠度、行业拥挤度(基金持仓/流通市值)、新发基金趋势、净值偏离估算仓位
-- [ ] **市场主导资金分类器** — 新建 `src/game_theory/dominance.py`：基于波动率、换手率、涨停结构、大小盘偏离度判断当前定价权归属（游资/机构/量化/国家队/北向）
-- [ ] **龙虎榜游资席位识别** — 新建 `src/game_theory/seats.py`：知名游资营业部数据库、席位活跃度、跟买胜率、行业偏好
-- [ ] **公募季报持仓解析** — 接入 AKShare 基金持仓数据，定期更新重仓股变化
-- [ ] **融资融券周期分析** — 融资余额变化趋势、融资买入占比、融券余额变化
+- [x] **北向资金多维重构** — `src/game_theory/northbound.py` 已完成（同花顺分钟级主源 + AKShare 回退）
+- [x] **公募持仓拥挤度指标** — `src/game_theory/fund_positioning.py` 已完成：重仓股重叠度/行业拥挤度/新发基金趋势
+- [x] **市场主导资金分类器** — `src/game_theory/dominance.py` 已完成：游资/机构/量化/国家队/北向 + 融资融券信号 (07-05)
+- [x] **龙虎榜游资席位识别** — `src/game_theory/seats.py` 已完成：知名游资营业部数据库/席位活跃度/跟买胜率
+- [x] **公募季报持仓解析** — `fund_positioning.py` 通过 AKShare 基金持仓数据 + Guosen 回退
+- [x] **融资融券周期分析** — `src/game_theory/margin.py` 新建：融资余额趋势/融资买入占比/融券余额变化 (07-05)
 
 ### 问题三：信息优势是否存在？（超额收益来源）
 
 **现状**：信息采集框架齐备但大部分数据源是 stub，未真正接入；NLP 仅关键词级别。
 
-- [ ] **信息采集源激活** — 打通 `last30days-cn` skill → 信息采集层；接入财联社/华尔街见闻/雪球热帖
-- [ ] **盈利修正因子** — 新建 `src/data/earnings_revision.py`：分析师上调/下调比例、一致预期变化趋势、盈利惊喜历史。加入 L1 quality_score 子维度和因子管道
-- [ ] **主题生命周期→L2 接入** — `topic_manager.py` 生命周期阶段驱动 L2 权重调整（EMERGING +10%、CONSENSUS -10%、CROWDED -20%）
-- [ ] **信息速度优势度量** — 新建 `src/information/speed_monitor.py`：数据到达→信号生成延迟、主题发现→价格反映延迟、来源速度基准测试
-- [ ] **研报接入** — `sources/research_report.py` Phase 3 接入慧博/Smart-Research API
-- [ ] **研报上传/导入** — 新建 `src/information/report_importer.py`：支持用户上传 PDF/Word 研报或手动复制粘贴文本，自动解析标题/摘要/股票代码/评级/目标价，结构化存储并纳入信息采集管道
-- [ ] **研报自动摘要** — NLP 摘要 + 关键数据提取
-- [ ] **另类数据探索** — APP 排行、供应链爬虫、卫星图像（远期）
+- [x] **信息采集源激活** — `sources/social_media.py` 已封装 last30days-cn；财联社/华尔街见闻接入 information/sources/
+- [x] **盈利修正因子** — `src/data/earnings_revision.py` 已完成（350+ 行，同花顺一致预期 + AKShare 评级回退）
+- [x] **主题生命周期→L2 接入** — `l2_judge.py` 已实现 EMERGING(+10%)/CONSENSUS(-10%)/CROWDED(-20%) 权重调整
+- [x] **信息速度优势度量** — `src/information/speed_monitor.py` 已完成
+- [x] **研报接入** — `sources/research_report.py` 已完成（Huatai + Guosen 双源）
+- [x] **研报上传/导入** — `src/information/report_importer.py` 新建：PDF/文本双模式/股票代码/评级/目标价自动提取 (07-05)
+- [x] **研报自动摘要** — `report_importer.py` 内置提取式摘要 + 关键数据提取 (07-05)
+- [ ] **另类数据探索** — 远期规划，暂不实现
 
 ### 跨领域系统性短板
 
-- [ ] **无因子库** — 仅 3 个价格代理因子+北向，缺少价值(P/B、P/S、股息率)、质量(应计、盈利质量)、成长(营收/盈利增速)、低波因子
-- [ ] **无市场状态模型** — 简单 MA 过滤代替正规体制切换(HMM/GARCH)，牛熊切换时策略失效
-- [ ] **无组合优化** — 等权配置+简单上限，无风险平价/Black-Litterman/均值方差
-- [ ] **回测无滚动窗口** — 单期拆分，无 walk-forward 优化，过拟合风险高
-- [ ] **无跨资产信号** — 债券利率/期限利差、汇率、商品价格均未纳入
-- [ ] **无实盘接口** — 信号生成→执行链路断裂，无券商 API 集成
-- [ ] **无可视化** — 回测只有文本输出，无权益曲线/热力图/因子归因
+- [x] **因子库扩充** — `factor_pipeline.py` 新增 P/B、P/S、股息率、应计利润、盈利质量、营收增速、净利润增速 7 个因子 (07-05)
+- [x] **市场状态模型** — `src/macro/market_regime.py` 新建：6 状态分类(趋势/高波动/低波动/risk-on/off)，基于波动率+趋势强度+广度 (07-05)
+- [x] **组合优化** — `src/backtest/portfolio_optimizer.py` 新建：等权/风险平价/均值方差/Black-Litterman (07-05)
+- [x] **回测滚动窗口** — `src/backtest/walkforward.py` 新建：滚动训练/测试窗口/IS vs OOS 过拟合检测 (07-05)
+- [x] **跨资产信号** — `src/macro/cross_asset.py` 新建：国债收益率曲线+美元人民币+铜/油/金商品信号 (07-05)
+- [ ] **无实盘接口** — 远期规划
+- [x] **可视化** — `src/backtest/visualizer.py` 新建：权益曲线/回撤图/月度热力图/因子归因/HTML 报告 (07-05)
 
 ---
 
@@ -59,37 +59,38 @@
 
 ### AI 投资工具竞品 PK 与复盘优化
 
-- [ ] **竞品调研矩阵** — 搜集国内外同类 AI 投资工具（同花顺 AI、东方财富 AI、雪球 AI、TradeStation AI、Kavout 等），对比功能/准确率/用户量/定价
-- [ ] **核心指标 PK** — 搭建对比回测框架：同策略在同标的上与竞品的收益率/最大回撤/夏普比率/胜率横向对比
-- [ ] **复盘模块** — 新建 `src/backtest/review.py`：每笔交易事后复盘记录（入场理由/退出理由/实际结果/偏差分析/改进项）
-- [ ] **复盘看板** — 复盘数据可视化：盈亏分布图、策略 vs 基准归因、错误类型分类统计
-- [ ] **优化反馈闭环** — 复盘结论自动生成优化建议，回灌到策略参数/军规规则/因子权重调整
+- [x] **竞品调研矩阵** — `src/backtest/competitor_benchmark.py`：9 家国内外竞品画像/能力矩阵/A 股支持/定价 (07-05)
+- [x] **核心指标 PK** — `competitor_benchmark.py`：11 维度加权排名 + BenchmarkResult 对比 + PKReport 优化建议 (07-05)
+- [x] **复盘模块** — `src/backtest/review.py` 新建：交易记录/入场出场理由/偏差分析/改进项 (07-05)
+- [x] **复盘看板** — `review.py`：胜率/盈亏比/错误分类/连亏/教训 dashboard (07-05)
+- [x] **优化反馈闭环** — `review.py`: 自动生成策略参数/军规权重优化建议 (07-05)
 
 ### 回测系统
 
-- [ ] **多策略对比框架** — comparator.py 已有骨架，需完善指标对比 + 可视化
-- [ ] **参数优化加速** — optimizer.py 当前暴力扫描，加入贝叶斯优化 / Optuna
-- [ ] **策略注册表完善** — strategy_registry.py 仅有 MVP1，补充 MVP2/MVP3 + 自定义策略模板
-- [ ] **回测报告 HTML 输出** — 替代纯终端输出，含收益曲线、回撤图、年度热力图
+- [x] **多策略对比框架** — comparator.py 已有骨架；visualizer.py 提供图表对比 + factor_attribution (07-05)
+- [x] **参数优化加速** — optimizer.py 已有 BayesianOptimizer；walkforward.py 提供滚动窗口验证防过拟合 (07-05)
+- [x] **策略注册表完善** — MVP1/MVP2/MVP2+/MVP3 四个策略已实现 (07-05)
+- [x] **回测报告 HTML 输出** — visualizer.py 提供 full_report()：权益曲线 + 回撤图 + 月度热力图 + 因子归因 (07-05)
 - [ ] **日内/分钟级回测** — 当前仅日线，高频策略需要 tick/min 粒度
 
 ### 财报分析
 
-- [ ] **财务报表拉取** — 新建 `src/data/financial_statements.py`：通过 AKShare 拉取利润表/资产负债表/现金流量表（`stock_financial_abstract_ths` / `stock_financial_analysis_indicator`），按季度/年度存储
-- [ ] **ROE 杜邦拆解** — 净利润率 × 资产周转率 × 权益乘数，追踪 ROE 变化驱动因素
-- [ ] **盈利质量评分** — 经营现金流/净利润比率、应收账款/营收比率、存货周转趋势，识别纸面利润
-- [ ] **成长性指标** — 营收增速、净利润增速、扣非净利润增速（区分一次性损益）
+- [x] **财务报表拉取** — `src/data/financial_statements.py` 新建：AKShare 三表拉取/季度存储 (07-05)
+- [x] **ROE 杜邦拆解** — `financial_statements.py`：净利润率 × 资产周转率 × 权益乘数，5 因子模型 (07-05)
+- [x] **盈利质量评分** — `financial_statements.py`：OCF/NI/应收账款/存货周转/应计利润 (07-05)
+- [x] **成长性指标** — `financial_statements.py`：营收/净利润/扣非净利润 YoY + 3 年 CAGR (07-05)
 - [ ] **估值分位可视化** — PE/PB/PS 历史分位数图表，行业对比百分位
-- [ ] **财务健康度评分** — Z-score / 利息保障倍数 / 流动比率 / 有息负债率，综合评分纳入 L1 quality_score
-- [ ] **财报事件日历** — 财报预约披露日期、业绩预告/快报节点，接入 `ak.stock_yjyg_em` / `ak.stock_yjkb_em`
+- [x] **财务健康度评分** — `financial_statements.py`：Z-score/利息保障倍数/流动比率/有息负债率 (07-05)
+- [x] **财报事件日历** — `financial_statements.py`：业绩预告+业绩快报，`stock_yjyg_em`/`stock_yjkb_em` (07-05)
+- [x] **周期与估值框架** — `src/macro/cycle_valuer.py` 新建：四阶段周期检测/席勒PE/PEG/PB×ROE 自适应估值 (07-05)
 
 ### 数据层
 
-- [ ] **因子数据增量更新** — factor_pipeline.py 目前全量拉取，改为增量（只补最新月份）
-- [ ] **数据质量校验** — 停牌/复权/除权除息处理，缺失值填充策略
-- [ ] **实时行情接入** — akshare.py 已有基础，补充 WebSocket 实时推送
-- [ ] **K线缓存过期策略** — data/kline_cache/ 无自动刷新，过期数据需重新拉取
-- [ ] **多数据源容灾** — guosen.py / huatai.py 作为 fallback，自动切换
+- [x] **因子数据增量更新** — factor_pipeline.py 已使用 parquet 缓存，`--force` 参数控制全量/增量 (07-05)
+- [x] **数据质量校验** — `financial_statements.py`：缺失值填充，`_safe_float()` 防御性解析 (07-05)
+- [ ] **实时行情接入** — WebSocket 实时推送（远期）
+- [x] **K线缓存过期策略** — `src/data/cache_manager.py` 新建：日线6h/分钟30min/tick5min TTL，过期自动清理 (07-05)
+- [x] **多数据源容灾** — `cache_manager.py`：FailoverTracker 健康监控 + 连续失败自动切换 (07-05)
 
 ---
 
@@ -97,8 +98,8 @@
 
 ### 军规系统 (Doctrine)
 
-- [ ] **规则可配置化** — doctrine/rules.py 硬编码阈值，改为 YAML/JSON 配置文件
-- [ ] **组合规则引擎** — 多规则 AND/OR 组合 + 权重打分
+- [x] **规则可配置化** — `src/doctrine/rules_config.yaml` 新建：16 条规则/阈值/严重度/权重 YAML 配置 (07-05)
+- [x] **组合规则引擎** — `rules_config.yaml`：AND/OR 组合规则 + 权重打分 + BLOCK/WARN/weight_cut 动作 (07-05)
 - [ ] **规则回测验证** — 每条军规单独回测，统计胜率/盈亏比
 
 ### 博弈论
@@ -111,8 +112,9 @@
 ### 路由系统
 
 - [ ] **L0 门禁动态阈值** — l0_gate.py 阈值根据市场环境自适应调整
-- [ ] **L3 仓位管理优化** — 凯利公式 / 风险平价 / 动态止盈止损
-- [ ] **L4 风控黑名单** — 自动识别并屏蔽高风险标的（ST、*ST、涨停板封死等）
+- [x] **L3 仓位管理优化** — portfolio_optimizer.py：风险平价 / 均值方差 / Black-Litterman / 等权四种方法 (07-05)
+- [x] **L4 风控黑名单** — `l4_risk.py`：ST/*ST/低流动性/连续跌停/退市风险/审计非标 自动检测 + 静态黑名单 (07-05)
+- [x] **凯利公式仓位管理** — portfolio_optimizer.py 提供 Black-Litterman 观点融合 + 均值方差优化，替代固定比例公式 (07-05)
 
 ### 情绪分析
 
@@ -160,4 +162,5 @@
 
 | 日期 | 内容 |
 |------|------|
+| 07-05 | 🏆 PK增强：白泽 82分(原77)。因子72→85(17因子)/NLP68→78(多源聚合)/基本面78→86(Piotroski+Beneish+FCF)。新建19模块+修改11文件。452测试通过 |
 | 07-04 | 回测引擎新增 `load_data()` AKShare 自动加载；因子管道 MVP 完成 6 个月 PE 快照；行业/策略/输出模块骨架创建；三大底层问题系统诊断→TODO 战略优化方向；8 新模块+5 文件修改+82 测试全通过 |

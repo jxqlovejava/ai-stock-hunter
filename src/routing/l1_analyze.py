@@ -18,6 +18,7 @@ from typing import Optional
 from src.data.source_citation import SourceCitation
 from src.industry.bottleneck import BottleneckAnalysis, BottleneckType
 from src.industry.supply_chain import classify_stock
+from src.alpha.schema import AlphaProfile
 
 
 @dataclass
@@ -32,6 +33,15 @@ class AnalysisReport:
     earnings_revision_score: float = 50.0  # Phase 3: 盈利修正因子
     bottleneck_analysis: Optional[BottleneckAnalysis] = None  # cyberagent 瓶颈分析
     sentiment_signal: str = "NEUTRAL"
+    alpha_profile: Optional[AlphaProfile] = None  # Phase 4: Alpha Lens 视角
+    executive_score: float = 50.0     # V4: 高管因子评分
+    executive_risks: list[str] = field(default_factory=list)  # V4: 高管风险提示
+    # Phase 5: 估值 + 周期
+    valuation_score: float = 50.0        # 多维估值综合评分
+    valuation_analysis: Optional[object] = None  # ValuationResult DTO
+    cycle_score: float = 50.0            # 经济周期友好度 0-100
+    cycle_phase: str = ""                # 周期阶段名称
+    cycle_analysis: Optional[object] = None  # CycleAnalysis DTO
     bull_case: str = ""
     bear_case: str = ""
     bottlenecks: list[str] = field(default_factory=list)
@@ -56,16 +66,34 @@ class L1Analyzer:
         macro_regime: Optional[object] = None,  # MacroRegime from src.macro
         northbound_profile: Optional[object] = None,  # NorthboundProfile
         earnings_factor: Optional[object] = None,  # EarningsRevisionFactor
+        fiscal_regime: Optional[object] = None,  # FiscalRegime from src.macro
+        alpha_profile: Optional[AlphaProfile] = None,  # Phase 4: Alpha Lens 视角
+        executive: Optional[dict] = None,              # V4: 高管数据
+        valuation_result: Optional[object] = None,     # Phase 5: ValuationResult
+        cycle_analysis: Optional[object] = None,       # Phase 5: CycleAnalysis
     ) -> AnalysisReport:
         report = AnalysisReport(symbol=symbol, name=name)
 
         if macro:
-            report.macro_score = self._score_macro(macro, macro_regime)
+            report.macro_score = self._score_macro(macro, macro_regime, fiscal_regime)
 
         if quote and financials:
-            report.value_score = self._score_value(quote)
+            report.value_score = self._score_value(quote, valuation_result)
             report.quality_score = self._score_quality(financials, earnings_factor)
             report.momentum_score = self._score_momentum(quote, northbound_profile)
+
+        # Phase 5: 估值评分（独立于 value_score）
+        report.valuation_score = self._score_valuation(valuation_result)
+        if valuation_result is not None:
+            report.valuation_analysis = valuation_result
+
+        # Phase 5: 周期评分
+        report.cycle_score = self._score_cycle(cycle_analysis)
+        if cycle_analysis is not None:
+            report.cycle_phase = getattr(cycle_analysis, "phase", None)
+            if hasattr(report.cycle_phase, "value"):
+                report.cycle_phase = report.cycle_phase.value
+            report.cycle_analysis = cycle_analysis
 
         if earnings_factor is not None:
             report.earnings_revision_score = self._get_revision_score(earnings_factor)
@@ -76,11 +104,21 @@ class L1Analyzer:
         if sentiment:
             report.sentiment_signal = sentiment.get("level", "NEUTRAL")
 
+        # Phase 4: Alpha Lens 注入
+        report.alpha_profile = alpha_profile
+
+        # V4: 高管因子评分
+        exec_result = self._score_executive(executive)
+        report.executive_score = exec_result["score"]
+        report.executive_risks = exec_result["risks"]
+        if report.executive_risks:
+            report.confidence = max(0.3, report.confidence - 0.05)
+
         report.bull_case = self._bull_case(name, quote, financials)
         report.bear_case = self._bear_case(name, quote, financials)
 
         # Phase 1: 填充数据溯源和信心度
-        report.source_citations = self._collect_citations(quote, financials, macro)
+        report.source_citations = self._collect_citations(quote, financials, macro, executive)
         report.confidence = self._calc_confidence(report, quote, financials)
         report.data_freshness = datetime.now()
         return report
@@ -90,6 +128,7 @@ class L1Analyzer:
         quote: dict | None,
         financials: list | None,
         macro: dict | None,
+        executive: dict | None = None,
     ) -> list[SourceCitation]:
         """收集所有数据点的来源引用。"""
         citations: list[SourceCitation] = []
@@ -107,6 +146,11 @@ class L1Analyzer:
             provider = macro.get("_source", "akshare")
             citations.append(SourceCitation(
                 provider=provider, field="macro", confidence=0.75,
+            ))
+        if executive:
+            citations.append(SourceCitation(
+                provider="miaoxiang-data-executive", field="executive",
+                confidence=0.80, data_freshness=14400,  # 4h in seconds
             ))
         return citations
 
@@ -126,6 +170,7 @@ class L1Analyzer:
         scores = [
             report.macro_score, report.value_score,
             report.quality_score, report.momentum_score,
+            report.valuation_score, report.cycle_score,
         ]
         if len(scores) > 1:
             avg = sum(scores) / len(scores)
@@ -153,12 +198,11 @@ class L1Analyzer:
         analysis.bottleneck_score = score_map.get(node.bottleneck_type, 0)
         return analysis
 
-    def _score_macro(self, macro: dict, macro_regime: Optional[object] = None) -> float:
-        """宏观环境打分（增强版）。
-
-        基础: PMI + ERP (v1)
-        增强: M1-M2剪刀差 + 社融增速 + LPR方向 + DR007 + 货币信用象限修正
-        """
+    def _score_macro(
+        self, macro: dict, macro_regime: Optional[object] = None,
+        fiscal_regime: Optional[object] = None,
+    ) -> float:
+        """宏观环境打分 v3 — 货币信用 + 财政政策双重视角。"""
         score = 50.0
 
         # ---- v1 基础信号 ----
@@ -171,11 +215,11 @@ class L1Analyzer:
         m1_m2_gap = macro.get("m1_m2_gap")
         if m1_m2_gap is not None:
             if m1_m2_gap > 3.0:
-                score += 10  # 资金活化程度高
+                score += 10
             elif m1_m2_gap > 0:
                 score += 5
             elif m1_m2_gap < -2.0:
-                score -= 10  # 资金沉淀严重
+                score -= 10
             else:
                 score -= 3
 
@@ -189,13 +233,13 @@ class L1Analyzer:
 
         lpr_direction = macro.get("lpr_direction", "stable")
         if lpr_direction == "falling":
-            score += 5  # 降息利好
+            score += 5
         elif lpr_direction == "rising":
             score -= 5
 
         dr007_position = macro.get("dr007_position", "neutral")
         if dr007_position == "below_policy":
-            score += 5  # 流动性充裕
+            score += 5
         elif dr007_position == "above_policy":
             score -= 5
 
@@ -212,11 +256,49 @@ class L1Analyzer:
             elif quadrant == Quadrant.TIGHT_MONEY_TIGHT_CREDIT:
                 score -= 15
 
+        # ---- v3 财政政策修正 ----
+        if fiscal_regime is not None:
+            fiscal_score = getattr(fiscal_regime, "fiscal_score", 50)
+            fiscal_stance = getattr(fiscal_regime, "fiscal_stance", "neutral")
+            score = score * 0.85 + fiscal_score * 0.15
+            if fiscal_stance == "expansionary":
+                score += 3
+            elif fiscal_stance == "tightening":
+                score -= 3
+
         return max(0, min(100, score))
 
-    def _score_value(self, quote: dict) -> float:
+    def _score_value(self, quote: dict, valuation_result: Optional[object] = None) -> float:
+        """价值评分：优先使用 ValuationAnalyzer 的 composite_score。
+
+        当 valuation_result 可用时，使用其综合评分。
+        回退到简单 PE 分位逻辑。
+        """
+        if valuation_result is not None:
+            composite = getattr(valuation_result, "composite_score", None)
+            if composite is not None:
+                return float(composite)
         pe_pct = quote.get("pe_percentile", 50)
         return max(0, min(100, 100 - pe_pct))
+
+    def _score_valuation(self, valuation_result: Optional[object] = None) -> float:
+        """估值评分 = ValuationAnalyzer composite_score。"""
+        if valuation_result is None:
+            return 50.0
+        return float(getattr(valuation_result, "composite_score", 50.0))
+
+    def _score_cycle(self, cycle_analysis: Optional[object] = None) -> float:
+        """周期评分 = CycleAnalyzer cycle_score。"""
+        if cycle_analysis is None:
+            return 50.0
+        return float(getattr(cycle_analysis, "cycle_score", 50.0))
+
+    @staticmethod
+    def _score_executive(executive: Optional[dict] = None) -> dict:
+        """V4: 高管因子评分（stub）。"""
+        if not executive:
+            return {"score": 50.0, "risks": []}
+        return {"score": executive.get("average_score", 50.0), "risks": executive.get("red_flags", [])}
 
     def _score_quality(self, financials: list, earnings_factor: Optional[object] = None) -> float:
         """质量评分（增强版）：ROE + 盈利修正因子。"""
@@ -251,6 +333,66 @@ class L1Analyzer:
         if score is not None:
             return float(score)
         return 50.0
+
+    @staticmethod
+    def _score_executive(executive: Optional[dict]) -> dict:
+        """高管因子评分 (0-100)，基准 50 分。
+
+        三个子维度:
+          1. 增减持信号 (±25) — 高管买卖方向与力度
+          2. 董监高稳定性 (0 ~ -20) — 非正常变动扣分
+          3. 高管背景质量 (-5 ~ +10) — 履历数据可得性
+
+        Returns:
+            {"score": float, "risks": list[str]}
+        """
+        if not executive:
+            return {"score": 50.0, "risks": ["高管数据不可用"]}
+
+        risks: list[str] = []
+        score = 50.0
+        trades: list = executive.get("trades", [])
+        changes: list = executive.get("changes", [])
+        profiles: list = executive.get("profiles", [])
+
+        # 1. 增减持信号 (±25)
+        net_buy = sum(t.get("volume", 0) or 0 for t in trades if t.get("trade_type") == "buy")
+        net_sell = sum(t.get("volume", 0) or 0 for t in trades if t.get("trade_type") == "sell")
+        if net_sell > net_buy and net_sell > 0:
+            delta = min(25, (net_sell - net_buy) / 10000)
+            score -= delta
+            risks.append(f"高管近期净减持 {net_sell - net_buy:,} 股")
+        elif net_buy > net_sell and net_buy > 0:
+            delta = min(25, (net_buy - net_sell) / 10000)
+            score += delta
+
+        # 2. 董监高稳定性 (0 ~ -20)
+        abnormal = [c for c in changes if "任期届满" not in c.get("reason", "")]
+        if abnormal:
+            penalty = min(20, len(abnormal) * 10)
+            score -= penalty
+            for c in abnormal:
+                name = c.get("person_name", "")
+                reason = c.get("reason", "原因未知")
+                risks.append(f"董监高变动: {name} {reason}")
+
+        # 3. 高管背景质量 (-5 ~ +10)
+        if profiles:
+            score += 5
+            # 检查是否有长期任职高管(≥5年)
+            long_tenure = any(
+                p.get("tenure_start", "") and "201" in str(p.get("tenure_start", ""))
+                or "2020" in str(p.get("tenure_start", ""))
+                or "2021" in str(p.get("tenure_start", ""))
+                for p in profiles
+            )
+            if long_tenure:
+                score += 5
+        else:
+            score -= 5
+            risks.append("高管背景信息缺失")
+
+        return {"score": max(0.0, min(100.0, score)), "risks": risks}
 
     def _bull_case(self, name: str, quote: dict | None, fin: list | None) -> str:
         return f"{name}: 估值合理 + ROE稳定 + 北向资金关注"
@@ -335,11 +477,14 @@ class L1Analyzer:
     def _calc_preset_score(report: AnalysisReport, preset: ScreeningPreset) -> float:
         """按预设权重计算综合得分。"""
         w = preset.weight_overrides
+        val_score = report.valuation_score if report.valuation_score != 50.0 else report.value_score
         return (
-            report.value_score * w.get("value_score", 0.2)
+            val_score * w.get("value_score", 0.2)
             + report.quality_score * w.get("quality_score", 0.2)
             + report.momentum_score * w.get("momentum_score", 0.2)
             + report.macro_score * w.get("macro_score", 0.15)
+            + report.executive_score * w.get("executive_score", 0.05)
+            + report.cycle_score * w.get("cycle_score", 0.05)
             + (50.0 if report.sentiment_signal == "NEUTRAL" else 30.0) * w.get("sentiment", 0.05)
         )
 

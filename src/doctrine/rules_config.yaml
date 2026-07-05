@@ -1,0 +1,151 @@
+# 军规规则可配置化 — YAML 配置文件
+# 替代 doctrine/rules.py 中的硬编码阈值
+# 用法: DoctrineEngine.load_config("rules_config.yaml")
+
+version: "1.0.0"
+updated: "2026-07-05"
+
+# 规则严重度级别: CRITICAL > HIGH > MEDIUM > LOW
+# CRITICAL 规则触发时阻止交易，其余降权或警告
+
+rules:
+  # ---- 流动性规则 ----
+  liquidity_min_turnover_wan:
+    description: "日成交额最低门槛（万元）"
+    threshold: 50000000  # 5000万
+    severity: CRITICAL
+    category: liquidity
+
+  liquidity_min_volume_hands:
+    description: "最小成交量（手）"
+    threshold: 10000
+    severity: HIGH
+    category: liquidity
+
+  # ---- 估值规则 ----
+  valuation_max_pe:
+    description: "市盈率上限"
+    threshold: 200
+    severity: MEDIUM
+    category: valuation
+
+  valuation_max_pb:
+    description: "市净率上限"
+    threshold: 20
+    severity: MEDIUM
+    category: valuation
+
+  valuation_negative_earnings:
+    description: "连续亏损年数上限"
+    threshold: 2
+    severity: HIGH
+    category: valuation
+
+  # ---- 市值规则 ----
+  market_cap_min_yi:
+    description: "最低市值（亿元）"
+    threshold: 2000000000  # 20亿
+    severity: MEDIUM
+    category: size
+
+  market_cap_max_yi:
+    description: "最高市值上限（亿元），防范巨无霸流动性陷阱"
+    threshold: null  # 不限制
+    severity: LOW
+    category: size
+
+  # ---- 动量规则 ----
+  momentum_max_daily_change:
+    description: "日涨跌幅上限（涨停板追高风险）"
+    threshold: 0.09  # 9%
+    severity: HIGH
+    category: momentum
+
+  momentum_consecutive_limit_up:
+    description: "连续涨停天数上限"
+    threshold: 3
+    severity: HIGH
+    category: momentum
+
+  momentum_consecutive_limit_down:
+    description: "连续跌停天数（排除）"
+    threshold: 1
+    severity: CRITICAL
+    category: momentum
+
+  # ---- 财务质量规则 ----
+  quality_min_roe:
+    description: "最低 ROE (%)"
+    threshold: 0
+    severity: MEDIUM
+    category: quality
+
+  quality_max_debt_to_equity:
+    description: "最高负债权益比"
+    threshold: 3.0
+    severity: MEDIUM
+    category: quality
+
+  quality_max_goodwill_to_equity:
+    description: "商誉/净资产上限"
+    threshold: 0.3
+    severity: HIGH
+    category: quality
+
+  quality_audit_opinion:
+    description: "审计意见要求"
+    threshold: "standard"  # standard / non_standard
+    severity: CRITICAL
+    category: quality
+
+  # ---- 股东/治理规则 ----
+  governance_max_pledge_ratio:
+    description: "大股东股权质押上限 (%)"
+    threshold: 0.80
+    severity: HIGH
+    category: governance
+
+  governance_recent_violation_months:
+    description: "近期违规追溯期（月）"
+    threshold: 12
+    severity: HIGH
+    category: governance
+
+  # ---- 风险事件规则 ----
+  risk_max_customer_concentration:
+    description: "前5大客户集中度上限"
+    threshold: 0.80
+    severity: MEDIUM
+    category: risk
+
+  risk_major_asset_sale:
+    description: "重大资产出售"
+    threshold: true  # 触发时标记
+    severity: MEDIUM
+    category: risk
+
+# 组合规则 (AND/OR 逻辑)
+composite_rules:
+  liquidity_and_quality:
+    description: "流动性 + 质量双重过滤"
+    conditions:
+      - rule: liquidity_min_turnover_wan
+      - rule: quality_audit_opinion
+    logic: AND
+    action: BLOCK
+
+  valuation_or_momentum:
+    description: "估值或动量过热"
+    conditions:
+      - rule: valuation_max_pe
+      - rule: momentum_max_daily_change
+    logic: OR
+    action: WARN
+    weight_cut: 0.5
+
+# 规则权重 (用于综合军规评分)
+rule_weights:
+  CRITICAL: 1.0    # 一票否决
+  HIGH: 0.3        # 30% 权重扣分
+  MEDIUM: 0.15     # 15% 权重扣分
+  LOW: 0.05        # 5% 权重扣分
