@@ -850,7 +850,7 @@ def _evolve_import(args: list[str]):
     parser.add_argument("--desc", type=str, default="", help="手动导入时的策略描述")
     parsed = parser.parse_args(args)
 
-    from src.evolution import PaperImporter, LifecycleManager
+    from src.evolution import PaperImporter, LifecycleManager, LifecycleState
 
     importer = PaperImporter()
     manager = LifecycleManager()

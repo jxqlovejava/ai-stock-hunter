@@ -18,6 +18,7 @@ from src.alpha.schema import AlphaProfile
 from src.alpha.lens import AlphaLens
 from src.kelly.tracker import TradeTracker
 from src.kelly.sizer import KellyPositionSizer
+from src.quality.checker import MultiAgentQualityChecker
 
 from .l0_gate import L0Gate
 from .l1_analyze import AnalysisReport, L1Analyzer
@@ -47,12 +48,17 @@ class OrchestratorResult:
     # Phase 3: optional context from enhanced modules
     macro_regime_info: Optional[dict] = None
     dominance_info: Optional[dict] = None
+    # Phase 5: 估值 + 周期
+    cycle_info: Optional[dict] = None
+    valuation_info: Optional[dict] = None
     # Phase 1: guardrail violations
     violations: list[GuardrailViolation] = field(default_factory=list)
     # 投资者偏好
     investor_prefs_applied: dict = field(default_factory=dict)
     # Phase 4: Alpha Lens 视角
     alpha_profile: Optional[AlphaProfile] = None
+    # CogAlpha: 多 Agent 质量审查报告
+    quality_report: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -85,6 +91,7 @@ class Orchestrator:
         self.l4 = L4RiskOfficer()
         self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
         self.alpha_lens = AlphaLens()        # Phase 4: Alpha Lens 引擎
+        self.quality_checker = MultiAgentQualityChecker()  # CogAlpha: 多 Agent 质量审查
 
     def run(
         self,
@@ -176,6 +183,22 @@ class Orchestrator:
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = self._get_topic_adjustments()
 
+        # ---- Phase 5: 估值 + 周期上下文 ----
+        fundamental_metrics = self.data.get_fundamental_metrics(symbol, market)
+        industry_pe, industry_pb = self.data.get_industry_pe_pb(symbol, market)
+        earnings_growth = self.data.get_earnings_growth(symbol, market)
+        dividend_yield = self.data.get_dividend_data(symbol)
+        cycle_analysis = self._get_cycle_phase(macro_regime)
+        valuation_result = self._get_valuation(
+            symbol, name,
+            fundamental_metrics=fundamental_metrics,
+            industry_pe=industry_pe,
+            industry_pb=industry_pb,
+            earnings_growth=earnings_growth,
+            dividend_yield=dividend_yield,
+            roe=getattr(fundamental_metrics, "roe", None) if fundamental_metrics else None,
+        )
+
         # ---- V4 妙想增强: 资讯上下文 + 关联关系 ----
         news_context = self._get_news_context(symbol, name)
         related_parties = self._get_related_parties(symbol)
@@ -195,6 +218,21 @@ class Orchestrator:
             result.macro_regime_info = {
                 "quadrant": macro_regime.quadrant.value,
                 "confidence": macro_regime.confidence,
+            }
+
+        # Phase 5: 周期 + 估值信息
+        if cycle_analysis is not None:
+            result.cycle_info = {
+                "phase": getattr(cycle_analysis, "phase", None),
+                "phase_str": getattr(cycle_analysis.phase, "value", str(getattr(cycle_analysis, "phase", ""))) if hasattr(cycle_analysis, "phase") else "",
+                "confidence": getattr(cycle_analysis, "confidence", 0.7),
+                "cycle_score": getattr(cycle_analysis, "cycle_score", 50.0),
+            }
+        if valuation_result is not None:
+            result.valuation_info = {
+                "composite_score": getattr(valuation_result, "composite_score", 50.0),
+                "phase": getattr(valuation_result, "phase", None),
+                "phase_str": getattr(getattr(valuation_result, "phase", None), "value", "") if getattr(valuation_result, "phase", None) else "",
             }
 
         # Phase 4: Alpha Lens — 计算 Alpha Profile
@@ -218,6 +256,8 @@ class Orchestrator:
             earnings_factor=earnings_factor,
             alpha_profile=alpha_profile,  # Phase 4: Alpha Lens 注入
             executive=executive,         # V4: 高管数据注入
+            valuation_result=valuation_result,  # Phase 5: 估值结果
+            cycle_analysis=cycle_analysis,      # Phase 5: 周期分析
         )
         result.report = report
 
@@ -228,6 +268,21 @@ class Orchestrator:
             confidence=report.confidence,
         )
         result.violations.extend(l1_violations)
+
+        # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
+        quality_report = self.quality_checker.check(report)
+        if not quality_report.passed:
+            result.warnings.extend(quality_report.blocking_flags)
+            logger.warning(
+                "Quality check blocked for %s: %s",
+                symbol, "; ".join(quality_report.blocking_flags[:3]),
+            )
+        else:
+            logger.info(
+                "Quality check passed for %s: %.0f/100", symbol, quality_report.overall_score,
+            )
+        result.warnings.extend(quality_report.warnings[:5])
+        result.quality_report = quality_report.to_dict()
 
         # Step 4: L2 法官
         verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
@@ -606,6 +661,51 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Topic adjustments unavailable: %s", e)
         return {}
+
+    @staticmethod
+    def _get_cycle_phase(macro_regime: Optional[object] = None):
+        """获取当前经济周期阶段。"""
+        try:
+            from src.cycle.analyzer import CycleAnalyzer
+            analyzer = CycleAnalyzer()
+            return analyzer.analyze(macro_regime=macro_regime)
+        except Exception as e:
+            logger.debug("Cycle analysis unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_valuation(
+        symbol: str,
+        name: str,
+        fundamental_metrics=None,
+        pe_percentile: Optional[float] = None,
+        industry_pe: Optional[float] = None,
+        industry_pb: Optional[float] = None,
+        earnings_growth: Optional[float] = None,
+        dividend_yield: Optional[float] = None,
+        roe: Optional[float] = None,
+    ):
+        """执行多维估值分析。"""
+        try:
+            from src.valuation.analyzer import ValuationAnalyzer
+            analyzer = ValuationAnalyzer()
+            pe_ttm = getattr(fundamental_metrics, "pe_ttm", None) if fundamental_metrics else None
+            pb = getattr(fundamental_metrics, "pb", None) if fundamental_metrics else None
+            return analyzer.analyze(
+                symbol=symbol,
+                name=name,
+                pe_ttm=pe_ttm,
+                pb=pb,
+                pe_percentile=pe_percentile,
+                roe=roe or (getattr(fundamental_metrics, "roe", None) if fundamental_metrics else None),
+                earnings_growth=earnings_growth,
+                dividend_yield=dividend_yield,
+                industry_pe_median=industry_pe,
+                industry_pb_median=industry_pb,
+            )
+        except Exception as e:
+            logger.debug("Valuation analysis unavailable for %s: %s", symbol, e)
+        return None
 
     @staticmethod
     def _get_investor_prefs():
