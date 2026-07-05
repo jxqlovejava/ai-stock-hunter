@@ -704,6 +704,115 @@ def cmd_alpha_decay(symbol: str):
         print(f"\n💀 Alpha 已基本消失 — {ap.summary}")
 
 
+def cmd_trade_track(args: list[str]):
+    """交易记录管理 — 录入/查看/删除交易记录，用于凯利公式仓位计算。
+
+    用法:
+      python -m src.cli trade-track add <symbol> <entry_date> <exit_date> <entry_price> <exit_price> [--shares N] [--notes ...]
+      python -m src.cli trade-track list [symbol]
+      python -m src.cli trade-track kelly [symbol]        # 查看凯利参数
+      python -m src.cli trade-track remove <symbol> <idx>
+    """
+    import argparse
+    from src.kelly.tracker import TradeTracker, TradeRecord
+
+    parser = argparse.ArgumentParser(description="交易记录管理")
+    parser.add_argument("action", nargs="?",
+                        choices=["add", "list", "kelly", "remove"],
+                        default="list", help="操作类型")
+    parsed, remaining = parser.parse_known_args(args)
+
+    tracker = TradeTracker()
+
+    if parsed.action == "add":
+        add_parser = argparse.ArgumentParser(description="录入交易记录")
+        add_parser.add_argument("symbol", help="股票代码")
+        add_parser.add_argument("entry_date", help="买入日期 YYYY-MM-DD")
+        add_parser.add_argument("exit_date", help="卖出日期 YYYY-MM-DD")
+        add_parser.add_argument("entry_price", type=float, help="买入价格")
+        add_parser.add_argument("exit_price", type=float, help="卖出价格")
+        add_parser.add_argument("--shares", type=int, default=0, help="股数")
+        add_parser.add_argument("--direction", choices=["LONG", "SHORT"], default="LONG")
+        add_parser.add_argument("--notes", type=str, default="", help="备注")
+        try:
+            a = add_parser.parse_args(remaining)
+        except SystemExit:
+            return
+
+        record = TradeRecord(
+            symbol=a.symbol,
+            entry_date=a.entry_date,
+            exit_date=a.exit_date,
+            entry_price=a.entry_price,
+            exit_price=a.exit_price,
+            shares=a.shares,
+            direction=a.direction,
+            notes=a.notes,
+        )
+        tracker.track(record)
+        ret = record.return_pct
+        print(f"✅ 已录入: {a.symbol} {a.entry_date}→{a.exit_date} "
+              f"{'🟢' if record.is_win else '🔴'} {ret:+.2%}"
+              f"{' (sizing: ' + a.notes + ')' if a.notes else ''}")
+
+    elif parsed.action == "list":
+        if remaining:
+            symbol = remaining[0]
+            trades = tracker.get_trades(symbol)
+            if not trades:
+                print(f"📭 {symbol} 暂无交易记录")
+                return
+            print(f"\n📊 {symbol} 交易记录 ({len(trades)}笔):")
+            print(f"{'idx':>3} {'买入':>10} {'卖出':>10} {'成本':>8} {'现价':>8} {'收益':>8} {'结果':>4}")
+            print("-" * 60)
+            for i, t in enumerate(trades):
+                print(f"{i:>3} {t.entry_date:>10} {t.exit_date:>10} {t.entry_price:>8.2f} "
+                      f"{t.exit_price:>8.2f} {t.return_pct:>+7.2%} {'WIN' if t.is_win else 'LOSS':>4}")
+        else:
+            symbols = tracker.get_all_symbols()
+            if not symbols:
+                print("📭 暂无任何交易记录。使用 trade-track add 录入。")
+                return
+            print(tracker.summary())
+
+    elif parsed.action == "kelly":
+        from src.kelly.sizer import KellyPositionSizer
+        sizer = KellyPositionSizer(tracker)
+
+        if remaining:
+            symbol = remaining[0]
+            kp = tracker.get_kelly_params(symbol)
+            if kp.n_trades == 0:
+                print(f"📭 {symbol} 暂无交易记录")
+                return
+            result = sizer.calc(symbol, score=70, macro_cap=0.80)
+            print(f"\n📊 {symbol} 凯利参数:")
+            print(f"   交易笔数: {kp.n_trades}")
+            print(f"   胜率 (p): {kp.win_rate:.1%}")
+            print(f"   盈亏比 (b): {kp.payoff_ratio:.2f}")
+            print(f"   累计收益: {kp.total_return_pct:+.2f}%")
+            print(f"   凯利 f*: {'N/A (冷启动)' if not kp.is_hot else f'{kp.kelly_f:.1%}'}")
+            print(f"   仓位建议: {result.target_weight:.1%} ({result.method})")
+            print(f"   来源: {result.source_citation}")
+        else:
+            print(tracker.summary())
+
+    elif parsed.action == "remove":
+        if len(remaining) < 2:
+            print("用法: trade-track remove <symbol> <index>")
+            return
+        symbol = remaining[0]
+        try:
+            idx = int(remaining[1])
+        except ValueError:
+            print(f"无效的索引: {remaining[1]}")
+            return
+        if tracker.remove_trade(symbol, idx):
+            print(f"✅ 已删除: {symbol} 第 {idx} 笔交易")
+        else:
+            print(f"❌ 删除失败: {symbol} 索引 {idx} 不存在")
+
+
 def cmd_evolution(args: list[str]):
     """策略进化模块 — 论文驱动的策略进化与全生命周期管理。"""
     sub = args[0] if args else "help"
@@ -1098,6 +1207,7 @@ def main():
         print("  paper-trade <action> | poster --title --text")
         print("  alpha <code> | alpha-scan | alpha-decay <code>")
         print("  evolution <import|list|status|promote|degrade|retire|optimize|proposals|monitor|report>")
+        print("  trade-track <add|list|kelly|remove>")
         return
 
     cmd = sys.argv[1]
@@ -1131,6 +1241,8 @@ def main():
         "alpha-decay": lambda: cmd_alpha_decay(args[0]) if args else print("用法: alpha-decay <code>"),
         # Phase 5: 策略进化模块
         "evolution": lambda: cmd_evolution(args),
+        # Phase 5: 凯利公式交易追踪
+        "trade-track": lambda: cmd_trade_track(args),
     }
 
     handler = commands.get(cmd)

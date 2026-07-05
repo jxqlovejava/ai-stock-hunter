@@ -14,6 +14,10 @@ from typing import Optional
 
 from src.data.aggregator import DataAggregator
 from src.doctrine.checker import DoctrineChecker
+from src.alpha.schema import AlphaProfile
+from src.alpha.lens import AlphaLens
+from src.kelly.tracker import TradeTracker
+from src.kelly.sizer import KellyPositionSizer
 
 from .l0_gate import L0Gate
 from .l1_analyze import AnalysisReport, L1Analyzer
@@ -47,6 +51,8 @@ class OrchestratorResult:
     violations: list[GuardrailViolation] = field(default_factory=list)
     # 投资者偏好
     investor_prefs_applied: dict = field(default_factory=dict)
+    # Phase 4: Alpha Lens 视角
+    alpha_profile: Optional[AlphaProfile] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -70,9 +76,15 @@ class Orchestrator:
         self.l0 = L0Gate()
         self.l1 = L1Analyzer()
         self.l2 = L2Judge()
-        self.l3 = L3Trader()
+        # Phase 5: 注入 KellyPositionSizer（默认 half-Kelly=0.5）
+        self.trade_tracker = TradeTracker()
+        self.kelly_sizer = KellyPositionSizer(
+            self.trade_tracker, default_kelly_fraction=0.5,
+        )
+        self.l3 = L3Trader(kelly_sizer=self.kelly_sizer)
         self.l4 = L4RiskOfficer()
         self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
+        self.alpha_lens = AlphaLens()        # Phase 4: Alpha Lens 引擎
 
     def run(
         self,
@@ -167,6 +179,7 @@ class Orchestrator:
         # ---- V4 妙想增强: 资讯上下文 + 关联关系 ----
         news_context = self._get_news_context(symbol, name)
         related_parties = self._get_related_parties(symbol)
+        executive = self._get_executive_context(symbol)
 
         # 增强宏观 dict
         enriched_macro = macro or {}
@@ -184,6 +197,10 @@ class Orchestrator:
                 "confidence": macro_regime.confidence,
             }
 
+        # Phase 4: Alpha Lens — 计算 Alpha Profile
+        alpha_profile = self._get_alpha_profile(symbol, name, news_context)
+        result.alpha_profile = alpha_profile
+
         # Step 3: L1 分析师
         quote_dict = {
             "pe_percentile": 40,  # placeholder
@@ -199,7 +216,8 @@ class Orchestrator:
             macro_regime=macro_regime,
             northbound_profile=nb_profile,
             earnings_factor=earnings_factor,
-            news_context=news_context,  # V4: 妙想资讯上下文
+            alpha_profile=alpha_profile,  # Phase 4: Alpha Lens 注入
+            executive=executive,         # V4: 高管数据注入
         )
         result.report = report
 
@@ -252,6 +270,17 @@ class Orchestrator:
         enriched_portfolio = (portfolio or {}).copy()
         if related_parties:
             enriched_portfolio["related_parties"] = related_parties  # V4: 关联关系风险
+        # Phase 4: Alpha 衰减追踪注入
+        if alpha_profile:
+            enriched_portfolio["alpha_tracker"] = {
+                "decay_velocity": alpha_profile.decay_rate,
+                "days_since_detection": alpha_profile.days_since_detection,
+                "is_crowded": (
+                    alpha_profile.decay_status.value == "crowded"
+                    or alpha_profile.narrative.crowded_signal_score >= 60
+                ),
+                "narrative_stage": alpha_profile.narrative.stage.value,
+            }
         risk = self.l4.check(signal, enriched_portfolio, position_limits=position_limits)
         result.risk = risk
 
@@ -352,6 +381,9 @@ class Orchestrator:
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = topic_adj or self._get_topic_adjustments()
 
+        # V4 高管数据
+        executive = self._get_executive_context(symbol)
+
         enriched_macro = macro or {}
         if macro_regime is not None:
             enriched_macro.update({
@@ -373,6 +405,7 @@ class Orchestrator:
             macro_regime=macro_regime,
             northbound_profile=nb_profile,
             earnings_factor=earnings_factor,
+            executive=executive,
         )
 
         # L1 护栏
@@ -478,6 +511,53 @@ class Orchestrator:
             "risk": risk,
             "violations": all_violations,
         }
+
+    # ------------------------------------------------------------------
+    # Phase 4: Alpha Lens 上下文注入
+    # ------------------------------------------------------------------
+
+    def _get_alpha_profile(
+        self,
+        symbol: str,
+        name: str,
+        news_context: list[dict],
+    ) -> AlphaProfile:
+        """Phase 4: 计算 Alpha Profile。
+
+        综合信息来源层级、共识-现实缺口、叙事生命周期三个维度，
+        回答「我比别人多知道什么？」
+        """
+        # 从资讯上下文中提取来源信息
+        news_sources: list[str] = []
+        market_narrative_parts: list[str] = []
+        narrative_intensity = 0.0
+        sentiment = "NEUTRAL"
+
+        for item in (news_context or []):
+            title = item.get("title", "")
+            source = item.get("source", "")
+            content = item.get("content", "")[:200] if item.get("content") else ""
+
+            news_sources.append(f"{source}: {title}")
+            market_narrative_parts.append(title)
+
+            # 估算叙事强度：资讯数量越多 → 叙事越强
+            narrative_intensity = min(1.0, len(news_context) / 10)
+
+        # 从 symbol 和 name 推断基本信息
+        market_narrative = (
+            f"关于 {name}({symbol}) 的市场讨论: "
+            + ("; ".join(market_narrative_parts[:3]))
+            if market_narrative_parts else ""
+        )
+
+        return self.alpha_lens.analyze(
+            symbol=symbol,
+            news_sources=news_sources,
+            market_narrative=market_narrative,
+            narrative_intensity=narrative_intensity,
+            sentiment_extreme=sentiment,
+        )
 
     # ------------------------------------------------------------------
     # Phase 3: 增强上下文注入
@@ -590,3 +670,20 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Related parties unavailable for %s: %s", symbol, e)
         return []
+
+    @staticmethod
+    def _get_executive_context(symbol: str) -> dict:
+        """从 mx-data 获取个股高管数据上下文（增减持/履历/变动）。"""
+        ctx = {"trades": [], "profiles": [], "changes": []}
+        try:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            mx = agg.miaoxiang
+            if mx is None:
+                return ctx
+            ctx["trades"] = [t.model_dump() for t in mx.get_executive_trades(symbol)]
+            ctx["profiles"] = [p.model_dump() for p in mx.get_executive_profiles(symbol)]
+            ctx["changes"] = [c.model_dump() for c in mx.get_board_changes(symbol)]
+        except Exception as e:
+            logger.debug("Executive context unavailable for %s: %s", symbol, e)
+        return ctx

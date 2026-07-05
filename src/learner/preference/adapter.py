@@ -188,6 +188,7 @@ def resolve_position_limits(prefs: InvestorPreference) -> dict:
         "max_drawdown": -abs(limits.portfolio_drawdown_pct),
         "stop_loss": -abs(limits.single_stop_loss_pct),
         "gem_discount": limits.gem_discount,
+        "kelly_fraction": limits.kelly_fraction,
     }
 
 

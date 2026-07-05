@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-"""L3 交易员 — 信号→仓位映射。"""
+"""L3 交易员 — 信号→仓位映射。Phase 4: Alpha 时序注入。Phase 5: 凯利公式仓位管理。"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from typing import Optional
 
 from .l2_judge import Verdict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,6 +22,12 @@ class TradeSignal:
     limit: float = 0.0     # L4 施加的仓位上限
     source_citations: list = field(default_factory=list)  # Phase 1: 继承引用链
     confidence: float = 0.5  # Phase 1: 信号信心度
+    alpha_timing: str = ""  # Phase 4: Alpha 时序提示 (叙事阶段 + 操作提示)
+    executive_risk: bool = False  # V4: 高管风险标记
+    # Phase 5: 凯利公式
+    sizing_method: str = ""       # "kelly" / "linear_fallback" / "negative_expectation"
+    kelly_f: float = 0.0          # 原始凯利 f*
+    kelly_params_source: str = ""  # 凯利参数来源说明
 
 
 class L3Trader:
@@ -29,10 +39,23 @@ class L3Trader:
       - score 35-49 → 减仓
       - score < 35  → 清仓/回避
 
-    仓位公式:
-      base = (score - 50) / 50 × macro_cap
-      final = min(base, L4_caps...)
+    Phase 5: 凯利公式仓位管理。
+      - 热启动 (n≥5): target = kelly_fraction × f*, f* = (b×p - q)/b
+      - 冷启动 (n<5): 回退线性公式 base = (score - 50) / 50 × macro_cap
+      - 负期望 (f*≤0): target = 0，不建仓
     """
+
+    def __init__(self, kelly_sizer=None):
+        """初始化 L3 交易员。
+
+        Args:
+            kelly_sizer: KellyPositionSizer 实例 (可选)。None 时仅使用线性公式。
+        """
+        self._kelly_sizer = kelly_sizer
+
+    @property
+    def has_kelly(self) -> bool:
+        return self._kelly_sizer is not None
 
     def generate_signal(
         self,
@@ -50,42 +73,122 @@ class L3Trader:
             macro_cap: 宏观仓位上限 (0.0-1.0)
             is_core: 是否核心仓 (阻止 REDUCE/CLOSE)
             is_gem: 是否双创 (创业板/科创板折扣)
-            position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., ...}
+            position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., "kelly_fraction": ...}
             risk_multiplier: 风险偏好仓位乘数 (conservative=0.7, balanced=1.0, aggressive=1.2)
         """
         score = verdict.score
         action = self._score_to_action(score)
+        symbol = verdict.symbol
 
-        # 基础仓位
-        base = max(0, (score - 50) / 50 * macro_cap)
+        # Phase 5: 凯利公式仓位管理
+        kelly_fraction = None
+        if position_limits:
+            kelly_fraction = position_limits.get("kelly_fraction")
+
+        if self._kelly_sizer is not None:
+            target, sizing_method, kelly_f, sizing_source = self._kelly_sizing(
+                symbol, score, macro_cap, position_limits, kelly_fraction,
+            )
+        else:
+            # 无 Kelly sizer → 纯线性公式
+            target, sizing_method, kelly_f, sizing_source = self._linear_only(
+                score, macro_cap, position_limits,
+            )
 
         # 风险偏好乘数
-        base = base * risk_multiplier
+        target = target * risk_multiplier
 
         # 双创折扣
         if is_gem:
             gem_discount = 0.8
             if position_limits:
                 gem_discount = position_limits.get("gem_discount", 0.8)
-            base *= gem_discount
+            target *= gem_discount
 
-        # 用户偏好单票上限
+        # 用户偏好单票上限 (二次确认)
         if position_limits:
             max_single = position_limits.get("single_stock_cap", 1.0)
-            base = min(base, max_single)
+            target = min(target, max_single)
+
+        # 宏观仓位上限
+        target = min(target, macro_cap)
 
         # 核心仓/交易仓区分
         if is_core:
             action = "HOLD" if action in ("REDUCE", "CLOSE") else action
 
+        # Phase 4: Alpha 时序 — 叙事阶段决定仓位上限
+        alpha_timing = ""
+        if verdict.alpha_rationale:
+            alpha_timing = verdict.alpha_rationale
+
         return TradeSignal(
-            symbol=verdict.symbol,
+            symbol=symbol,
             action=action,
-            target_weight=round(base, 4),
+            target_weight=round(target, 4),
             is_core=is_core,
-            source_citations=verdict.source_citations,  # Phase 1: 继承引用链
-            confidence=verdict.confidence,  # Phase 1: 继承信心度
+            source_citations=verdict.source_citations,
+            confidence=verdict.confidence,
+            alpha_timing=alpha_timing,
+            executive_risk=bool(getattr(verdict, "executive_risks", None)),
+            sizing_method=sizing_method,
+            kelly_f=kelly_f,
+            kelly_params_source=sizing_source,
         )
+
+    # ------------------------------------------------------------------
+    # Phase 5: 凯利 + 线性
+    # ------------------------------------------------------------------
+
+    def _kelly_sizing(
+        self,
+        symbol: str,
+        score: int,
+        macro_cap: float,
+        position_limits: Optional[dict],
+        kelly_fraction: Optional[float],
+    ) -> tuple[float, str, float, str]:
+        """通过 KellyPositionSizer 计算仓位。"""
+        result = self._kelly_sizer.calc(
+            symbol=symbol,
+            score=score,
+            macro_cap=macro_cap,
+            kelly_fraction=kelly_fraction,
+            position_limits=position_limits,
+        )
+        logger.info(
+            "Kelly sizing %s: method=%s target=%.1f%% f*=%.1f%% p=%.1f%% b=%.2f n=%d",
+            symbol, result.method, result.target_weight * 100,
+            result.kelly_f * 100, result.win_rate * 100,
+            result.payoff_ratio, result.n_trades,
+        )
+        return (
+            result.target_weight,
+            result.method,
+            result.kelly_f,
+            result.source_citation,
+        )
+
+    @staticmethod
+    def _linear_only(
+        score: int,
+        macro_cap: float,
+        position_limits: Optional[dict],
+    ) -> tuple[float, str, float, str]:
+        """纯线性公式（无 Kelly sizer 时使用）。"""
+        base = max(0, (score - 50) / 50 * macro_cap)
+        if position_limits:
+            base = min(base, position_limits.get("single_stock_cap", 1.0))
+        return (
+            base,
+            "linear_fallback",
+            0.0,
+            f"linear:base=({score}-50)/50×{macro_cap}={base:.1%}",
+        )
+
+    # ------------------------------------------------------------------
+    # 评分 → 动作映射
+    # ------------------------------------------------------------------
 
     def _score_to_action(self, score: int) -> str:
         if score >= 75:

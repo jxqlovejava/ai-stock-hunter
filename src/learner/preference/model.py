@@ -55,6 +55,7 @@ class PositionLimits:
     single_stop_loss_pct: float = 0.02 # 单笔最大亏损
     portfolio_drawdown_pct: float = 0.15  # 组合最大回撤
     gem_discount: float = 0.80          # 创业板/科创板折扣
+    kelly_fraction: float = 0.50        # 凯利分数 (0.1-1.0, 默认 half-Kelly)
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +67,7 @@ class PositionLimits:
             "single_stop_loss_pct": self.single_stop_loss_pct,
             "portfolio_drawdown_pct": self.portfolio_drawdown_pct,
             "gem_discount": self.gem_discount,
+            "kelly_fraction": self.kelly_fraction,
         }
 
     @classmethod
@@ -79,6 +81,7 @@ class PositionLimits:
             single_stop_loss_pct=d.get("single_stop_loss_pct", 0.02),
             portfolio_drawdown_pct=d.get("portfolio_drawdown_pct", 0.15),
             gem_discount=d.get("gem_discount", 0.80),
+            kelly_fraction=d.get("kelly_fraction", 0.50),
         )
 
 
