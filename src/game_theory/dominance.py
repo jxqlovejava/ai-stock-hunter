@@ -66,6 +66,14 @@ class DominanceClassifier:
         nb_score, nb_evidence = self._assess_northbound()
         evidence_all["NORTHBOUND"] = (nb_score, nb_evidence)
 
+        # 6. Margin trading evidence
+        margin_score, margin_evidence = self._assess_margin()
+        if margin_evidence:
+            evidence_all["HOT_MONEY"] = (
+                evidence_all["HOT_MONEY"][0] + margin_score * 0.3,
+                evidence_all["HOT_MONEY"][1] + margin_evidence,
+            )
+
         # Pick dominant player
         if not evidence_all:
             profile.dominant_player = None
@@ -250,6 +258,49 @@ class DominanceClassifier:
 
         except Exception as e:
             logger.debug("Northbound assessment failed: %s", e)
+
+        return min(score, 100.0), evidence
+
+    def _assess_margin(self) -> tuple[float, list[str]]:
+        """Assess margin trading sentiment as supplementary hot-money / risk signal."""
+        score = 0.0
+        evidence: list[str] = []
+
+        try:
+            from src.game_theory.margin import MarginAnalyzer
+
+            ma = MarginAnalyzer()
+            profile = ma.analyze()
+
+            # High margin buy ratio → hot money active
+            if profile.margin_buy_ratio is not None:
+                if profile.margin_buy_ratio > 11:
+                    score += 30
+                    evidence.append(f"融资买入占比 {profile.margin_buy_ratio:.1f}% (>11%，游资活跃)")
+                elif profile.margin_buy_ratio > 9:
+                    score += 15
+                    evidence.append(f"融资买入占比 {profile.margin_buy_ratio:.1f}% (>9%)")
+
+            # Rising balance trend → bullish leverage sentiment
+            if profile.margin_balance_trend == "rising":
+                score += 10
+                evidence.append("融资余额上升趋势")
+            elif profile.margin_balance_trend == "falling":
+                score -= 10
+                evidence.append("融资余额下降趋势")
+
+            # Greedy leverage → hot money signal
+            if profile.leverage_sentiment == "greedy":
+                score += 15
+                evidence.append("杠杆情绪贪婪")
+
+            # High short pressure → institutional hedging / bearish
+            if profile.short_pressure == "high":
+                score -= 10
+                evidence.append("融券压力高")
+
+        except Exception as e:
+            logger.debug("Margin assessment failed: %s", e)
 
         return min(score, 100.0), evidence
 

@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+from . import margin  # noqa: F401 — register MarginAnalyzer
 from .comparative import MARKET_COMPARISONS, compare_markets, asymmetry_report
+from .dominance import DominanceClassifier, DominanceProfile
+from .fund_positioning import FundCrowdingSignal, FundPositioningAnalyzer
+from .margin import MarginAnalyzer, MarginProfile
+from .northbound import NorthboundAnalyzer, NorthboundProfile
 from .players import PLAYER_PROFILES, PlayerProfile, PlayerType
 from .playbooks import TOP_3_PLAYBOOKS, Playbook, get_playbook_evidence_summary
 from .playbook_validator import (
@@ -25,6 +30,7 @@ from .rules import (
     RuleCapitalFlowModel,
     RuleCategory,
 )
+from .seats import SeatActivity, SeatInfo, SeatTracker
 
 
 def get_game_theory_summary() -> str:
@@ -65,6 +71,12 @@ __all__ = [
     "RuleCapitalFlowModel", "EvidenceLevel",
     # Players
     "PLAYER_PROFILES", "PlayerProfile", "PlayerType",
+    # Analyzers
+    "DominanceClassifier", "DominanceProfile",
+    "FundCrowdingSignal", "FundPositioningAnalyzer",
+    "MarginAnalyzer", "MarginProfile",
+    "NorthboundAnalyzer", "NorthboundProfile",
+    "SeatActivity", "SeatInfo", "SeatTracker",
     # Playbooks
     "TOP_3_PLAYBOOKS", "Playbook", "get_playbook_evidence_summary",
     # Playbook Validator (Phase 2)
