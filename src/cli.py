@@ -527,6 +527,566 @@ def cmd_poster(args: list[str]):
         print("❌ 发布失败（检查授权和 MX_APIKEY）")
 
 
+def cmd_alpha(symbol: str):
+    """Alpha 视角分析 — 三维 Alpha 评估 + 全链路注入。"""
+    from src.alpha.lens import AlphaLens
+
+    print(f"🔍 Alpha Lens 分析: {symbol}")
+    print("=" * 50)
+
+    orch = Orchestrator()
+    result = orch.run(symbol)
+
+    if not result.passed:
+        print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
+        return
+
+    # Alpha Profile
+    ap = result.alpha_profile
+    if ap:
+        print(f"\n📊 Alpha 综合评分: {ap.alpha_score:.0f}/100")
+        print(f"   置信度: {ap.alpha_confidence:.0%}")
+        print(f"   衰减状态: {ap.decay_status.value}")
+        print(f"   核心差异点: {ap.key_differentiator}")
+        print(f"\n{'─' * 40}")
+        print(f"📰 信息来源层级: {ap.source.source_tier.value}")
+        print(f"   一手性: {ap.source.originality_score:.0f}/100")
+        print(f"   理解深度: {ap.source.interpretation_depth:.0f}/100")
+        print(f"   噪音比例: {ap.source.noise_ratio:.0%}")
+        if ap.source.primary_sources:
+            print(f"   一手来源: {', '.join(ap.source.primary_sources[:3])}")
+        if ap.source.tertiary_sources:
+            print(f"   噪音来源: {', '.join(ap.source.tertiary_sources[:3])}")
+        print(f"\n{'─' * 40}")
+        print(f"🕳️ 共识-现实缺口: {ap.consensus_gap.gap_score:.0f}/100")
+        print(f"   市场叙事: {ap.consensus_gap.market_narrative[:80]}...")
+        print(f"   叙事强度: {ap.consensus_gap.narrative_intensity:.0%}")
+        print(f"   夸大程度: {ap.consensus_gap.exaggeration_score:.0f}/100")
+        if ap.consensus_gap.logical_flaws:
+            print(f"   逻辑漏洞:")
+            for flaw in ap.consensus_gap.logical_flaws:
+                print(f"     ⚡ {flaw}")
+        if ap.consensus_gap.contrarian_evidence:
+            print(f"   反向证据:")
+            for ev in ap.consensus_gap.contrarian_evidence:
+                print(f"     🔄 {ev}")
+        print(f"   Alpha 机会: {ap.consensus_gap.alpha_opportunity}")
+        print(f"\n{'─' * 40}")
+        print(f"📈 叙事生命周期: {ap.narrative.stage.value}")
+        print(f"   阶段: {ap.narrative.stage.value}")
+        print(f"   早期信号: {ap.narrative.early_signal_score:.0f}/100")
+        print(f"   拥挤信号: {ap.narrative.crowded_signal_score:.0f}/100")
+        print(f"   仓位上限: {ap.narrative.position_cap_pct:.0f}%")
+        print(f"   操作提示: {ap.narrative.action_hint}")
+        print(f"   估值反映度: {ap.narrative.valuation_reflected:.0%}")
+        print(f"\n{'─' * 40}")
+        print(f"💡 {ap.summary}")
+    else:
+        print("⚠️ Alpha Profile 不可用")
+
+    # Pipeline results
+    if result.verdict:
+        v = result.verdict
+        print(f"\n📋 L2 裁决: {v.score}/100 | 建议: {v.recommendation}")
+        if v.alpha_rationale:
+            print(f"   Alpha 理由: {v.alpha_rationale[:120]}...")
+        if v.consensus_challenge:
+            print(f"   共识挑战: {v.consensus_challenge}")
+        print(f"   Alpha 乘数: {v.alpha_multiplier:.2f}x")
+
+    if result.signal:
+        s = result.signal
+        print(f"\n💰 L3 信号: {s.action} | 目标仓位: {s.target_weight:.1%}")
+
+    if result.risk:
+        r = result.risk
+        status = "✅" if r.passed else "⛔"
+        print(f"\n🛡️ L4 风控: {status} | 调整后仓位: {r.adjusted_weight:.1%}")
+        if r.violations:
+            for v_v in r.violations:
+                print(f"   ⚠️ {v_v}")
+
+
+def cmd_alpha_scan(args: list[str]):
+    """扫描高 Alpha 潜力股票。"""
+    import argparse
+    from src.alpha.lens import AlphaLens
+
+    parser = argparse.ArgumentParser(description="扫描高 Alpha 潜力股票")
+    parser.add_argument("--limit", type=int, default=10, help="返回数量上限")
+    parser.add_argument("--min-alpha", type=float, default=50, help="最低 Alpha 评分")
+    parsed = parser.parse_args(args)
+
+    print(f"🔍 Alpha 潜力扫描 (min_alpha={parsed.min_alpha})")
+    print("=" * 50)
+
+    agg = DataAggregator()
+    try:
+        stocks = agg.scan_all_stocks() or []
+        print(f"扫描范围: {len(stocks)} 只股票")
+    except Exception as e:
+        print(f"⚠️ 扫描失败: {e}")
+        return
+
+    lens = AlphaLens()
+    results: list[tuple[str, str, float, str]] = []
+
+    for stock in stocks[:50]:  # 限制扫描数量
+        symbol = stock.get("symbol", "")
+        name = stock.get("name", "")
+        try:
+            profile = lens.analyze(symbol=symbol)
+            if profile.alpha_score >= parsed.min_alpha:
+                results.append((
+                    symbol, name, profile.alpha_score,
+                    profile.narrative.stage.value,
+                ))
+        except Exception:
+            continue
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    results = results[:parsed.limit]
+
+    if not results:
+        print("⚠️ 无股票通过 Alpha 筛选")
+        return
+
+    print(f"\n🏆 前 {len(results)} 名:")
+    for rank, (sym, name, score, stage) in enumerate(results, 1):
+        emoji = {"dormant": "💤", "emerging": "⭐", "spreading": "📈",
+                 "consensus": "⚠️", "crowded": "🚨", "fading": "📉"}
+        print(
+            f"  {rank:2d}. {sym} {name:<8s} "
+            f"Alpha {score:.0f} | 叙事: {emoji.get(stage, '❓')} {stage}"
+        )
+
+
+def cmd_alpha_decay(symbol: str):
+    """查看 Alpha 衰减状态。"""
+    from src.alpha.monitor import AlphaMonitor
+
+    print(f"📉 Alpha 衰减追踪: {symbol}")
+    print("=" * 50)
+
+    orch = Orchestrator()
+    result = orch.run(symbol)
+
+    ap = result.alpha_profile
+    if not ap:
+        print("⚠️ Alpha Profile 不可用")
+        return
+
+    monitor = AlphaMonitor()
+    monitor.track(symbol, ap)
+    print(monitor.summary(symbol))
+
+    # 衰减详情
+    print(f"\n📊 衰减详情:")
+    print(f"   状态: {ap.decay_status.value}")
+    print(f"   首次检测: {ap.first_detected or '首次'}")
+    print(f"   已追踪: {ap.days_since_detection} 天")
+    print(f"   衰减速度: {ap.decay_rate:.2f}/天")
+
+    # 拥挤检测
+    is_crowded, msg = monitor.detect_crowding(
+        symbol,
+        discussion_volume=ap.narrative.discussion_volume,
+        discussion_growth_rate=ap.narrative.discussion_growth_rate,
+        retail_attention=ap.narrative.retail_attention,
+        institutional_attention=ap.narrative.institutional_attention,
+    )
+    if is_crowded:
+        print(f"\n🚨 拥挤警告: {msg}")
+    elif msg:
+        print(f"\n⚠️ 关注信号: {msg}")
+
+    if ap.is_priced_in:
+        print(f"\n💀 Alpha 已基本消失 — {ap.summary}")
+
+
+def cmd_evolution(args: list[str]):
+    """策略进化模块 — 论文驱动的策略进化与全生命周期管理。"""
+    sub = args[0] if args else "help"
+    sub_args = args[1:]
+
+    subcommands = {
+        "import": _evolve_import,
+        "list": _evolve_list,
+        "status": _evolve_status,
+        "promote": _evolve_promote,
+        "degrade": _evolve_degrade,
+        "retire": _evolve_retire,
+        "optimize": _evolve_optimize,
+        "proposals": _evolve_proposals,
+        "monitor": _evolve_monitor,
+        "report": _evolve_report,
+    }
+
+    handler = subcommands.get(sub)
+    if handler:
+        handler(sub_args)
+    else:
+        print(f"未知 evolution 子命令: {sub}")
+        print("可用: " + ", ".join(subcommands.keys()))
+        print("用法: python -m src.cli evolution <子命令> [参数]")
+
+
+def _evolve_import(args: list[str]):
+    """导入论文URL。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="导入论文")
+    parser.add_argument("url", nargs="?", help="论文URL")
+    parser.add_argument("--type", choices=["auto", "manual"], default="auto",
+                        help="导入方式 (默认: auto)")
+    parser.add_argument("--desc", type=str, default="", help="手动导入时的策略描述")
+    parsed = parser.parse_args(args)
+
+    from src.evolution import PaperImporter, LifecycleManager
+
+    importer = PaperImporter()
+    manager = LifecycleManager()
+
+    if parsed.type == "manual":
+        if not parsed.desc:
+            print("手动模式需要 --desc 参数")
+            return
+        paper = importer.import_from_text(parsed.desc)
+    elif parsed.url:
+        print(f"📥 导入论文: {parsed.url}")
+        paper = importer.import_from_url(parsed.url)
+    else:
+        print("请提供论文URL或使用 --type manual --desc")
+        return
+
+    print(f"\n📄 {paper.title}")
+    print(f"   分类: {paper.paper_type.value} (置信度 {paper.classification_confidence:.0%})")
+
+    if paper.paper_type.value == "strategy":
+        from src.evolution import StrategyExtractor
+        extractor = StrategyExtractor()
+        strategy = extractor.extract(paper)
+        paper.extracted_strategy = strategy
+
+        lc = manager.create(
+            paper_id=paper.id,
+            strategy_name=strategy.strategy_name,
+            state=LifecycleState.EXTRACTED,
+        )
+        print(f"\n🧬 策略: {strategy.strategy_name}")
+        print(f"   类型: {strategy.strategy_type}")
+        print(f"   参数: {len(strategy.parameters)} 个")
+        print(f"   买入条件: {len(strategy.entry_conditions)} 条")
+        print(f"   卖出条件: {len(strategy.exit_conditions)} 条")
+        print(f"   提取置信度: {strategy.extraction_confidence:.0%}")
+        print(f"   生命周期ID: {lc.id}")
+        if strategy.unsourced_fields:
+            print(f"   ⚠️ [UNSOURCED]: {', '.join(strategy.unsourced_fields)}")
+
+    elif paper.paper_type.value == "architecture":
+        from src.evolution import ArchitectureAnalyzer, ProposalManager
+        analyzer = ArchitectureAnalyzer()
+        proposal = analyzer.analyze(paper)
+        paper.extracted_proposal = proposal
+
+        pm = ProposalManager()
+        pm._proposals[proposal.id] = proposal
+        pm._save()
+
+        print(f"\n🏗️ 改进提案: {proposal.title}")
+        print(f"   影响模块: {', '.join(proposal.target_modules)}")
+        print(f"   提案ID: {proposal.id}")
+    else:
+        print("\n⚠️ 无法自动分类，请手动指定 --type")
+
+
+def _evolve_list(args: list[str]):
+    """列出所有进化策略。"""
+    from src.evolution import LifecycleManager
+    manager = LifecycleManager()
+    lifecycles = manager.list_all()
+    if not lifecycles:
+        print("📭 暂无进化策略。使用 evolution import <url> 导入论文。")
+        return
+
+    print(manager.summary())
+    print()
+    for lc in lifecycles:
+        emoji = {
+            "extracted": "📄", "candidate": "⭐", "trial": "🧪",
+            "active": "💰", "degraded": "⚠️", "optimizing": "🔧",
+            "rejected": "❌", "retired": "🏁", "error": "💥",
+        }.get(lc.state.value, "❓")
+        print(f"  {emoji} {lc.id} | {lc.strategy_name} | {lc.state.value}")
+        if lc.backtest_sharpe:
+            print(f"     回测 Sharpe: {lc.backtest_sharpe:.2f}  {'✅' if lc.backtest_passed else '❌'}")
+        if lc.trial_sharpe is not None:
+            print(f"     模拟盘 Sharpe: {lc.trial_sharpe:.2f}  交易: {lc.trial_trades}笔")
+
+
+def _evolve_status(args: list[str]):
+    """查看策略详情。"""
+    if not args:
+        print("用法: evolution status <lifecycle_id>")
+        return
+    from src.evolution import LifecycleManager
+    manager = LifecycleManager()
+    lc = manager.get(args[0])
+    if lc is None:
+        print(f"生命周期不存在: {args[0]}")
+        return
+    print(f"📋 {lc.strategy_name} ({lc.id})")
+    print(f"   状态: {lc.state.value}")
+    print(f"   版本: {lc.strategy_version}")
+    print(f"   创建: {lc.created_at}")
+    if lc.backtest_sharpe:
+        print(f"   回测: Sharpe {lc.backtest_sharpe:.2f}  收益 {lc.backtest_return:.1%}  MaxDD {lc.backtest_max_dd:.1%}  {'✅' if lc.backtest_passed else '❌'}")
+    if lc.trial_sharpe is not None:
+        print(f"   模拟盘: Sharpe {lc.trial_sharpe:.2f}  收益 {lc.trial_return:.1%}  MaxDD {lc.trial_max_dd:.1%}  交易{lc.trial_trades}笔")
+    if lc.live_sharpe is not None:
+        print(f"   实战: Sharpe {lc.live_sharpe:.2f}  收益 {lc.live_return:.1%}  MaxDD {lc.live_max_dd:.1%}")
+    print(f"\n   状态历史:")
+    for t in lc.state_history[-10:]:
+        print(f"     {t.from_state.value} → {t.to_state.value} ({t.reason[:50]})")
+
+
+def _evolve_promote(args: list[str]):
+    """手动推进策略状态。"""
+    if not args:
+        print("用法: evolution promote <lifecycle_id> [--target state] [--force]")
+        return
+    import argparse
+    parser = argparse.ArgumentParser(description="推进策略状态")
+    parser.add_argument("lifecycle_id", help="生命周期ID")
+    parser.add_argument("--target", choices=[s.value for s in LifecycleState], help="目标状态")
+    parser.add_argument("--force", action="store_true", help="跳过条件检查")
+    parsed = parser.parse_args(args)
+
+    from src.evolution import LifecycleManager, TransitionRequest, LifecycleState as LS
+    manager = LifecycleManager()
+    lc = manager.get(parsed.lifecycle_id)
+    if lc is None:
+        print(f"生命周期不存在: {parsed.lifecycle_id}")
+        return
+
+    # 自动推断目标状态
+    target_map = {
+        LS.EXTRACTED: LS.CANDIDATE,
+        LS.CANDIDATE: LS.TRIAL,
+        LS.TRIAL: LS.ACTIVE,
+        LS.DEGRADED: LS.OPTIMIZING,
+    }
+    target = LS(parsed.target) if parsed.target else target_map.get(lc.state)
+    if target is None:
+        print(f"无法从 {lc.state.value} 自动推进，请手动指定 --target")
+        return
+
+    resp = manager.transition(TransitionRequest(
+        lifecycle_id=parsed.lifecycle_id,
+        target_state=target,
+        reason="用户手动推进",
+        triggered_by="user",
+        force=parsed.force,
+    ))
+    if resp.result.value == "ok":
+        print(f"✅ {lc.state.value} → {resp.new_state.value if resp.new_state else target.value}")
+    else:
+        print(f"❌ {resp.message}")
+
+
+def _evolve_degrade(args: list[str]):
+    """手动降级策略。"""
+    if not args:
+        print("用法: evolution degrade <lifecycle_id> [--reason ...]")
+        return
+    reason = " ".join(args[1:]) if len(args) > 1 else "用户手动降级"
+
+    from src.evolution import LifecycleManager, LifecycleState as LS, TransitionRequest
+    manager = LifecycleManager()
+    resp = manager.transition(TransitionRequest(
+        lifecycle_id=args[0],
+        target_state=LS.DEGRADED,
+        reason=reason,
+        triggered_by="user",
+    ))
+    if resp.result.value == "ok":
+        print(f"✅ 已降级: {args[0]}")
+    else:
+        print(f"❌ {resp.message}")
+
+
+def _evolve_retire(args: list[str]):
+    """退役策略。"""
+    if not args:
+        print("用法: evolution retire <lifecycle_id> [--reason ...]")
+        return
+    reason = " ".join(args[1:]) if len(args) > 1 else "用户手动退役"
+
+    from src.evolution import RollbackManager
+    rollback = RollbackManager()
+    record = rollback.retire(args[0], reason)
+    if record:
+        print(f"🏁 已退役: {args[0]}")
+    else:
+        print(f"❌ 退役失败")
+
+
+def _evolve_optimize(args: list[str]):
+    """触发策略自动优化。"""
+    if not args:
+        print("用法: evolution optimize <lifecycle_id>")
+        return
+
+    from src.evolution import LifecycleManager, LifecycleState as LS, TransitionRequest
+    manager = LifecycleManager()
+    # 先转为 DEGRADED → OPTIMIZING
+    resp1 = manager.transition(TransitionRequest(
+        lifecycle_id=args[0],
+        target_state=LS.DEGRADED,
+        reason="用户触发优化",
+        triggered_by="user",
+        force=True,
+    ))
+    if resp1.result.value != "ok":
+        print(f"❌ {resp1.message}")
+        return
+    resp2 = manager.transition(TransitionRequest(
+        lifecycle_id=args[0],
+        target_state=LS.OPTIMIZING,
+        reason="用户触发优化",
+        triggered_by="user",
+        force=True,
+    ))
+    if resp2.result.value == "ok":
+        print(f"🔧 已触发优化: {args[0]}")
+        print("(接入现有 EvolutionPipeline 进行参数优化)")
+    else:
+        print(f"❌ {resp2.message}")
+
+
+def _evolve_proposals(args: list[str]):
+    """管理改进提案。"""
+    sub = args[0] if args else "list"
+    sub_args = args[1:]
+
+    from src.evolution import ProposalManager
+    pm = ProposalManager()
+
+    if sub == "list":
+        proposals = pm.list_all()
+        if not proposals:
+            print("📭 暂无改进提案")
+            return
+        for p in proposals:
+            emoji = {"draft": "📝", "pending_review": "⏳", "approved": "✅",
+                     "rejected": "❌", "implementing": "🔧", "validating": "🧪",
+                     "merged": "🏆", "closed": "📁"}.get(p.status.value, "❓")
+            print(f"  {emoji} {p.id} | {p.status.value} | {p.title[:60]}")
+    elif sub == "review":
+        if not sub_args:
+            print("用法: evolution proposals review <proposal_id> [approve|reject] [--note ...]")
+            return
+        import argparse
+        parser = argparse.ArgumentParser(description="审核提案")
+        parser.add_argument("proposal_id", help="提案ID")
+        parser.add_argument("action", choices=["approve", "reject"], nargs="?", default="approve")
+        parser.add_argument("--note", type=str, default="", help="审核备注")
+        parsed = parser.parse_args(sub_args)
+        if parsed.action == "approve":
+            pm.approve(parsed.proposal_id, parsed.note)
+            print(f"✅ 已批准: {parsed.proposal_id}")
+        else:
+            pm.reject(parsed.proposal_id, parsed.note)
+            print(f"❌ 已驳回: {parsed.proposal_id}")
+    elif sub == "apply":
+        if not sub_args:
+            print("用法: evolution proposals apply <proposal_id>")
+            return
+        pm.mark_implementing(sub_args[0])
+        print(f"🔧 开始实施: {sub_args[0]}")
+    elif sub == "compare":
+        if not sub_args:
+            print("用法: evolution proposals compare <proposal_id> [--old-sharpe X] [--new-sharpe Y] ...")
+            return
+        import argparse
+        parser = argparse.ArgumentParser(description="A/B对比")
+        parser.add_argument("proposal_id", help="提案ID")
+        parser.add_argument("--old-sharpe", type=float, default=0.8)
+        parser.add_argument("--new-sharpe", type=float, default=1.0)
+        parser.add_argument("--old-return", type=float, default=0.25)
+        parser.add_argument("--new-return", type=float, default=0.30)
+        parser.add_argument("--old-maxdd", type=float, default=0.20)
+        parser.add_argument("--new-maxdd", type=float, default=0.15)
+        parsed = parser.parse_args(sub_args)
+
+        from src.evolution import PipelineComparator
+        comparator = PipelineComparator()
+        result = comparator.compare_metrics(
+            old_sharpe=parsed.old_sharpe,
+            old_return=parsed.old_return,
+            old_max_dd=parsed.old_maxdd,
+            new_sharpe=parsed.new_sharpe,
+            new_return=parsed.new_return,
+            new_max_dd=parsed.new_maxdd,
+        )
+        print(result.report)
+        if result.improved:
+            pm.set_pipeline_metrics(parsed.proposal_id,
+                                     {"sharpe_ratio": parsed.old_sharpe},
+                                     {"sharpe_ratio": parsed.new_sharpe})
+            pm.mark_merged(parsed.proposal_id, result.sharpe_improvement_pct)
+    else:
+        print(f"未知 proposals 子命令: {sub}，可用: list | review | apply | compare")
+
+
+def _evolve_monitor(args: list[str]):
+    """查看监控状态。"""
+    from src.evolution import LifecycleManager, TrialRunner, TrialMonitor
+    manager = LifecycleManager()
+    runner = TrialRunner(manager)
+    monitor = TrialMonitor(manager, runner)
+    print(monitor.summary())
+
+
+def _evolve_report(args: list[str]):
+    """查看策略详细报告。"""
+    if not args:
+        print("用法: evolution report <lifecycle_id>")
+        return
+    from src.evolution import LifecycleManager
+    manager = LifecycleManager()
+    lc = manager.get(args[0])
+    if lc is None:
+        print(f"生命周期不存在: {args[0]}")
+        return
+
+    print(f"📊 策略报告: {lc.strategy_name}")
+    print(f"   ID: {lc.id}")
+    print(f"   论文: {lc.paper_id}")
+    print(f"   状态: {lc.state.value}")
+    print(f"   版本: {lc.strategy_version or 'N/A'}")
+    print(f"   创建: {lc.created_at}")
+    print(f"   更新: {lc.updated_at}")
+    print()
+    print("📈 回测:")
+    print(f"   Sharpe: {lc.backtest_sharpe or 'N/A'}  收益: {lc.backtest_return or 'N/A'}  MaxDD: {lc.backtest_max_dd or 'N/A'}")
+    print(f"   通过: {'✅' if lc.backtest_passed else '❌'}")
+    print()
+    print("🧪 模拟盘:")
+    print(f"   Sharpe: {lc.trial_sharpe or 'N/A'}  收益: {lc.trial_return or 'N/A'}  MaxDD: {lc.trial_max_dd or 'N/A'}")
+    print(f"   交易笔数: {lc.trial_trades}  通过: {'✅' if lc.trial_passed else '❌'}")
+    if lc.trial_started_at:
+        print(f"   开始: {lc.trial_started_at}")
+    print()
+    print("💰 实战:")
+    print(f"   Sharpe: {lc.live_sharpe or 'N/A'}  收益: {lc.live_return or 'N/A'}  MaxDD: {lc.live_max_dd or 'N/A'}")
+    if lc.active_started_at:
+        print(f"   开始: {lc.active_started_at}")
+    print()
+    print("📜 状态历史:")
+    for t in lc.state_history:
+        print(f"   {t.timestamp[:19]}  {t.from_state.value} → {t.to_state.value}  [{t.triggered_by}] {t.reason[:60]}")
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法: python -m src.cli <command> [args]")
@@ -536,6 +1096,8 @@ def main():
         print("  feedback <add|summary> | evolve | learn <report>")
         print("  search-news <query> | screen <conditions> | related <symbol>")
         print("  paper-trade <action> | poster --title --text")
+        print("  alpha <code> | alpha-scan | alpha-decay <code>")
+        print("  evolution <import|list|status|promote|degrade|retire|optimize|proposals|monitor|report>")
         return
 
     cmd = sys.argv[1]
@@ -563,6 +1125,12 @@ def main():
         "related": lambda: cmd_related(args),
         "paper-trade": lambda: cmd_paper_trade(args),
         "poster": lambda: cmd_poster(args),
+        # Phase 4: Alpha Lens 命令
+        "alpha": lambda: cmd_alpha(args[0]) if args else print("用法: alpha <code>"),
+        "alpha-scan": lambda: cmd_alpha_scan(args),
+        "alpha-decay": lambda: cmd_alpha_decay(args[0]) if args else print("用法: alpha-decay <code>"),
+        # Phase 5: 策略进化模块
+        "evolution": lambda: cmd_evolution(args),
     }
 
     handler = commands.get(cmd)
