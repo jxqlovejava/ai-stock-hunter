@@ -85,6 +85,212 @@ def calculate_pe_percentile(
 
 
 # ---------------------------------------------------------------------------
+# 价值因子 (Value Factors)
+# ---------------------------------------------------------------------------
+
+def compute_pb_factor(df: pd.DataFrame) -> pd.Series:
+    """P/B 因子：低 PB = 价值，返回 0-100 排名分数。"""
+    if "pb" not in df.columns:
+        return pd.Series(50.0, index=df.index)
+    pb = pd.to_numeric(df["pb"], errors="coerce")
+    valid = pb[pb > 0]
+    if valid.empty:
+        return pd.Series(50.0, index=df.index)
+    # Lower PB → higher score (value tilt)
+    rank = valid.rank(pct=True)
+    return (1.0 - rank) * 100  # invert: low PB = high score
+
+
+def compute_ps_factor(df: pd.DataFrame) -> pd.Series:
+    """P/S 因子：低 PS = 价值，返回 0-100 排名分数。"""
+    if "ps" not in df.columns:
+        return pd.Series(50.0, index=df.index)
+    ps = pd.to_numeric(df["ps"], errors="coerce")
+    valid = ps[ps > 0]
+    if valid.empty:
+        return pd.Series(50.0, index=df.index)
+    rank = valid.rank(pct=True)
+    return (1.0 - rank) * 100
+
+
+def compute_dividend_yield_factor(df: pd.DataFrame) -> pd.Series:
+    """股息率因子：高股息 = 防御价值，返回 0-100 排名分数。"""
+    div_col = None
+    for col in df.columns:
+        col_lower = str(col).lower()
+        if "dividend" in col_lower or "股息" in str(col) or "div_yield" in col_lower:
+            div_col = col
+            break
+    if div_col is None:
+        return pd.Series(50.0, index=df.index)
+    div_yield = pd.to_numeric(df[div_col], errors="coerce")
+    valid = div_yield[div_yield > 0]
+    if valid.empty:
+        return pd.Series(50.0, index=df.index)
+    # Higher dividend yield → higher score
+    return valid.rank(pct=True) * 100
+
+
+# ---------------------------------------------------------------------------
+# 质量因子 (Quality Factors)
+# ---------------------------------------------------------------------------
+
+def compute_accruals_factor(
+    net_profit: pd.Series,
+    operating_cashflow: pd.Series,
+    total_assets: pd.Series,
+) -> pd.Series:
+    """应计利润因子：低应计 = 高质量盈利。
+
+    Accruals = (NetProfit - OperatingCashFlow) / TotalAssets
+    低应计 → 盈利更真实 → 高分。
+    """
+    ta = total_assets.replace(0, pd.NA)
+    accruals = (net_profit - operating_cashflow) / ta
+    valid = accruals.dropna()
+    if valid.empty:
+        return pd.Series(50.0, index=accruals.index)
+    # Lower accruals → higher score
+    rank = valid.rank(pct=True)
+    return (1.0 - rank) * 100
+
+
+def compute_earnings_quality_factor(
+    net_profit: pd.Series,
+    operating_cashflow: pd.Series,
+) -> pd.Series:
+    """盈利质量因子：经营现金流 / 净利润。
+
+    >1 = 现金实收盈利，<1 = 纸面利润。
+    """
+    np_clipped = net_profit.clip(lower=1.0)
+    ratio = operating_cashflow / np_clipped
+    valid = ratio.dropna()
+    if valid.empty:
+        return pd.Series(50.0, index=ratio.index)
+    # Clamp extreme values
+    ratio_clamped = valid.clip(lower=0, upper=5)
+    return ratio_clamped.rank(pct=True) * 100
+
+
+# ---------------------------------------------------------------------------
+# 成长因子 (Growth Factors)
+# ---------------------------------------------------------------------------
+
+def compute_revenue_growth_factor(df: pd.DataFrame) -> pd.Series:
+    """营收增速因子：高增速 = 成长，返回 0-100 排名分数。"""
+    rev_col = None
+    for col in df.columns:
+        col_str = str(col)
+        if "营收" in col_str and ("增速" in col_str or "同比" in col_str or "增长" in col_str):
+            rev_col = col
+            break
+    if rev_col is None:
+        # Fallback: try common column names
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if "revenue_growth" in col_lower or "rev_yoy" in col_lower:
+                rev_col = col
+                break
+    if rev_col is None:
+        return pd.Series(50.0, index=df.index)
+    growth = pd.to_numeric(df[rev_col], errors="coerce")
+    valid = growth.dropna()
+    if valid.empty:
+        return pd.Series(50.0, index=df.index)
+    return valid.rank(pct=True) * 100
+
+
+def compute_earnings_growth_factor(df: pd.DataFrame) -> pd.Series:
+    """净利润增速因子：高增速 = 成长，返回 0-100 排名分数。"""
+    earn_col = None
+    for col in df.columns:
+        col_str = str(col)
+        if "净利润" in col_str and ("增速" in col_str or "同比" in col_str or "增长" in col_str):
+            earn_col = col
+            break
+    if earn_col is None:
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if "earnings_growth" in col_lower or "profit_yoy" in col_lower or "net_profit_growth" in col_lower:
+                earn_col = col
+                break
+    if earn_col is None:
+        return pd.Series(50.0, index=df.index)
+    growth = pd.to_numeric(df[earn_col], errors="coerce")
+    valid = growth.dropna()
+    if valid.empty:
+        return pd.Series(50.0, index=df.index)
+    return valid.rank(pct=True) * 100
+
+
+# ---------------------------------------------------------------------------
+# 复合因子计算
+# ---------------------------------------------------------------------------
+
+def compute_all_factors(df: pd.DataFrame) -> pd.DataFrame:
+    """对 DataFrame 计算所有因子，添加因子列。
+
+    Args:
+        df: 来自 AKShare stock_zh_a_spot() 或类似行情数据的 DataFrame。
+
+    Returns:
+        带有因子列 (pb_factor, ps_factor, div_factor 等) 的新 DataFrame。
+    """
+    result = df.copy()
+
+    # Value factors
+    result["pb_factor"] = compute_pb_factor(df)
+    result["ps_factor"] = compute_ps_factor(df)
+    result["div_factor"] = compute_dividend_yield_factor(df)
+
+    # Quality factors — need financial statement data, default to 50
+    result["accruals_factor"] = 50.0
+    result["earnings_quality_factor"] = 50.0
+
+    # Growth factors
+    result["revenue_growth_factor"] = compute_revenue_growth_factor(df)
+    result["earnings_growth_factor"] = compute_earnings_growth_factor(df)
+
+    return result
+
+
+def compute_composite_value_score(factors: dict[str, pd.Series]) -> pd.Series:
+    """综合价值得分：PB (40%) + PS (30%) + 股息率 (30%)。"""
+    pb = factors.get("pb_factor", pd.Series(50.0))
+    ps = factors.get("ps_factor", pd.Series(50.0))
+    div = factors.get("div_factor", pd.Series(50.0))
+    # Align indices
+    idx = pb.index
+    return (
+        pb.reindex(idx).fillna(50) * 0.40
+        + ps.reindex(idx).fillna(50) * 0.30
+        + div.reindex(idx).fillna(50) * 0.30
+    )
+
+
+def compute_composite_quality_score(factors: dict[str, pd.Series]) -> pd.Series:
+    """综合质量得分：应计 (50%) + 盈利质量 (50%)。"""
+    acc = factors.get("accruals_factor", pd.Series(50.0))
+    eq = factors.get("earnings_quality_factor", pd.Series(50.0))
+    idx = acc.index
+    return (
+        acc.reindex(idx).fillna(50) * 0.50
+        + eq.reindex(idx).fillna(50) * 0.50
+    )
+
+
+def compute_composite_growth_score(factors: dict[str, pd.Series]) -> pd.Series:
+    """综合成长得分：营收增速 (50%) + 净利润增速 (50%)。"""
+    rev = factors.get("revenue_growth_factor", pd.Series(50.0))
+    earn = factors.get("earnings_growth_factor", pd.Series(50.0))
+    idx = rev.index
+    return (
+        rev.reindex(idx).fillna(50) * 0.50
+        + earn.reindex(idx).fillna(50) * 0.50
+    )
+
+# ---------------------------------------------------------------------------
 # 北向资金管道
 # ---------------------------------------------------------------------------
 
