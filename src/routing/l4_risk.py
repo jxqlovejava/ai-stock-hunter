@@ -179,6 +179,21 @@ class L4RiskOfficer:
         if any("黑名单" in v for v in blacklist_violations):
             weight = 0.0
 
+        # Phase 6: 博弈论风险约束
+        gt_risks = (portfolio or {}).get("game_theory_risks", [])
+        if gt_risks:
+            violations.extend(gt_risks)
+            critical_gt = {
+                "seat_distribution_sell",
+                "sector_crowded",
+                "leverage_fear",
+                "hot_money_dominant_large_cap_mismatch",
+            }
+            if any(any(k in v for k in critical_gt) for v in gt_risks):
+                weight = weight * 0.5
+            if any("seat_distribution_sell" in v for v in gt_risks):
+                weight = 0.0
+
         return RiskCheck(
             passed=len([v for v in violations if "熔断" in v or "止损" in v or "黑名单" in v]) == 0,
             violations=violations,

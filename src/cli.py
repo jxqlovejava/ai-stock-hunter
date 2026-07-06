@@ -112,6 +112,12 @@ def cmd_analyze(symbol: str):
         return
     if result.warnings:
         print(f"⚠️  警告: {', '.join(result.warnings)}")
+    if result.game_theory_info:
+        gt = result.game_theory_info
+        print(f"🎲 博弈论: {gt.get('score', 0)}/100 | 主导: {gt.get('dominant_player', '')} | 席位: {gt.get('seat_signal', '')}")
+    if result.mental_model_info:
+        mm = result.mental_model_info
+        print(f"🧠 思维模型: {mm.get('fit_score', 0)}/100 | 能力圈: {mm.get('competence_match', '')}")
     if result.verdict:
         v = result.verdict
         print(f"评分: {v.score}/100  置信度: {v.confidence:.0%}  建议: {v.recommendation}")
@@ -585,6 +591,23 @@ def cmd_alpha(symbol: str):
         print("⚠️ Alpha Profile 不可用")
 
     # Pipeline results
+    if result.game_theory_info:
+        gt = result.game_theory_info
+        print(f"\n🎲 博弈论分析: {gt.get('score', 0)}/100")
+        print(f"   主导玩家: {gt.get('dominant_player', 'unknown')} | 市场状态: {gt.get('market_regime', 'unknown')}")
+        print(f"   拥挤度: {gt.get('crowding_score', 0)} | 杠杆: {gt.get('margin_score', 0)} | 席位: {gt.get('seat_signal', 'unknown')}")
+        if gt.get('risks'):
+            for r in gt['risks'][:3]:
+                print(f"   ⚠️ {r}")
+
+    if result.mental_model_info:
+        mm = result.mental_model_info
+        print(f"\n🧠 投资思维模型匹配: {mm.get('fit_score', 0)}/100")
+        print(f"   能力圈: {mm.get('competence_match', 'unknown')} | 风险偏好匹配: {mm.get('risk_profile_match', False)}")
+        if mm.get('bias_flags'):
+            for f in mm['bias_flags'][:3]:
+                print(f"   ⚠️ {f}")
+
     if result.verdict:
         v = result.verdict
         print(f"\n📋 L2 裁决: {v.score}/100 | 建议: {v.recommendation}")
@@ -593,18 +616,10 @@ def cmd_alpha(symbol: str):
         if v.consensus_challenge:
             print(f"   共识挑战: {v.consensus_challenge}")
         print(f"   Alpha 乘数: {v.alpha_multiplier:.2f}x")
-
-    if result.signal:
-        s = result.signal
-        print(f"\n💰 L3 信号: {s.action} | 目标仓位: {s.target_weight:.1%}")
-
-    if result.risk:
-        r = result.risk
-        status = "✅" if r.passed else "⛔"
-        print(f"\n🛡️ L4 风控: {status} | 调整后仓位: {r.adjusted_weight:.1%}")
-        if r.violations:
-            for v_v in r.violations:
-                print(f"   ⚠️ {v_v}")
+        if v.game_theory_risks:
+            print(f"   博弈风险: {', '.join(v.game_theory_risks[:2])}")
+        if v.mental_model_warnings:
+            print(f"   心理模型警示: {', '.join(v.mental_model_warnings[:2])}")
 
 
 def cmd_alpha_scan(args: list[str]):

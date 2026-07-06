@@ -12,13 +12,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from src.data.source_citation import SourceCitation
 from src.industry.bottleneck import BottleneckAnalysis, BottleneckType
 from src.industry.supply_chain import classify_stock
 from src.alpha.schema import AlphaProfile
+from src.routing.game_theory_analyzer import GameTheoryProfile
+from src.routing.investor_mental_model import InvestorMentalModelFit
 
 
 @dataclass
@@ -50,6 +52,9 @@ class AnalysisReport:
     confidence: float = 0.7  # Phase 1: 综合信心度 0.0-1.0
     data_freshness: datetime = field(default_factory=datetime.now)  # Phase 1: 数据新鲜度
     created_at: datetime = field(default_factory=datetime.now)
+    # Phase 6: 博弈论 + 投资思维模型
+    game_theory_profile: Optional[GameTheoryProfile] = None
+    investor_mental_model: Optional[InvestorMentalModelFit] = None
 
 
 class L1Analyzer:
@@ -150,7 +155,7 @@ class L1Analyzer:
         if executive:
             citations.append(SourceCitation(
                 provider="miaoxiang-data-executive", field="executive",
-                confidence=0.80, data_freshness=14400,  # 4h in seconds
+                confidence=0.80, data_freshness=timedelta(hours=4),
             ))
         return citations
 

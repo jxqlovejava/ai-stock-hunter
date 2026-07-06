@@ -304,6 +304,8 @@ class MultiAgentQualityChecker:
             "sentiment": getattr(report, "sentiment_signal", "NEUTRAL"),
             "executive": getattr(report, "executive_score", 50),
             "valuation": getattr(report, "valuation_score", 50) if hasattr(report, "valuation_score") else 50,
+            "game_theory": getattr(getattr(report, "game_theory_profile", None), "score", 50),
+            "mental_model": getattr(getattr(report, "investor_mental_model", None), "fit_score", 50),
         }
 
         # 边界检查
@@ -477,6 +479,20 @@ class MultiAgentQualityChecker:
         if not bottlenecks and not upstream_risks:
             suggestions.append("补充供应链/瓶颈分析，理解公司在产业链中的位置")
 
+        # Phase 6: 博弈论 + 投资思维模型可解释性
+        gt_profile = getattr(report, "game_theory_profile", None)
+        imm_fit = getattr(report, "investor_mental_model", None)
+        if gt_profile is None:
+            flags.append("缺少博弈论分析")
+            suggestions.append("接入 GameTheoryAnalyzer，说明主导玩家、拥挤度、席位信号")
+        elif not gt_profile.risks:
+            suggestions.append("博弈论分析已启用但 risks 为空，建议补充价格冲击/拥挤度风险")
+        if imm_fit is None:
+            flags.append("缺少投资思维模型分析")
+            suggestions.append("接入 InvestorMentalModelAnalyzer，说明能力圈与行为偏差")
+        elif not imm_fit.warnings and not imm_fit.bias_flags:
+            suggestions.append("投资思维模型分析已启用但无风险提示，建议检查能力圈与持仓浮亏")
+
         if flags:
             score = max(20, 80 - len(flags) * 15)
             return AgentVerdict(
@@ -531,6 +547,12 @@ class MultiAgentQualityChecker:
         ]
         if hasattr(report, "valuation_score"):
             score_fields.append(("valuation_score", report.valuation_score))
+        gt_profile = getattr(report, "game_theory_profile", None)
+        if gt_profile:
+            score_fields.append(("game_theory_score", gt_profile.score))
+        imm_fit = getattr(report, "investor_mental_model", None)
+        if imm_fit:
+            score_fields.append(("mental_model_fit_score", imm_fit.fit_score))
 
         all_zero_or_hundred = True
         for name, val in score_fields:

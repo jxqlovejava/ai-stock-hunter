@@ -26,6 +26,8 @@ from .l2_judge import L2Judge, Verdict
 from .l3_trade import L3Trader, TradeSignal
 from .l4_risk import L4RiskOfficer, RiskCheck
 from .guardrails import GuardrailEnforcer, GuardrailViolation
+from .game_theory_analyzer import GameTheoryAnalyzer, GameTheoryProfile
+from .investor_mental_model import InvestorMentalModelAnalyzer, InvestorMentalModelFit
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +59,18 @@ class OrchestratorResult:
     investor_prefs_applied: dict = field(default_factory=dict)
     # Phase 4: Alpha Lens 视角
     alpha_profile: Optional[AlphaProfile] = None
+    # Phase 6: 博弈论 + 投资思维模型
+    game_theory_info: Optional[dict] = None
+    mental_model_info: Optional[dict] = None
     # CogAlpha: 多 Agent 质量审查报告
     quality_report: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
 class Orchestrator:
-    """5 层路由编排器。
+    """多层路由编排器。
 
-    流程: 军规 → L0 → L1 → L2 → L3 → L4
+    流程: 军规 → L0 → L1 → 质量审查 → 博弈论 → 投资思维模型 → L2 → L3 → L4
 
     用法:
         orch = Orchestrator()
@@ -74,6 +79,7 @@ class Orchestrator:
             print(f"建议: {result.signal.action} {result.risk.adjusted_weight:.1%}")
 
     Phase 3 增强: 自动注入 MacroRegime / NorthboundProfile / Topic 生命周期。
+    Phase 6 增强: 接入 GameTheoryAnalyzer / InvestorMentalModelAnalyzer。
     """
 
     def __init__(self):
@@ -92,6 +98,9 @@ class Orchestrator:
         self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
         self.alpha_lens = AlphaLens()        # Phase 4: Alpha Lens 引擎
         self.quality_checker = MultiAgentQualityChecker()  # CogAlpha: 多 Agent 质量审查
+        # Phase 6: 博弈论 + 投资思维模型
+        self.gt_analyzer = GameTheoryAnalyzer(self.data)
+        self.imm_analyzer = InvestorMentalModelAnalyzer()
 
     def run(
         self,
@@ -284,6 +293,26 @@ class Orchestrator:
         result.warnings.extend(quality_report.warnings[:5])
         result.quality_report = quality_report.to_dict()
 
+        # Phase 6: 博弈论 + 投资思维模型
+        gt_profile = self.gt_analyzer.analyze(
+            symbol, name,
+            market_cap=quote.market_cap if quote else None,
+            sector="",
+        )
+        imm_fit = self.imm_analyzer.analyze(
+            symbol, name,
+            investor=investor,
+            portfolio=portfolio,
+            sector="",
+            market_cap=quote.market_cap if quote else None,
+            change_pct=quote.change_pct if quote else None,
+        )
+        report.game_theory_profile = gt_profile
+        report.investor_mental_model = imm_fit
+        report.source_citations.extend(gt_profile.source_citations + imm_fit.source_citations)
+        result.game_theory_info = gt_profile.to_dict()
+        result.mental_model_info = imm_fit.to_dict()
+
         # Step 4: L2 法官
         verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
         result.verdict = verdict
@@ -338,6 +367,15 @@ class Orchestrator:
                 ),
                 "narrative_stage": alpha_profile.narrative.stage.value,
             }
+        # Phase 6: 博弈论风险注入 L4
+        if gt_profile:
+            enriched_portfolio["game_theory_risks"] = gt_profile.risks
+            enriched_portfolio["dominant_player"] = gt_profile.dominant_player
+            enriched_portfolio["market_regime"] = gt_profile.market_regime
+        if imm_fit:
+            enriched_portfolio["mental_model_bias_flags"] = imm_fit.bias_flags
+            enriched_portfolio["mental_model_warnings"] = imm_fit.warnings
+
         risk = self.l4.check(signal, enriched_portfolio, position_limits=position_limits)
         result.risk = risk
 
@@ -471,6 +509,24 @@ class Orchestrator:
             source_citations=report.source_citations,
             confidence=report.confidence,
         )
+
+        # Phase 6: 博弈论 + 投资思维模型 (analysis-worker 同步)
+        gt_profile = self.gt_analyzer.analyze(
+            symbol, name,
+            market_cap=quote.market_cap if quote else None,
+            sector="",
+        )
+        imm_fit = self.imm_analyzer.analyze(
+            symbol, name,
+            investor=investor,
+            portfolio=portfolio,
+            sector="",
+            market_cap=quote.market_cap if quote else None,
+            change_pct=quote.change_pct if quote else None,
+        )
+        report.game_theory_profile = gt_profile
+        report.investor_mental_model = imm_fit
+        report.source_citations.extend(gt_profile.source_citations + imm_fit.source_citations)
 
         # L2 (with investor preference weights)
         weights = None

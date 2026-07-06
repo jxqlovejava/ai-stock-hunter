@@ -21,6 +21,16 @@ class Verdict:
     risks: list[str] = field(default_factory=list)
     topic_adjustments: dict = field(default_factory=dict)  # Phase 3: topic lifecycle adjustments
     source_citations: list = field(default_factory=list)  # Phase 1: 继承自 L1 的引用
+    # Phase 4: Alpha Lens 输出
+    alpha_rationale: str = ""              # 为什么这个判断有 Alpha
+    consensus_challenge: str = ""          # 市场可能错在哪
+    alpha_multiplier: float = 1.0          # Alpha 权重乘数 (0.5-1.5)
+    executive_risks: list[str] = field(default_factory=list)  # V4: 高管风险
+    # Phase 6: 博弈论 + 投资思维模型
+    game_theory_adjustment: dict = field(default_factory=dict)
+    game_theory_risks: list[str] = field(default_factory=list)
+    mental_model_fit_score: float = 0.0
+    mental_model_warnings: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -28,22 +38,28 @@ class L2Judge:
     """L2 法官。
 
     评分权重:
-      - 基本面 (L1 价值 + 质量): 40%
-      - 技术面 (L1 动量): 20%
-      - 宏观适配: 15%
+      - 基本面 (L1 价值 + 质量): 30%
+      - 估值 (L1 多维估值): 15%
+      - 技术面 (L1 动量): 15%
+      - 宏观适配: 10%
+      - 周期阶段: 10%
       - 行业景气: 10%
-      - 情绪溢价: 15%
+      - 情绪溢价: 5%
+      - 高管: 5%
 
     置信度 < 0.6 不进入 L3。
     Phase 3: 主题生命周期调整 (topic_adj) 影响行业权重。
     """
 
     WEIGHTS = {
-        "fundamental": 0.40,
-        "technical": 0.20,
-        "macro": 0.15,
+        "fundamental": 0.30,
+        "valuation": 0.15,
+        "technical": 0.15,
+        "macro": 0.10,
+        "cycle": 0.10,
         "sector": 0.10,
-        "sentiment": 0.15,
+        "sentiment": 0.05,
+        "executive": 0.05,
     }
 
     MIN_CONFIDENCE = 0.6
@@ -65,9 +81,15 @@ class L2Judge:
                               None 时使用默认权重。非 None 时自动归一化。
         """
         fundamental = (report.value_score + report.quality_score) / 2
+        valuation = report.valuation_score
         technical = report.momentum_score
         macro = report.macro_score
+        cycle = report.cycle_score
+        executive_score = report.executive_score
         sentiment = self._sentiment_adj(report.sentiment_signal)
+
+        # Phase 4: Alpha Lens 乘数调整
+        alpha_mult, alpha_rationale, consensus_challenge = self._alpha_multiplier(report)
 
         # Phase 3: 主题生命周期调整
         adjusted_sector = sector_score
@@ -83,16 +105,48 @@ class L2Judge:
             if abs(total - 1.0) > 0.01:
                 weights = {k: v / total for k, v in weights.items()}
 
-        score = (
+        raw_score = (
             fundamental * weights["fundamental"]
+            + valuation * weights.get("valuation", 0.15)
             + technical * weights["technical"]
             + macro * weights["macro"]
+            + cycle * weights.get("cycle", 0.10)
             + adjusted_sector * weights["sector"]
             + sentiment * weights["sentiment"]
+            + executive_score * weights.get("executive", 0.05)
         )
 
+        # Phase 4: Alpha Lens 乘数 — Alpha 放大/缩小总评分
+        score = max(0, min(100, raw_score * alpha_mult))
+
+        # Phase 6: 博弈论 + 投资思维模型乘数
+        gt_profile = getattr(report, "game_theory_profile", None)
+        imm_fit = getattr(report, "investor_mental_model", None)
+        gt_mult = 1.0
+        mm_mult = 1.0
+        gt_score = 50
+        mm_score = 50
+        gt_risks: list[str] = []
+        mm_warnings: list[str] = []
+        mm_bias_flags: list[str] = []
+        if gt_profile is not None:
+            gt_score = gt_profile.score
+            gt_mult = 0.9 + 0.2 * (gt_score - 50) / 50.0
+            gt_risks = gt_profile.risks
+        if imm_fit is not None:
+            mm_score = imm_fit.fit_score
+            mm_mult = 0.9 + 0.2 * (mm_score - 50) / 50.0
+            mm_warnings = imm_fit.warnings
+            mm_bias_flags = imm_fit.bias_flags
+        score = max(0, min(100, score * gt_mult * mm_mult))
+
         # 置信度 = 信息完整度的函数
-        confidence = 0.5 + 0.3 * (min(fundamental, macro, adjusted_sector) / 50.0)
+        confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
+        if gt_profile is not None:
+            confidence_inputs.append(gt_score)
+        if imm_fit is not None:
+            confidence_inputs.append(mm_score)
+        confidence = 0.5 + 0.3 * (min(confidence_inputs) / 50.0)
         confidence = min(confidence, 0.95)
 
         # 建议映射
@@ -111,12 +165,21 @@ class L2Judge:
         falsifiable = [
             "如果宏观 PMI < 48，建议失效",
             "如果标的 PE 超过历史 70% 分位，建议失效",
+            f"如果经济周期为 CONTRACTION 或 TROUGH (当前: {report.cycle_phase})，建议效力减半",
         ]
+        if gt_profile:
+            falsifiable.append(f"如果主导玩家变更为 {gt_profile.dominant_player} 的对立方且持续 3 日，建议失效")
 
         # 风险提示
         risks = []
         if report.macro_score < 40:
             risks.append("宏观环境偏空")
+        if report.cycle_score < 30:
+            risks.append(f"经济周期偏空 ({report.cycle_phase})，注意系统性风险")
+        if report.valuation_score > 80:
+            risks.append("估值极低 — 可能存在基本面隐忧或价值陷阱")
+        if report.valuation_score < 20:
+            risks.append("估值过高 — 泡沫风险显著")
         if report.sentiment_signal == "PANIC":
             risks.append("市场恐慌中，注意流动性")
         # Phase 3: 主题拥挤风险
@@ -124,6 +187,13 @@ class L2Judge:
             risks.append(f"主题拥挤: {', '.join(topic_info['crowded_topics'])}")
         if topic_info.get("fading_topics"):
             risks.append(f"主题消退: {', '.join(topic_info['fading_topics'])}")
+        # V4: 高管风险
+        if report.executive_risks:
+            risks.extend(report.executive_risks)
+        # Phase 6: 博弈论 + 投资思维模型风险
+        risks.extend(gt_risks)
+        risks.extend(mm_bias_flags)
+        risks.extend(mm_warnings)
 
         return Verdict(
             symbol=report.symbol,
@@ -134,6 +204,65 @@ class L2Judge:
             risks=risks,
             topic_adjustments=topic_info,
             source_citations=report.source_citations,  # Phase 1: 继承 L1 的引用
+            alpha_rationale=alpha_rationale,            # Phase 4: Alpha 判定理由
+            consensus_challenge=consensus_challenge,    # Phase 4: 挑战共识
+            alpha_multiplier=round(alpha_mult, 2),      # Phase 4: Alpha 乘数
+            executive_risks=report.executive_risks,     # V4: 高管风险
+            game_theory_adjustment={"gt_multiplier": round(gt_mult, 2), "gt_score": gt_score},
+            game_theory_risks=gt_risks,
+            mental_model_fit_score=mm_score,
+            mental_model_warnings=mm_warnings + mm_bias_flags,
+        )
+
+    def _alpha_multiplier(
+        self,
+        report: AnalysisReport,
+    ) -> tuple[float, str, str]:
+        """Phase 4: Alpha Lens — 基于 AlphaProfile 计算评分乘数。
+
+        Alpha 视角调整:
+          - alpha_score >= 60: 乘数 1.2 (高 Alpha → 放大)
+          - alpha_score >= 40: 乘数 1.0 (中等 Alpha)
+          - alpha_score < 40:  乘数 0.7 (低 Alpha → 缩小)
+          - 叙事 CROWDED:       乘数 0.5 (拥挤 → 强制降权)
+          - 共识噪音源:          乘数 0.8
+
+        Returns:
+            (multiplier, rationale, consensus_challenge)
+        """
+        profile = report.alpha_profile
+        if profile is None:
+            return 1.0, "", ""
+
+        multiplier = 1.0
+
+        # Alpha 评分调整
+        if profile.alpha_score >= 60:
+            multiplier += 0.2
+        elif profile.alpha_score < 40:
+            multiplier -= 0.3
+
+        # 叙事阶段调整
+        from src.alpha.schema import NarrativeLifecycle
+        if profile.narrative.stage == NarrativeLifecycle.CROWDED:
+            multiplier = min(multiplier, 0.5)
+
+        # 噪音来源惩罚
+        from src.alpha.schema import SourceTier
+        if profile.source.source_tier == SourceTier.CONSENSUS_NOISE:
+            multiplier = min(multiplier, 0.8)
+
+        # 共识-现实缺口大 → 加分（因为市场可能错了）
+        if profile.consensus_gap.is_market_wrong:
+            multiplier += 0.1
+
+        multiplier = max(0.3, min(1.5, multiplier))
+
+        return (
+            round(multiplier, 2),
+            profile.alpha_rationale,
+            f"共识挑战: {profile.consensus_gap.alpha_opportunity}"
+            if profile.consensus_gap.gap_score >= 30 else "",
         )
 
     def _apply_topic_adjustment(

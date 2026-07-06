@@ -12,7 +12,7 @@ CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Jud
 ## 核心原则
 
 - **DTO 优先**：跨层数据使用 `@dataclass`，不用裸 dict
-- **完整 Workflow**：单票分析必须跑全 军规 → L0 → 宏观/Alpha → L1 → L2 → L3 → L4 → 质量审查 → 投资者校验，禁止跳过阶段
+- **完整 Workflow**：单票分析必须跑全 军规 → L0 → 宏观/Alpha → L1 → 质量审查 → 博弈论 → 投资思维模型 → L2 → L3 → L4 → 投资者校验，禁止跳过阶段
 - **护栏内置**：每个分析输出携带 `source_citations` + `confidence` + `data_freshness`
 - **数据溯源三要素**：每个 citation 必须标注 `tier`（primary/secondary/tertiary）与 `nature`（fact/interpretation/speculation）
 - **质量加权**：L1/L2 必须按数据新鲜度、来源级别、事实/推测性质对评分和 confidence 进行加权或降权
