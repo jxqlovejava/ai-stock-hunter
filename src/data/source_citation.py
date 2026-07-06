@@ -159,6 +159,7 @@ def make_citation(
     is_cached: bool = False,
     source_tier: str | None = None,
     nature: str = NATURE_FACT,
+    confidence: float | None = None,
 ) -> SourceCitation:
     """快捷创建 SourceCitation, 自动填充置信度、新鲜度和 T0-T3 分级。
 
@@ -170,12 +171,14 @@ def make_citation(
         is_cached: 是否来自缓存
         source_tier: T0/T1/T2/T3，None 时按 provider 自动推断
         nature: 数据性质 (fact/interpretation/speculation/data_gap)
+        confidence: 可选指定置信度；None 时按 provider 自动推断
     """
     tier = source_tier if source_tier is not None else PROVIDER_SOURCE_TIER.get(provider, SOURCE_TIER_T2)
+    conf = confidence if confidence is not None else PROVIDER_CONFIDENCE.get(provider, 0.5)
     return SourceCitation(
         provider=provider,
         field=field,
-        confidence=PROVIDER_CONFIDENCE.get(provider, 0.5),
+        confidence=conf,
         data_freshness=FRESHNESS_LIMITS.get(data_type, timedelta(hours=1)),
         url_or_endpoint=url,
         is_cached=is_cached,

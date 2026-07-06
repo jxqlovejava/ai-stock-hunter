@@ -228,15 +228,20 @@ def compute_earnings_growth_factor(df: pd.DataFrame) -> pd.Series:
 # 复合因子计算
 # ---------------------------------------------------------------------------
 
-def compute_all_factors(df: pd.DataFrame) -> pd.DataFrame:
+def compute_all_factors(df: pd.DataFrame, use_registry: bool = False) -> pd.DataFrame:
     """对 DataFrame 计算所有因子，添加因子列。
 
     Args:
         df: 来自 AKShare stock_zh_a_spot() 或类似行情数据的 DataFrame。
+        use_registry: 是否通过 src.factors.registry 计算因子（实验性）。
 
     Returns:
         带有因子列 (pb_factor, ps_factor, div_factor 等) 的新 DataFrame。
     """
+    if use_registry:
+        from src.factors.adapter import compute_registry_factors
+        return compute_registry_factors(df)
+
     result = df.copy()
 
     # Value factors
