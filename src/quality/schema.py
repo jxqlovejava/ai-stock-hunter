@@ -23,6 +23,7 @@ class Severity(str, Enum):
 class AgentRole(str, Enum):
     """审查 Agent 角色 — 对应 CogAlpha 的多 Agent 质量审查器。"""
     DATA_FRESHNESS = "data_freshness"        # 数据新鲜度审查
+    DATA_PROVENANCE = "data_provenance"      # 数据溯源级别与性质审查
     CONSISTENCY = "consistency"               # 内部一致性审查
     LEAKAGE = "leakage"                       # 未来信息泄露审查
     INTERPRETABILITY = "interpretability"     # 经济可解释性审查

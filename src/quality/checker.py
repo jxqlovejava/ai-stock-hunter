@@ -66,9 +66,10 @@ class MultiAgentQualityChecker:
 
     # 各 Agent 权重
     AGENT_WEIGHTS = {
-        AgentRole.DATA_FRESHNESS: 0.15,
-        AgentRole.CONSISTENCY: 0.25,
-        AgentRole.LEAKAGE: 0.30,
+        AgentRole.DATA_FRESHNESS: 0.10,
+        AgentRole.DATA_PROVENANCE: 0.15,
+        AgentRole.CONSISTENCY: 0.20,
+        AgentRole.LEAKAGE: 0.25,
         AgentRole.INTERPRETABILITY: 0.15,
         AgentRole.SAFETY: 0.15,
     }
@@ -84,6 +85,7 @@ class MultiAgentQualityChecker:
         """
         verdicts = [
             self._check_data_freshness(report),
+            self._check_data_provenance(report),
             self._check_consistency(report),
             self._check_leakage(report),
             self._check_interpretability(report),
@@ -197,6 +199,83 @@ class MultiAgentQualityChecker:
             passed=True,
             score=100,
             details=f"{len(citations)} 条数据溯源均有效",
+        )
+
+    # ------------------------------------------------------------------
+    # Agent 1b: 数据溯源审查 (DataProvenance)
+    # ------------------------------------------------------------------
+
+    def _check_data_provenance(self, report: "AnalysisReport") -> AgentVerdict:
+        """检查 SourceCitation 是否标注 tier/nature，并评估综合质量。"""
+        from src.data.source_citation import (
+            TIER_PRIMARY, TIER_SECONDARY, TIER_TERTIARY,
+            NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION,
+        )
+
+        citations = getattr(report, "source_citations", []) or []
+        valid_tiers = {TIER_PRIMARY, TIER_SECONDARY, TIER_TERTIARY}
+        valid_natures = {NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION}
+
+        missing_tier: list[str] = []
+        missing_nature: list[str] = []
+        speculation_in_scoring: list[str] = []
+        low_quality: list[str] = []
+        quality_scores: list[float] = []
+
+        for sc in citations:
+            field = getattr(sc, "field", "unknown")
+            tier = getattr(sc, "tier", "")
+            nature = getattr(sc, "nature", "")
+
+            if tier not in valid_tiers:
+                missing_tier.append(field)
+            if nature not in valid_natures:
+                missing_nature.append(field)
+            if nature == NATURE_SPECULATION:
+                speculation_in_scoring.append(field)
+
+            qs = getattr(sc, "quality_score", None)
+            if qs is not None:
+                quality_scores.append(qs)
+                if qs < 0.5:
+                    low_quality.append(f"{field}({qs:.2f})")
+
+        avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 1.0
+        score = round(avg_quality * 100, 1)
+
+        flags: list[str] = []
+        suggestions: list[str] = []
+
+        if missing_tier:
+            flags.append(f"缺少 tier 标注: {', '.join(missing_tier[:5])}")
+            suggestions.append("为 citation 添加 tier (primary/secondary/tertiary)")
+        if missing_nature:
+            flags.append(f"缺少 nature 标注: {', '.join(missing_nature[:5])}")
+            suggestions.append("为 citation 添加 nature (fact/interpretation/speculation)")
+        if speculation_in_scoring:
+            flags.append(f"推测性数据进入评分: {', '.join(speculation_in_scoring[:5])}")
+            suggestions.append("speculation 类型数据应仅用于风险/可证伪条件，不直接参与评分")
+        if low_quality:
+            flags.append(f"低质量数据: {', '.join(low_quality[:5])}")
+            suggestions.append("检查数据源 freshness/tier/nature，必要时下调维度权重")
+
+        if flags:
+            severity = Severity.HIGH if speculation_in_scoring else Severity.MEDIUM
+            return AgentVerdict(
+                agent=AgentRole.DATA_PROVENANCE,
+                passed=not speculation_in_scoring,
+                score=max(10, score),
+                severity=severity,
+                flags=flags,
+                suggestions=suggestions,
+                details=f"平均数据质量 {avg_quality:.2f}",
+            )
+
+        return AgentVerdict(
+            agent=AgentRole.DATA_PROVENANCE,
+            passed=True,
+            score=score,
+            details=f"所有 citation 均标注 tier/nature，平均质量 {avg_quality:.2f}",
         )
 
     # ------------------------------------------------------------------
