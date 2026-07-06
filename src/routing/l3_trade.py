@@ -28,6 +28,8 @@ class TradeSignal:
     sizing_method: str = ""       # "kelly" / "linear_fallback" / "negative_expectation"
     kelly_f: float = 0.0          # 原始凯利 f*
     kelly_params_source: str = ""  # 凯利参数来源说明
+    name: str = ""                # 股票名称 (for L4 黑名单/流动性检查)
+    extra: dict = field(default_factory=dict)  # 原始行情数据 (for L4 黑名单检查)
 
 
 class L3Trader:
@@ -65,6 +67,8 @@ class L3Trader:
         is_gem: bool = False,
         position_limits: Optional[dict] = None,
         risk_multiplier: float = 1.0,
+        name: str = "",
+        extra: Optional[dict] = None,
     ) -> TradeSignal:
         """生成交易信号。
 
@@ -134,6 +138,8 @@ class L3Trader:
             sizing_method=sizing_method,
             kelly_f=kelly_f,
             kelly_params_source=sizing_source,
+            name=name,
+            extra=extra or {},
         )
 
     # ------------------------------------------------------------------

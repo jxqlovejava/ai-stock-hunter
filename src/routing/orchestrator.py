@@ -307,6 +307,8 @@ class Orchestrator:
             macro_cap=effective_macro_cap,
             position_limits=position_limits,
             risk_multiplier=risk_mult,
+            name=name,
+            extra=quote.dict() if quote else {},
         )
         result.signal = signal
 
