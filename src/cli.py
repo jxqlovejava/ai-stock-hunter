@@ -102,14 +102,24 @@ def cmd_scan(args: list[str]):
         )
 
 
+def _infer_market(symbol: str) -> str:
+    """根据股票代码前缀推断市场。"""
+    if symbol.startswith(("600", "601", "603", "605", "688")):
+        return "SH"
+    return "SZ"
+
+
 def cmd_analyze(symbol: str):
     """单只股票全链路分析。"""
     print(f"📊 分析 {symbol}")
     orch = Orchestrator()
-    result = orch.run(symbol)
+    result = orch.run(symbol, market=_infer_market(symbol))
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
         return
+    print(f"✅ 交叉验证: {'是' if result.cross_validated else '否'}")
+    if result.data_gaps:
+        print(f"📭 数据缺口: {', '.join(result.data_gaps)}")
     if result.warnings:
         print(f"⚠️  警告: {', '.join(result.warnings)}")
     if result.game_theory_info:
@@ -118,6 +128,19 @@ def cmd_analyze(symbol: str):
     if result.mental_model_info:
         mm = result.mental_model_info
         print(f"🧠 思维模型: {mm.get('fit_score', 0)}/100 | 能力圈: {mm.get('competence_match', '')}")
+    if result.debate_result:
+        dr = result.debate_result
+        print(f"🎭 四视角辩论: 平均分 {dr.get('avg_score', 0):.2f} | 分歧 {dr.get('score_range', 0):.2f} | {dr.get('agreement_level', '')}")
+    if result.mental_models:
+        print(f"🧩 Munger 模型: {', '.join(m.get('name_cn', '') for m in result.mental_models[:3])}")
+    if result.red_lines:
+        print(f"🚨 红线: {', '.join(result.red_lines)}")
+    if result.scenario_valuation:
+        sv = result.scenario_valuation
+        print(f"📐 三情景估值: 乐观 {sv.get('bull_target')} / 基准 {sv.get('base_target')} / 悲观 {sv.get('bear_target')}")
+    if result.enforced_verdict:
+        ev = result.enforced_verdict
+        print(f"⚖️ 强制结论: {ev.get('level')} | {ev.get('one_line_conclusion')}")
     if result.verdict:
         v = result.verdict
         print(f"评分: {v.score}/100  置信度: {v.confidence:.0%}  建议: {v.recommendation}")
@@ -541,11 +564,19 @@ def cmd_alpha(symbol: str):
     print("=" * 50)
 
     orch = Orchestrator()
-    result = orch.run(symbol)
+    result = orch.run(symbol, market=_infer_market(symbol))
 
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
         return
+    print(f"✅ 行情交叉验证: {'通过' if result.cross_validated else '未通过'}")
+    if result.data_gaps:
+        print(f"📭 数据缺口: {', '.join(result.data_gaps)}")
+    if result.report and result.report.source_citations:
+        tiers = {}
+        for sc in result.report.source_citations:
+            tiers[sc.source_tier] = tiers.get(sc.source_tier, 0) + 1
+        print(f"📚 信源分级: {', '.join(f'{t}: {c}' for t, c in sorted(tiers.items()))}")
 
     # Alpha Profile
     ap = result.alpha_profile
@@ -607,6 +638,37 @@ def cmd_alpha(symbol: str):
         if mm.get('bias_flags'):
             for f in mm['bias_flags'][:3]:
                 print(f"   ⚠️ {f}")
+
+    if result.mental_models:
+        print(f"\n🧩 Munger 思维模型推荐 ({len(result.mental_models)}):")
+        for m in result.mental_models[:5]:
+            print(f"   • {m.get('name_cn')} [{m.get('discipline')}]: {m.get('reason_for_match')}")
+
+    if result.debate_result:
+        dr = result.debate_result
+        print(f"\n🎭 四视角辩论:")
+        print(f"   平均分: {dr.get('avg_score', 0):.2f}/5 | 分歧度: {dr.get('score_range', 0):.2f}")
+        print(f"   一致度: {dr.get('agreement_level', '')}")
+        print(f"   综合建议: {dr.get('recommendation', '')}")
+        if dr.get('top_disagreement'):
+            print(f"   最大分歧: {dr.get('top_disagreement')}")
+
+    if result.red_lines:
+        print(f"\n🚨 红线检查: {', '.join(result.red_lines)}")
+
+    if result.scenario_valuation:
+        sv = result.scenario_valuation
+        print(f"\n📐 三情景估值:")
+        print(f"   乐观: {sv.get('bull_target')} | 基准: {sv.get('base_target')} | 悲观: {sv.get('bear_target')}")
+        print(f"   隐含上涨: {sv.get('implied_upside', 0):+.1f}% | 隐含下跌: {sv.get('implied_downside', 0):+.1f}%")
+
+    if result.enforced_verdict:
+        ev = result.enforced_verdict
+        print(f"\n⚖️ 强制结论: {ev.get('level')} | {ev.get('one_line_conclusion')}")
+        if ev.get('is_abstain'):
+            print(f"   弃权原因: {', '.join(ev.get('abstain_reasons', []))}")
+        pr = ev.get('price_range', {})
+        print(f"   价格区间: 当前 {pr.get('current_price')} / 买入≤{pr.get('buy_below')} / 卖出≥{pr.get('sell_above')}")
 
     if result.verdict:
         v = result.verdict
@@ -684,7 +746,7 @@ def cmd_alpha_decay(symbol: str):
     print("=" * 50)
 
     orch = Orchestrator()
-    result = orch.run(symbol)
+    result = orch.run(symbol, market=_infer_market(symbol))
 
     ap = result.alpha_profile
     if not ap:

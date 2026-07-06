@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Optional
 
 from .l3_trade import TradeSignal
+from src.utils.decimal_utils import D, safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -124,60 +126,60 @@ class L4RiskOfficer:
                              键: single_stock_cap, sector_cap, max_drawdown, stop_loss
         """
         violations = []
-        weight = signal.target_weight
+        weight = D(signal.target_weight)
 
         # 用户偏好覆盖
-        _single_stock_cap = self.SINGLE_STOCK_CAP
-        _sector_cap = self.SINGLE_SECTOR_CAP
-        _max_drawdown = self.MAX_DRAWDOWN
-        _stop_loss = self.SINGLE_STOP_LOSS
+        _single_stock_cap = D(self.SINGLE_STOCK_CAP)
+        _sector_cap = D(self.SINGLE_SECTOR_CAP)
+        _max_drawdown = D(self.MAX_DRAWDOWN)
+        _stop_loss = D(self.SINGLE_STOP_LOSS)
         if position_limits:
-            _single_stock_cap = position_limits.get("single_stock_cap", _single_stock_cap)
-            _sector_cap = position_limits.get("sector_cap", _sector_cap)
-            _max_drawdown = position_limits.get("max_drawdown", _max_drawdown)
-            _stop_loss = position_limits.get("stop_loss", _stop_loss)
+            _single_stock_cap = D(position_limits.get("single_stock_cap", self.SINGLE_STOCK_CAP))
+            _sector_cap = D(position_limits.get("sector_cap", self.SINGLE_SECTOR_CAP))
+            _max_drawdown = D(position_limits.get("max_drawdown", self.MAX_DRAWDOWN))
+            _stop_loss = D(position_limits.get("stop_loss", self.SINGLE_STOP_LOSS))
 
         # 单票上限
         if weight > _single_stock_cap:
-            violations.append(f"单票超限: {weight:.1%} > {_single_stock_cap:.0%}")
+            violations.append(f"单票超限: {float(weight):.1%} > {float(_single_stock_cap):.0%}")
             weight = min(weight, _single_stock_cap)
 
         # 行业上限
-        sector_pct = (portfolio or {}).get("sector_pct", 0)
+        sector_pct = D((portfolio or {}).get("sector_pct", 0))
         if sector_pct + weight > _sector_cap:
-            violations.append(f"行业超限: {sector_pct + weight:.1%} > {_sector_cap:.0%}")
+            violations.append(f"行业超限: {float(sector_pct + weight):.1%} > {float(_sector_cap):.0%}")
             weight = min(weight, _sector_cap - sector_pct)
 
         # 黑天鹅熔断
-        market_drop = (market or {}).get("hs300_change_pct", 0)
-        if market_drop <= self.BLACK_SWAN_THRESHOLD:
+        market_drop = D((market or {}).get("hs300_change_pct", 0))
+        if market_drop <= D(self.BLACK_SWAN_THRESHOLD):
             violations.append("黑天鹅熔断: T+1 禁开新仓")
             if signal.action in ("OPEN", "ADD"):
-                weight = 0.0
+                weight = D("0")
 
         # 组合回撤
-        drawdown = (portfolio or {}).get("drawdown_pct", 0)
+        drawdown = D((portfolio or {}).get("drawdown_pct", 0))
         if drawdown <= _max_drawdown:
-            violations.append(f"组合回撤熔断: {drawdown:.1%} < {_max_drawdown:.0%}")
-            weight = min(weight, 0.0)
+            violations.append(f"组合回撤熔断: {float(drawdown):.1%} < {float(_max_drawdown):.0%}")
+            weight = min(weight, D("0"))
 
         # 单笔止损
-        position_loss = (portfolio or {}).get("position_loss_pct", 0)
+        position_loss = D((portfolio or {}).get("position_loss_pct", 0))
         if position_loss <= _stop_loss:
-            violations.append(f"单笔止损: {position_loss:.1%} 触及 {_stop_loss:.0%}")
-            weight = 0.0  # 强制平仓
+            violations.append(f"单笔止损: {float(position_loss):.1%} 触及 {float(_stop_loss):.0%}")
+            weight = D("0")  # 强制平仓
 
         # Phase 4: Alpha 衰减风控检查
         alpha_violations = self._check_alpha_decay(signal, portfolio or {})
         violations.extend(alpha_violations)
         if any("清仓" in v for v in alpha_violations):
-            weight = min(weight, 0.0)
+            weight = min(weight, D("0"))
 
         # Auto-blacklist check
         blacklist_violations = self._check_blacklist(signal.symbol, signal.name, quote_data=signal.extra or {})
         violations.extend(blacklist_violations)
         if any("黑名单" in v for v in blacklist_violations):
-            weight = 0.0
+            weight = D("0")
 
         # Phase 6: 博弈论风险约束
         gt_risks = (portfolio or {}).get("game_theory_risks", [])
@@ -190,14 +192,14 @@ class L4RiskOfficer:
                 "hot_money_dominant_large_cap_mismatch",
             }
             if any(any(k in v for k in critical_gt) for v in gt_risks):
-                weight = weight * 0.5
+                weight = weight * D("0.5")
             if any("seat_distribution_sell" in v for v in gt_risks):
-                weight = 0.0
+                weight = D("0")
 
         return RiskCheck(
             passed=len([v for v in violations if "熔断" in v or "止损" in v or "黑名单" in v]) == 0,
             violations=violations,
-            adjusted_weight=max(0.0, weight),
+            adjusted_weight=max(0.0, float(weight)),
             source_citations=signal.source_citations,  # Phase 1: 继承引用链
         )
 

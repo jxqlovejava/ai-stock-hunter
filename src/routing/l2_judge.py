@@ -149,6 +149,19 @@ class L2Judge:
         confidence = 0.5 + 0.3 * (min(confidence_inputs) / 50.0)
         confidence = min(confidence, 0.95)
 
+        # Phase 6+: 四视角辩论分歧降低置信度
+        debate = getattr(report, "debate_result", None)
+        if debate is not None:
+            agreement = getattr(debate, "agreement_level", "")
+            score_range = getattr(debate, "score_range", 0.0) or 0.0
+            if agreement == "polarized":
+                confidence *= 0.85
+            elif agreement == "divided":
+                confidence *= 0.95
+            if score_range > 2.5:
+                confidence *= 0.90
+        confidence = round(max(0.0, min(0.95, confidence)), 2)
+
         # 建议映射
         if score >= 75:
             rec = "BUY"

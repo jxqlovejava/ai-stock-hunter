@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Optional
 
 from .l2_judge import Verdict
+from src.utils.decimal_utils import D, safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +131,7 @@ class L3Trader:
         return TradeSignal(
             symbol=symbol,
             action=action,
-            target_weight=round(target, 4),
+            target_weight=round(float(D(target)), 4),
             is_core=is_core,
             source_citations=verdict.source_citations,
             confidence=verdict.confidence,
@@ -183,13 +185,15 @@ class L3Trader:
     ) -> tuple[float, str, float, str]:
         """纯线性公式（无 Kelly sizer 时使用）。"""
         base = max(0, (score - 50) / 50 * macro_cap)
+        base_d = D(base)
         if position_limits:
-            base = min(base, position_limits.get("single_stock_cap", 1.0))
+            max_single = D(position_limits.get("single_stock_cap", 1.0))
+            base_d = min(base_d, max_single)
         return (
-            base,
+            float(base_d),
             "linear_fallback",
             0.0,
-            f"linear:base=({score}-50)/50×{macro_cap}={base:.1%}",
+            f"linear:base=({score}-50)/50×{macro_cap}={float(base_d):.1%}",
         )
 
     # ------------------------------------------------------------------

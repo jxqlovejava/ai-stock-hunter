@@ -8,11 +8,14 @@ Phase 3: 注入 MacroRegime, NorthboundProfile, DominanceProfile,
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from src.data.aggregator import DataAggregator
+from src.data.source_citation import make_citation, make_data_gap_citation
 from src.doctrine.checker import DoctrineChecker
 from src.alpha.schema import AlphaProfile
 from src.alpha.lens import AlphaLens
@@ -28,6 +31,10 @@ from .l4_risk import L4RiskOfficer, RiskCheck
 from .guardrails import GuardrailEnforcer, GuardrailViolation
 from .game_theory_analyzer import GameTheoryAnalyzer, GameTheoryProfile
 from .investor_mental_model import InvestorMentalModelAnalyzer, InvestorMentalModelFit
+from .perspective_engine import PerspectiveAnalyzer
+from .anti_bias import AntiBiasEngine
+from .verdict_enforcer import VerdictEnforcer
+from .mental_model_matcher import MentalModelMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,18 @@ class OrchestratorResult:
     # Phase 6: 博弈论 + 投资思维模型
     game_theory_info: Optional[dict] = None
     mental_model_info: Optional[dict] = None
+    # Phase 6+: AI Berkshire 四视角辩论
+    debate_result: Optional[dict] = None
+    # Phase 6+: Munger 思维模型匹配
+    mental_models: list[dict] = field(default_factory=list)
+    # Phase 6+: 强制结论
+    enforced_verdict: Optional[dict] = None
+    # Phase 6+: 三情景估值
+    scenario_valuation: Optional[dict] = None
+    # Phase 6+: 数据缺口与红线
+    data_gaps: list[str] = field(default_factory=list)
+    red_lines: list[str] = field(default_factory=list)
+    cross_validated: bool = False
     # CogAlpha: 多 Agent 质量审查报告
     quality_report: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -101,6 +120,11 @@ class Orchestrator:
         # Phase 6: 博弈论 + 投资思维模型
         self.gt_analyzer = GameTheoryAnalyzer(self.data)
         self.imm_analyzer = InvestorMentalModelAnalyzer()
+        # Phase 6+: AI Berkshire 层
+        self.perspective_analyzer = PerspectiveAnalyzer()
+        self.anti_bias_engine = AntiBiasEngine()
+        self.verdict_enforcer = VerdictEnforcer()
+        self.mental_model_matcher = MentalModelMatcher()
 
     def run(
         self,
@@ -119,16 +143,28 @@ class Orchestrator:
             strategy_params=strategy_params or {},
         )
 
-        # Step 0: 获取行情数据
-        quote = self.data.get_quote(symbol, market)
+        # Step 0: 获取行情数据（双源交叉验证）
+        quote, cross_validated, dispute = self.data.get_cross_validated_quote(symbol, market)
         if quote is None:
-            result.passed = False
-            result.blocked_by.append("数据不可用")
-            return result
+            # 离线 fallback：尝试从本地 K 线缓存构造 quote
+            quote = self._quote_from_cache(symbol, market)
+            if quote is None:
+                result.passed = False
+                result.blocked_by.append("数据不可用")
+                return result
+            cross_validated = False
+            dispute = False
+        result.cross_validated = cross_validated
 
         if not name:
             name = quote.name
             result.name = name
+
+        # 行情 dict 携带交叉验证标记
+        quote_dict = quote.model_dump()
+        quote_dict["_source"] = quote.source
+        quote_dict["cross_validated"] = cross_validated
+        quote_dict["dispute"] = dispute
 
         # 加载投资者偏好
         investor = self._get_investor_prefs()
@@ -192,6 +228,15 @@ class Orchestrator:
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = self._get_topic_adjustments()
 
+        if macro_regime is None:
+            result.data_gaps.append("宏观数据不可用（如 AKShare 社融 SSL 失败）")
+            report_source_citations_gap = make_data_gap_citation(
+                provider="akshare", field="macro_regime",
+                reason="AKShare 社融/货币数据获取失败",
+            )
+        else:
+            report_source_citations_gap = None
+
         # ---- Phase 5: 估值 + 周期上下文 ----
         fundamental_metrics = self.data.get_fundamental_metrics(symbol, market)
         industry_pe, industry_pb = self.data.get_industry_pe_pb(symbol, market)
@@ -249,11 +294,8 @@ class Orchestrator:
         result.alpha_profile = alpha_profile
 
         # Step 3: L1 分析师
-        quote_dict = {
-            "pe_percentile": 40,  # placeholder
-            "northbound": 1,
-        }
-        fin_list = [{"roe": 15}]  # placeholder
+        # 使用真实行情 + 财务数据（转换为 dict 以兼容 L1）
+        fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
         sentiment_dict = {"level": "NORMAL"}
         report = self.l1.analyze(
             symbol, name,
@@ -269,6 +311,19 @@ class Orchestrator:
             cycle_analysis=cycle_analysis,      # Phase 5: 周期分析
         )
         result.report = report
+        if report_source_citations_gap:
+            report.source_citations.append(report_source_citations_gap)
+
+        # 添加行情双源 citation（mootdx/Tencent + miaoxiang）
+        report.source_citations.append(make_citation(
+            provider="mootdx", field="quote", data_type="realtime_quote",
+            source_tier="T1", nature="fact",
+        ))
+        if self.data.miaoxiang is not None:
+            report.source_citations.append(make_citation(
+                provider="miaoxiang", field="quote", data_type="realtime_quote",
+                source_tier="T2", nature="fact",
+            ))
 
         # Phase 1: L1 护栏检查
         l1_violations = self.enforcer.enforce(
@@ -277,21 +332,6 @@ class Orchestrator:
             confidence=report.confidence,
         )
         result.violations.extend(l1_violations)
-
-        # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
-        quality_report = self.quality_checker.check(report)
-        if not quality_report.passed:
-            result.warnings.extend(quality_report.blocking_flags)
-            logger.warning(
-                "Quality check blocked for %s: %s",
-                symbol, "; ".join(quality_report.blocking_flags[:3]),
-            )
-        else:
-            logger.info(
-                "Quality check passed for %s: %.0f/100", symbol, quality_report.overall_score,
-            )
-        result.warnings.extend(quality_report.warnings[:5])
-        result.quality_report = quality_report.to_dict()
 
         # Phase 6: 博弈论 + 投资思维模型
         gt_profile = self.gt_analyzer.analyze(
@@ -313,6 +353,61 @@ class Orchestrator:
         result.game_theory_info = gt_profile.to_dict()
         result.mental_model_info = imm_fit.to_dict()
 
+        # Phase 6+: AI Berkshire — 四视角辩论
+        debate = self.perspective_analyzer.debate(
+            symbol, name, l1_report=report,
+            quote=quote_dict, financials=fin_list,
+        )
+        report.debate_result = debate
+        result.debate_result = {
+            "avg_score": debate.avg_score,
+            "score_range": debate.score_range,
+            "agreement_level": debate.agreement_level,
+            "recommendation": debate.recommendation,
+            "top_disagreement": debate.top_disagreement,
+        }
+
+        # Phase 6+: Munger 思维模型匹配
+        matched_models = self.mental_model_matcher.match_models(
+            symbol, name, sector="", report=report,
+        )
+        report.mental_models = matched_models
+        result.mental_models = matched_models
+
+        # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
+        quality_report = self.quality_checker.check(report)
+        if not quality_report.passed:
+            result.warnings.extend(quality_report.blocking_flags)
+            logger.warning(
+                "Quality check blocked for %s: %s",
+                symbol, "; ".join(quality_report.blocking_flags[:3]),
+            )
+        else:
+            logger.info(
+                "Quality check passed for %s: %.0f/100", symbol, quality_report.overall_score,
+            )
+        result.warnings.extend(quality_report.warnings[:5])
+        result.quality_report = quality_report.to_dict()
+
+        # Phase 6+: 反偏见 — 红线检查（L2 前）
+        red_line_report = self.anti_bias_engine.check_red_lines(
+            quote=quote_dict, financials=fin_list, executive=executive,
+        )
+        result.red_lines = red_line_report.triggered_lines
+        if red_line_report.any_triggered:
+            result.warnings.extend(
+                [f"红线 {line}: 触发" for line in red_line_report.triggered_lines]
+            )
+
+        # Phase 1+: 信源交叉验证 guard — T1+ 来源不足则阻止进入 L2
+        t1_plus_count = sum(1 for sc in report.source_citations if getattr(sc, "is_t1_or_above", False))
+        if t1_plus_count < 2:
+            result.passed = False
+            result.blocked_by.append(
+                f"信源交叉验证不足：T1+ 来源 < 2 (当前 {t1_plus_count})"
+            )
+            return result
+
         # Step 4: L2 法官
         verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
         result.verdict = verdict
@@ -328,6 +423,50 @@ class Orchestrator:
             confidence=verdict.confidence,
         )
         result.violations.extend(l2_violations)
+
+        # Phase 6+: 强制结论（VerdictEnforcer）
+        enforced = self.verdict_enforcer.enforce(
+            symbol=symbol, name=name,
+            l1_report=report, l2_verdict=verdict, quote=quote_dict,
+            data_points=sum(1 for x in [quote, fin_list, enriched_macro, sentiment_dict, nb_profile, earnings_factor] if x),
+        )
+        result.enforced_verdict = {
+            "level": enforced.level.value,
+            "one_line_conclusion": enforced.one_line_conclusion,
+            "is_abstain": enforced.is_abstain,
+            "abstain_reasons": enforced.abstain_reasons,
+            "price_range": {
+                "current_price": enforced.price_range.current_price,
+                "buy_below": enforced.price_range.buy_below,
+                "buy_target": enforced.price_range.buy_target,
+                "sell_above": enforced.price_range.sell_above,
+                "position_pct": enforced.price_range.position_pct,
+            },
+        }
+        if enforced.level.value == "FAIL" or enforced.is_abstain:
+            result.passed = False
+            result.blocked_by.append(enforced.one_line_conclusion)
+
+        # Phase 6+: 三情景估值
+        try:
+            from src.valuation.scenario import ScenarioValuation
+            scenario = ScenarioValuation.from_fundamentals(
+                symbol=symbol, name=name,
+                current_price=quote.price if quote else quote_dict.get("price", 0),
+                pe_ttm=quote_dict.get("pe_ttm"),
+                pb=quote_dict.get("pb"),
+                roe=quote_dict.get("roe"),
+                earnings_growth=self.data.get_earnings_growth(symbol, market),
+            )
+            result.scenario_valuation = {
+                "bull_target": scenario.bull_target,
+                "base_target": scenario.base_target,
+                "bear_target": scenario.bear_target,
+                "implied_upside": scenario.implied_upside,
+                "implied_downside": scenario.implied_downside,
+            }
+        except Exception as e:
+            logger.debug("Scenario valuation failed for %s: %s", symbol, e)
 
         # Step 5: L3 交易员
         effective_macro_cap = 0.80 * risk_mult
@@ -403,6 +542,43 @@ class Orchestrator:
         if not result.passed:
             result.blocked_by = gate_result.flags
         return result
+
+    @staticmethod
+    def _quote_from_cache(symbol: str, market: str = "SH") -> Optional[Quote]:
+        """离线 fallback：从本地 K 线缓存最后一行构造 Quote。"""
+        import glob
+        import pandas as pd
+        from src.data.schema import Quote
+
+        base_dir = Path(__file__).resolve().parents[2] / "data" / "kline_cache"
+        pattern = f"{symbol}_*_daily.csv"
+        files = glob.glob(str(base_dir / pattern))
+        if not files:
+            return None
+        try:
+            df = pd.read_csv(files[0])
+            if df.empty:
+                return None
+            row = df.iloc[-1]
+            return Quote(
+                symbol=symbol,
+                name=symbol,
+                price=float(row.get("close", 0)),
+                change_pct=0.0,
+                volume=int(row.get("volume", 0)),
+                turnover=0.0,
+                high=float(row.get("high")) if pd.notna(row.get("high")) else None,
+                low=float(row.get("low")) if pd.notna(row.get("low")) else None,
+                open=float(row.get("open")) if pd.notna(row.get("open")) else None,
+                prev_close=None,
+                pe_ttm=float(row.get("pe_ttm")) if pd.notna(row.get("pe_ttm")) else None,
+                pb=float(row.get("pb")) if pd.notna(row.get("pb")) else None,
+                market_cap=None,
+                source="kline_cache",
+            )
+        except Exception as e:
+            logger.debug("Failed to load quote from cache for %s: %s", symbol, e)
+        return None
 
     # ------------------------------------------------------------------
     # Phase 7: Agent-Worker 模式 — 管道阶段映射到 Agent 边界
@@ -624,6 +800,128 @@ class Orchestrator:
             "risk": risk,
             "violations": all_violations,
         }
+
+    def _run_pipeline_parallel(
+        self,
+        symbol: str,
+        market: str = "SH",
+        name: str = "",
+        macro: Optional[dict] = None,
+        portfolio: Optional[dict] = None,
+    ) -> OrchestratorResult:
+        """并行版分析管道：独立数据获取/分析器并发，L2/L3/L4 顺序执行。"""
+        result = OrchestratorResult(symbol=symbol, name=name)
+
+        # ---- Phase 1: 并行独立数据获取 ----
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {
+                pool.submit(self.data.get_cross_validated_quote, symbol, market): "quote",
+                pool.submit(self.data.get_financials, symbol, market, 4): "financials",
+                pool.submit(self._get_macro_regime): "macro_regime",
+                pool.submit(self._get_northbound_profile): "northbound",
+                pool.submit(self._get_earnings_revision, symbol): "earnings",
+                pool.submit(self._get_executive_context, symbol): "executive",
+            }
+            gathered: dict = {}
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    gathered[key] = future.result()
+                except Exception as e:
+                    logger.debug("Parallel fetch %s failed: %s", key, e)
+                    gathered[key] = None
+
+        quote_cv = gathered.get("quote")
+        quote = quote_cv[0] if isinstance(quote_cv, tuple) else quote_cv
+        cross_validated = quote_cv[1] if isinstance(quote_cv, tuple) else False
+        dispute = quote_cv[2] if isinstance(quote_cv, tuple) else False
+        if quote is None:
+            result.passed = False
+            result.blocked_by.append("数据不可用")
+            return result
+        result.cross_validated = cross_validated
+        if not name:
+            name = quote.name
+            result.name = name
+
+        quote_dict = quote.model_dump()
+        quote_dict["_source"] = quote.source
+        quote_dict["cross_validated"] = cross_validated
+        quote_dict["dispute"] = dispute
+        fin_list = [f.model_dump() for f in (gathered.get("financials") or [])]
+        macro_regime = gathered.get("macro_regime")
+        nb_profile = gathered.get("northbound")
+        earnings_factor = gathered.get("earnings")
+        executive = gathered.get("executive")
+
+        # ---- Phase 2: 并行分析器（无写操作） ----
+        investor = self._get_investor_prefs()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(self.gt_analyzer.analyze, symbol, name, quote.market_cap if quote else None, ""): "game_theory",
+                pool.submit(self.imm_analyzer.analyze, symbol, name, investor, portfolio, "", quote.market_cap if quote else None, quote.change_pct if quote else None): "mental_model",
+                pool.submit(self.perspective_analyzer.debate, symbol, name, None, quote_dict, fin_list): "debate",
+                pool.submit(self.mental_model_matcher.match_models, symbol, name, "", None): "munger_models",
+            }
+            analyses: dict = {}
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    analyses[key] = future.result()
+                except Exception as e:
+                    logger.debug("Parallel analysis %s failed: %s", key, e)
+                    analyses[key] = None
+
+        # ---- Phase 3: 顺序 L1→质量→L2→L3→L4 ----
+        # 为简化，复用 run() 的剩余逻辑；这里仅演示边界划分
+        enriched_macro = macro or {}
+        if macro_regime is not None:
+            enriched_macro.update({
+                "m1_m2_gap": macro_regime.m1_m2_gap,
+                "social_financing_growth": macro_regime.social_financing_growth,
+                "dr007": macro_regime.dr007,
+                "dr007_position": self._dr007_position(macro_regime.dr007),
+                "lpr_direction": self._lpr_direction(macro_regime),
+                "sf_trend": "accelerating" if (macro_regime.social_financing_growth or 0) > 6 else "stable",
+            })
+
+        report = self.l1.analyze(
+            symbol, name, quote_dict, fin_list, enriched_macro, {"level": "NORMAL"},
+            macro_regime=macro_regime, northbound_profile=nb_profile,
+            earnings_factor=earnings_factor, executive=executive,
+        )
+        report.game_theory_profile = analyses.get("game_theory")
+        report.investor_mental_model = analyses.get("mental_model")
+        report.debate_result = analyses.get("debate")
+        report.mental_models = analyses.get("munger_models") or []
+        result.report = report
+        result.game_theory_info = (
+            analyses["game_theory"].to_dict() if analyses.get("game_theory") else None
+        )
+        result.mental_model_info = (
+            analyses["mental_model"].to_dict() if analyses.get("mental_model") else None
+        )
+        result.debate_result = {
+            "avg_score": analyses["debate"].avg_score,
+            "score_range": analyses["debate"].score_range,
+            "agreement_level": analyses["debate"].agreement_level,
+            "recommendation": analyses["debate"].recommendation,
+        } if analyses.get("debate") else None
+        result.mental_models = report.mental_models
+
+        verdict = self.l2.judge(report)
+        result.verdict = verdict
+        if verdict.confidence < L2Judge.MIN_CONFIDENCE:
+            result.passed = False
+            result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})")
+            return result
+
+        signal = self.l3.generate_signal(verdict, macro_cap=0.80, name=name, extra=quote_dict)
+        result.signal = signal
+        risk = self.l4.check(signal, portfolio or {})
+        result.risk = risk
+        result.passed = True
+        return result
 
     # ------------------------------------------------------------------
     # Phase 4: Alpha Lens 上下文注入
