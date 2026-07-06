@@ -114,7 +114,7 @@
 |------|--------------------------------------------------|
 | **借鉴内容** | Claude Code 金融垂直插件架构、Skill/Command 模块化设计模式、11 数据连接器抽象（Bloomberg/FactSet/CapIQ/Intex/ICE等）、多Agent编排（pitch-agent/gl-reconciler/market-researcher）、Managed Agent Cookbook 模板、7 个垂直插件划分（financial-analysis/investment-banking/equity-research/private-equity/wealth-management/fund-admin/operations） |
 | **解决的问题** | 大型金融AI系统如何做模块拆分——不是一个大skill做所有事，而是多个垂直插件各司其职。数据连接器的统一抽象模式 |
-| **融入位置** | 整体架构设计：`src/` 目录按功能域拆分（data/doctrine/routing/sentiment/game_theory/backtest/learner）、Claude Code Skill 入口（`.claude/skills/stock-hunter.md`）、华泰/国信/AKShare 三源适配器设计 |
+| **融入位置** | 整体架构设计：`src/` 目录按功能域拆分（data/doctrine/routing/sentiment/game_theory/backtest/learner）、Claude Code Skill 入口（`.claude/skills/stock-hunter/SKILL.md`）、华泰/国信/AKShare 三源适配器设计 |
 | **影响** | 验证了我们的模块化方向是正确的——与 Anthropic 官方的设计理念一致。数据源的 adapter 模式直接参考了其 connector 设计 |
 
 ---

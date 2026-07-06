@@ -69,6 +69,6 @@ class TestSkillExists:
     def test_skill_file_exists(self):
         import os
         path = os.path.expanduser(
-            "~/Documents/workspace/ai-stock-hunter/.claude/skills/stock-hunter.md"
+            "~/Documents/workspace/ai-stock-hunter/.claude/skills/stock-hunter/SKILL.md"
         )
         assert os.path.exists(path), "Claude Code Skill file missing"

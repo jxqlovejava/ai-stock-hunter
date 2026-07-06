@@ -1728,7 +1728,8 @@ ai-stock-hunter/
     ├── plans/
     │   └── ai-stock-hunter.plan.md
     └── skills/
-        └── stock-hunter.md        # Claude Code Skill（Phase 4）
+        └── stock-hunter/
+            └── SKILL.md        # Claude Code Skill（Phase 4）
 ```
 
 ---
