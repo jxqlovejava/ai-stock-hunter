@@ -1,51 +1,107 @@
 # -*- coding: utf-8 -*-
-"""CLI 统一入口。
+"""CLI 统一入口 — 白泽 (Baize) A 股智能投资决策系统。
 
 用法:
-  python -m src.cli scan              # 全市场选股扫描
-  python -m src.cli analyze 600519    # 单只股票全链路分析
-  python -m src.cli macro             # 宏观快照
-  python -m src.cli sentiment         # 情绪信号检测
-  python -m src.cli backtest          # 运行回测
-  python -m src.cli backtest-optimize # 参数优化
-  python -m src.cli backtest-compare  # 多策略对比
-  python -m src.cli diagnose 600519   # 一键诊断（小白入口）
-  python -m src.cli game-theory       # 博弈论知识摘要
-  python -m src.cli calibrate         # 置信度校准报告
-  python -m src.cli profile           # 用户能力画像
-  python -m src.cli preference        # 投资者偏好管理
-  python -m src.cli feedback add      # 添加交易反馈
-  python -m src.cli feedback summary  # 查看反馈统计
-  python -m src.cli evolve            # 运行策略进化
-  python -m src.cli learn report      # 生成学习报告
+  python -m src.cli scan [--preset value]         # 全市场选股扫描
+  python -m src.cli analyze <code>                # 单只股票全链路分析
+  python -m src.cli diagnose <code>               # 一键诊断（小白入口）
+  python -m src.cli alpha <code>                  # Alpha Lens 三维评估
+  python -m src.cli alpha-scan [--limit N]        # 高 Alpha 股票扫描
+  python -m src.cli alpha-decay <code>            # Alpha 衰减追踪
+  python -m src.cli macro                         # 宏观快照
+  python -m src.cli sentiment                     # 情绪信号检测
+  python -m src.cli backtest                      # 运行回测
+  python -m src.cli backtest-optimize             # 参数优化
+  python -m src.cli backtest-compare              # 多策略对比
+  python -m src.cli game-theory                   # 博弈论知识摘要
+  python -m src.cli calibrate                     # 置信度校准报告
+  python -m src.cli profile                       # 用户能力画像
+  python -m src.cli preference <view|edit|reset>  # 投资者偏好管理
+  python -m src.cli feedback <add|summary>        # 交易反馈
+  python -m src.cli learn report                  # 生成学习报告
+  python -m src.cli search-news <query>           # 金融资讯搜索
+  python -m src.cli screen <conditions>           # 条件选股
+  python -m src.cli related <symbol>              # 关联关系查询
+  python -m src.cli paper-trade <action>          # 模拟交易管理
+  python -m src.cli poster --title --text         # AI 社区发帖
+  python -m src.cli evolution <sub>               # 策略进化（论文驱动）
+  python -m src.cli trade-track <add|list|kelly>  # 交易追踪（凯利公式）
+
+数据源: mootdx+腾讯 > 国信 > AKShare. 设置 MX_APIKEY 以启用妙想API.
 """
 
 from __future__ import annotations
 
+import functools
+import logging
 import os
+import re
 import sys
+import traceback
+from typing import Any, Callable
 
-from src.data.aggregator import DataAggregator
-from src.doctrine.checker import DoctrineChecker
-from src.game_theory import get_game_theory_summary
-from src.learner import (
-    DecisionJournal,
-    EvolutionPipeline,
-    FeedbackCollector,
-    LearningReport,
-    ProfileTracker,
-    ReportGenerator,
-    RuleCalibrator,
-    SignalTracker,
-    UserProfile,
-)
-from src.routing.orchestrator import Orchestrator
-from src.sentiment.signals import SentimentDetector
+logger = logging.getLogger(__name__)
 
 
+# ------------------------------------------------------------------
+# 工具函数
+# ------------------------------------------------------------------
+
+def _import_or_none(module_path: str, name: str) -> Any:
+    """安全延迟导入 — 失败返回 None 而非崩溃。"""
+    try:
+        mod = __import__(module_path, fromlist=[name])
+        return getattr(mod, name)
+    except Exception as e:
+        logger.debug("无法导入 %s.%s: %s", module_path, name, e)
+        return None
+
+
+def _validate_symbol(symbol: str) -> bool:
+    """验证 A 股股票代码格式 (6 位数字)。"""
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol} (需要 6 位数字，如 600519)")
+        return False
+    return True
+
+
+def _infer_market(symbol: str) -> str:
+    """根据股票代码前缀推断市场。"""
+    if symbol.startswith(("600", "601", "603", "605", "688")):
+        return "SH"
+    return "SZ"
+
+
+def _safe_cmd(func: Callable) -> Callable:
+    """统一错误处理装饰器 — 捕获异常并打印友好消息。"""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ImportError as e:
+            print(f"⚠️ 缺少依赖: {e}")
+            print("   请运行: pip install -r requirements.txt")
+        except Exception as e:
+            print(f"❌ 错误: {e}")
+            if os.environ.get("DEBUG"):
+                traceback.print_exc()
+            else:
+                print("   (设置 DEBUG=1 查看详细错误信息)")
+
+    return wrapper
+
+
+def _run_command(handler: Callable) -> Callable:
+    """包装命令函数，添加股票代码验证和错误处理。"""
+    return _safe_cmd(handler)
+
+
+@_safe_cmd
 def cmd_scan(args: list[str]):
     """全市场选股扫描。"""
     import argparse
+    from src.data.aggregator import DataAggregator
     from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
 
     parser = argparse.ArgumentParser(description="全市场选股扫描")
@@ -62,31 +118,19 @@ def cmd_scan(args: list[str]):
     print(f"权重配置: {preset.weight_overrides}")
     print(f"阈值配置: {preset.thresholds}")
 
-    # Phase 2: 获取全市场行情
     agg = DataAggregator()
     status = agg.source_status()
     print(f"数据源: {status}")
 
-    try:
-        stocks = agg.scan_all_stocks() or []
-        print(f"扫描范围: {len(stocks)} 只股票")
-    except Exception as e:
-        print(f"⚠️ 全市场扫描失败: {e}")
-        print("(需要至少一个数据源可用)")
-        return
+    stocks = agg.scan_all_stocks() or []
+    print(f"扫描范围: {len(stocks)} 只股票")
 
     if not stocks:
         print("⚠️ 无可用股票数据")
         return
 
-    # Phase 2: 按预设筛选
     analyzer = L1Analyzer()
-    try:
-        results = analyzer.screen_by_preset(parsed.preset, stocks, limit=parsed.limit)
-    except Exception as e:
-        print(f"⚠️ 筛选失败: {e}")
-        return
-
+    results = analyzer.screen_by_preset(parsed.preset, stocks, limit=parsed.limit)
     if not results:
         print("⚠️ 无股票通过筛选")
         return
@@ -102,18 +146,19 @@ def cmd_scan(args: list[str]):
         )
 
 
-def _infer_market(symbol: str) -> str:
-    """根据股票代码前缀推断市场。"""
-    if symbol.startswith(("600", "601", "603", "605", "688")):
-        return "SH"
-    return "SZ"
-
-
+@_safe_cmd
 def cmd_analyze(symbol: str):
     """单只股票全链路分析。"""
+    if not _validate_symbol(symbol):
+        return
+    from src.routing.orchestrator import Orchestrator
+
     print(f"📊 分析 {symbol}")
     orch = Orchestrator()
     result = orch.run(symbol, market=_infer_market(symbol))
+    if not result.passed:
+        print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
+        return
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
         return
@@ -186,8 +231,11 @@ def cmd_macro():
         print(f"⚠️ 宏观分析失败: {e}")
 
 
+@_safe_cmd
 def cmd_sentiment():
     """情绪信号检测。"""
+    from src.sentiment.signals import SentimentDetector
+
     print("📈 情绪信号")
     detector = SentimentDetector()
     sentiment = detector.detect_market()
@@ -222,8 +270,13 @@ def cmd_backtest_compare():
         print(f"  {name}: {len(history)} 个版本")
 
 
+@_safe_cmd
 def cmd_diagnose(symbol: str):
     """一键诊断（小白入口）。"""
+    if not _validate_symbol(symbol):
+        return
+    from src.doctrine.checker import DoctrineChecker
+
     print(f"🏥 诊断 {symbol}")
     checker = DoctrineChecker()
     result = checker.check(symbol, {"stock_name": ""})
@@ -234,19 +287,24 @@ def cmd_diagnose(symbol: str):
     cmd_analyze(symbol)
 
 
+@_safe_cmd
 def cmd_game_theory():
     """博弈论知识摘要。"""
+    from src.game_theory import get_game_theory_summary
     print(get_game_theory_summary())
 
 
 def cmd_calibrate():
     """置信度校准报告。"""
     print("📐 置信度校准")
-    print("(Phase 4: 样本量 < 20，不出报告)")
+    print("⏳ Phase 4: 样本量 < 20，不出报告。使用 trade-track add 录入交易后运行 calibrate。")
 
 
+@_safe_cmd
 def cmd_profile():
     """用户能力画像。"""
+    from src.learner import ProfileTracker
+
     print("👤 用户能力画像")
     tracker = ProfileTracker()
     profile = tracker.evaluate()
@@ -276,14 +334,18 @@ def cmd_preference(args: list[str]):
         print(f"未知子命令: {sub}，可用: view | edit | reset | path")
 
 
+@_safe_cmd
 def cmd_feedback(args: list[str]):
     """用户反馈管理。"""
+    from src.learner import FeedbackCollector
+
     sub = args[0] if args else "summary"
     collector = FeedbackCollector(db_path=":memory:")
 
     if sub == "add":
         print("💬 添加反馈")
         print("FeedbackCollector 已就绪。使用 agree/disagree/adjust/annotate 方法记录反馈。")
+        print("⏳ 交互式反馈录入开发中。")
     elif sub == "summary":
         print("📊 反馈统计")
         s = collector.summary()
@@ -296,15 +358,23 @@ def cmd_feedback(args: list[str]):
 
 
 def cmd_evolve():
-    """运行策略进化。"""
+    """[已废弃] 请使用 evolution 命令。"""
     print("🧬 策略进化")
-    print("EvolutionPipeline 已就绪。")
-    print("流程: 收集证据 → 分析弱点 → 生成建议 → 回测验证 → 部署")
-    print("(需提供 engine_factory + registry + feedback 以运行完整进化)")
+    print("⚠️  'evolve' 命令已废弃，请使用 'evolution' 命令。")
+    print("")
+    print("  python -m src evolution help    # 查看可用子命令")
+    print("  python -m src evolution list    # 列出所有进化策略")
+    print("  python -m src evolution import <url>  # 导入论文")
+    print("")
+    print("可用子命令: import | list | status | promote | degrade |")
+    print("            retire | optimize | proposals | monitor | report")
 
 
+@_safe_cmd
 def cmd_learn(args: list[str]):
     """学习报告。"""
+    from src.learner import ProfileTracker, ReportGenerator
+
     sub = args[0] if args else "report"
     if sub == "report":
         print("📝 学习报告")
@@ -320,6 +390,7 @@ def cmd_learn(args: list[str]):
 # V4 新增: 妙想 Skill CLI 命令
 # ------------------------------------------------------------------
 
+@_safe_cmd
 def cmd_search_news(args: list[str]):
     """mx-search 金融资讯搜索。"""
     if not args:
@@ -328,6 +399,8 @@ def cmd_search_news(args: list[str]):
         return
 
     import argparse
+    from src.data.aggregator import DataAggregator
+
     parser = argparse.ArgumentParser(description="金融资讯搜索")
     parser.add_argument("query", nargs="*", help="搜索查询（自然语言）")
     parser.add_argument("--limit", type=int, default=10, help="返回数量上限")
@@ -360,6 +433,7 @@ def cmd_search_news(args: list[str]):
             print(f"     关联: {', '.join(symbols)}")
 
 
+@_safe_cmd
 def cmd_screen(args: list[str]):
     """mx-xuangu 条件选股。"""
     if not args:
@@ -369,6 +443,8 @@ def cmd_screen(args: list[str]):
         return
 
     import argparse
+    from src.data.aggregator import DataAggregator
+
     parser = argparse.ArgumentParser(description="条件选股")
     parser.add_argument("conditions", nargs="*", help="选股条件（自然语言）")
     parser.add_argument("--industry", type=str, default="", help="限定行业/板块")
@@ -407,12 +483,15 @@ def cmd_screen(args: list[str]):
         print(f"... 还有 {len(results) - 30} 只")
 
 
+@_safe_cmd
 def cmd_related(args: list[str]):
     """mx-data 关联关系查询。"""
     if not args:
         print("用法: related <symbol>")
         print("示例: related 600519")
         return
+
+    from src.data.aggregator import DataAggregator
 
     symbol = args[0]
     print(f"🔗 关联关系: {symbol}")
@@ -528,6 +607,8 @@ def cmd_poster(args: list[str]):
         return
 
     if parsed.from_verdict:
+        from src.routing.orchestrator import Orchestrator
+
         symbol = parsed.from_verdict
         print(f"📝 从 {symbol} 分析结果生成社区帖子...")
         orch = Orchestrator()
@@ -556,9 +637,13 @@ def cmd_poster(args: list[str]):
         print("❌ 发布失败（检查授权和 MX_APIKEY）")
 
 
+@_safe_cmd
 def cmd_alpha(symbol: str):
     """Alpha 视角分析 — 三维 Alpha 评估 + 全链路注入。"""
+    if not _validate_symbol(symbol):
+        return
     from src.alpha.lens import AlphaLens
+    from src.routing.orchestrator import Orchestrator
 
     print(f"🔍 Alpha Lens 分析: {symbol}")
     print("=" * 50)
@@ -684,10 +769,12 @@ def cmd_alpha(symbol: str):
             print(f"   心理模型警示: {', '.join(v.mental_model_warnings[:2])}")
 
 
+@_safe_cmd
 def cmd_alpha_scan(args: list[str]):
     """扫描高 Alpha 潜力股票。"""
     import argparse
     from src.alpha.lens import AlphaLens
+    from src.data.aggregator import DataAggregator
 
     parser = argparse.ArgumentParser(description="扫描高 Alpha 潜力股票")
     parser.add_argument("--limit", type=int, default=10, help="返回数量上限")
@@ -738,9 +825,13 @@ def cmd_alpha_scan(args: list[str]):
         )
 
 
+@_safe_cmd
 def cmd_alpha_decay(symbol: str):
     """查看 Alpha 衰减状态。"""
+    if not _validate_symbol(symbol):
+        return
     from src.alpha.monitor import AlphaMonitor
+    from src.routing.orchestrator import Orchestrator
 
     print(f"📉 Alpha 衰减追踪: {symbol}")
     print("=" * 50)
@@ -1274,17 +1365,58 @@ def _evolve_report(args: list[str]):
 
 
 def main():
+    """白泽 CLI 主入口。"""
+
+    # 配置日志
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(levelname)s [%(name)s] %(message)s",
+    )
+
     if len(sys.argv) < 2:
-        print("用法: python -m src.cli <command> [args]")
-        print("  scan | analyze <code> | macro | sentiment | backtest")
-        print("  backtest-optimize | backtest-compare")
-        print("  diagnose <code> | game-theory | calibrate | profile | preference")
-        print("  feedback <add|summary> | evolve | learn <report>")
-        print("  search-news <query> | screen <conditions> | related <symbol>")
-        print("  paper-trade <action> | poster --title --text")
-        print("  alpha <code> | alpha-scan | alpha-decay <code>")
-        print("  evolution <import|list|status|promote|degrade|retire|optimize|proposals|monitor|report>")
-        print("  trade-track <add|list|kelly|remove>")
+        print("白泽 (Baize) — A 股智能投资决策系统 v0.1.0")
+        print()
+        print("用法: python -m src <command> [args]")
+        print()
+        print("📊 核心分析:")
+        print("  analyze <code>         单只股票全链路分析")
+        print("  diagnose <code>        一键诊断（小白入口）")
+        print("  alpha <code>           Alpha Lens 三维评估")
+        print("  alpha-scan             高 Alpha 股票扫描")
+        print("  alpha-decay <code>     Alpha 衰减追踪")
+        print("  scan                    全市场选股扫描")
+        print()
+        print("📈 市场监控:")
+        print("  macro                   宏观货币信用快照")
+        print("  sentiment               市场情绪信号检测")
+        print("  game-theory             博弈论知识摘要")
+        print("  search-news <query>     金融资讯搜索")
+        print("  screen <conditions>     条件选股")
+        print("  related <symbol>        关联关系查询")
+        print()
+        print("🔧 交易 & 风控:")
+        print("  backtest                运行回测")
+        print("  backtest-optimize       参数优化")
+        print("  backtest-compare        多策略对比")
+        print("  paper-trade <action>    模拟交易管理")
+        print("  trade-track <add|list|kelly>  交易追踪")
+        print()
+        print("🧬 学习 & 进化:")
+        print("  evolution <sub>         策略进化（论文驱动）")
+        print("  calibrate               置信度校准")
+        print("  learn report            学习报告")
+        print("  profile                 用户能力画像")
+        print("  preference <view|edit>  投资者偏好管理")
+        print("  feedback <add|summary>  交易反馈")
+        print()
+        print("📢 社交:")
+        print("  poster --title --text   AI 社区发帖")
+        print()
+        print("💡 快速开始:")
+        print("  python -m src diagnose 600519    # 一键诊断茅台")
+        print("  python -m src analyze 000001     # 全链路分析平安银行")
+        print()
         return
 
     cmd = sys.argv[1]
@@ -1324,10 +1456,21 @@ def main():
 
     handler = commands.get(cmd)
     if handler:
-        handler()
+        try:
+            handler()
+        except ImportError as e:
+            print(f"⚠️ 缺少依赖: {e}")
+            print("   请运行: pip install -r requirements.txt")
+        except Exception as e:
+            print(f"❌ 错误: {e}")
+            if os.environ.get("DEBUG"):
+                traceback.print_exc()
+            else:
+                print("   (设置 DEBUG=1 查看详细错误信息)")
     else:
         print(f"未知命令: {cmd}")
-        print("可用: " + ", ".join(commands.keys()))
+        print("可用命令: " + ", ".join(sorted(commands.keys())))
+        print("运行 python -m src 查看完整帮助。")
 
 
 if __name__ == "__main__":

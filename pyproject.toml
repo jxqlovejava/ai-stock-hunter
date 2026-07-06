@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "baize"
+version = "0.1.0"
+description = "白泽 (Baize) — A 股智能投资决策系统"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "jxqlovejava"}]
+keywords = ["stock", "a-share", "quantitative", "investment", "china"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "akshare>=1.18",
+    "baostock>=0.9",
+    "backtrader>=1.9",
+    "numpy>=2.0",
+    "pandas>=3.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "requests>=2.28",
+    "rich>=13.0",
+    "tabulate>=0.9",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+# 完整安装 (含反爬/Excel/HTML 解析)
+full = [
+    "beautifulsoup4>=4.12",
+    "curl_cffi>=0.5",
+    "lxml>=5.0",
+    "mini-racer>=0.10",
+    "openpyxl>=3.1",
+    "xlrd>=2.0",
+]
+# 开发/测试
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "black>=24.0",
+    "isort>=5.0",
+]
+
+[project.scripts]
+baize = "src.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]

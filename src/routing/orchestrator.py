@@ -258,8 +258,20 @@ class Orchestrator:
         related_parties = self._get_related_parties(symbol)
         executive = self._get_executive_context(symbol)
 
+        # Phase: 财政政策 + 政策跟踪信号
+        fiscal_regime = self._get_fiscal_regime()
+        policy_signals = self._get_policy_signals()
+
         # 增强宏观 dict
         enriched_macro = macro or {}
+        if fiscal_regime is not None:
+            enriched_macro.update({
+                "fiscal_deficit_ratio": getattr(fiscal_regime, "deficit_ratio", None),
+                "special_bond_quota": getattr(fiscal_regime, "special_bond_quota", None),
+                "infra_growth": getattr(fiscal_regime, "infra_growth", None),
+            })
+        if policy_signals:
+            enriched_macro["policy_signals"] = policy_signals
         if macro_regime is not None:
             enriched_macro.update({
                 "m1_m2_gap": macro_regime.m1_m2_gap,
@@ -296,7 +308,7 @@ class Orchestrator:
         # Step 3: L1 分析师
         # 使用真实行情 + 财务数据（转换为 dict 以兼容 L1）
         fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
-        sentiment_dict = {"level": "NORMAL"}
+        sentiment_dict = self._get_sentiment(nb_profile)
         report = self.l1.analyze(
             symbol, name,
             quote_dict, fin_list,
@@ -669,7 +681,7 @@ class Orchestrator:
         # L1
         quote_dict = {"pe_percentile": 40, "northbound": 1}
         fin_list = [{"roe": 15}]
-        sentiment_dict = {"level": "NORMAL"}
+        sentiment_dict = self._get_sentiment(nb_profile)
         report = self.l1.analyze(
             symbol, name, quote_dict, fin_list,
             enriched_macro, sentiment_dict,
@@ -1072,6 +1084,53 @@ class Orchestrator:
             return loader.load()
         except Exception as e:
             logger.debug("Investor preferences unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_sentiment(nb_profile: Optional[dict] = None) -> dict:
+        """
+        获取大盘情绪信号，替换硬编码的 {"level": "NORMAL"}。
+        优先使用北向资金数据提供上下文，回退到默认值。
+        """
+        try:
+            from src.sentiment.signals import SentimentDetector
+            detector = SentimentDetector()
+            kwargs = {}
+            if nb_profile:
+                kwargs["northbound"] = nb_profile.get("net_flow", 0.0)
+            sentiment = detector.detect_market(**kwargs)
+            return {
+                "level": sentiment.level.value,
+                "score": sentiment.score,
+                "advance_decline_ratio": sentiment.advance_decline_ratio,
+                "northbound_net": sentiment.northbound_net,
+                "limit_up_count": sentiment.limit_up_count,
+                "limit_down_count": sentiment.limit_down_count,
+            }
+        except Exception as e:
+            logger.debug("Sentiment detection unavailable: %s", e)
+        return {"level": "NORMAL"}
+
+    @staticmethod
+    def _get_fiscal_regime():
+        """获取财政政策状态。"""
+        try:
+            from src.macro.fiscal import FiscalAnalyzer
+            analyzer = FiscalAnalyzer()
+            return analyzer.analyze()
+        except Exception as e:
+            logger.debug("Fiscal analysis unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_policy_signals():
+        """获取政策跟踪信号。"""
+        try:
+            from src.policy.tracker import PolicyTracker
+            tracker = PolicyTracker()
+            return tracker.get_recent_signals()
+        except Exception as e:
+            logger.debug("Policy tracker unavailable: %s", e)
         return None
 
     @staticmethod
