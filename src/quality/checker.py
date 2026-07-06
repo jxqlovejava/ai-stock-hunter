@@ -206,25 +206,26 @@ class MultiAgentQualityChecker:
     # ------------------------------------------------------------------
 
     def _check_data_provenance(self, report: "AnalysisReport") -> AgentVerdict:
-        """检查 SourceCitation 是否标注 tier/nature，并评估综合质量。"""
+        """检查 SourceCitation 是否标注 source_tier/nature，并评估综合质量。"""
         from src.data.source_citation import (
-            TIER_PRIMARY, TIER_SECONDARY, TIER_TERTIARY,
-            NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION,
+            SOURCE_TIER_T0, SOURCE_TIER_T1, SOURCE_TIER_T2, SOURCE_TIER_T3,
+            NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION, NATURE_DATA_GAP,
         )
 
         citations = getattr(report, "source_citations", []) or []
-        valid_tiers = {TIER_PRIMARY, TIER_SECONDARY, TIER_TERTIARY}
-        valid_natures = {NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION}
+        valid_tiers = {SOURCE_TIER_T0, SOURCE_TIER_T1, SOURCE_TIER_T2, SOURCE_TIER_T3}
+        valid_natures = {NATURE_FACT, NATURE_INTERPRETATION, NATURE_SPECULATION, NATURE_DATA_GAP}
 
         missing_tier: list[str] = []
         missing_nature: list[str] = []
         speculation_in_scoring: list[str] = []
+        data_gaps: list[str] = []
         low_quality: list[str] = []
         quality_scores: list[float] = []
 
         for sc in citations:
             field = getattr(sc, "field", "unknown")
-            tier = getattr(sc, "tier", "")
+            tier = getattr(sc, "source_tier", "")
             nature = getattr(sc, "nature", "")
 
             if tier not in valid_tiers:
@@ -233,6 +234,8 @@ class MultiAgentQualityChecker:
                 missing_nature.append(field)
             if nature == NATURE_SPECULATION:
                 speculation_in_scoring.append(field)
+            if nature == NATURE_DATA_GAP:
+                data_gaps.append(field)
 
             qs = getattr(sc, "quality_score", None)
             if qs is not None:
@@ -247,23 +250,26 @@ class MultiAgentQualityChecker:
         suggestions: list[str] = []
 
         if missing_tier:
-            flags.append(f"缺少 tier 标注: {', '.join(missing_tier[:5])}")
-            suggestions.append("为 citation 添加 tier (primary/secondary/tertiary)")
+            flags.append(f"缺少 source_tier 标注: {', '.join(missing_tier[:5])}")
+            suggestions.append("为 citation 添加 source_tier (T0/T1/T2/T3)")
         if missing_nature:
             flags.append(f"缺少 nature 标注: {', '.join(missing_nature[:5])}")
-            suggestions.append("为 citation 添加 nature (fact/interpretation/speculation)")
+            suggestions.append("为 citation 添加 nature (fact/interpretation/speculation/data_gap)")
         if speculation_in_scoring:
             flags.append(f"推测性数据进入评分: {', '.join(speculation_in_scoring[:5])}")
             suggestions.append("speculation 类型数据应仅用于风险/可证伪条件，不直接参与评分")
+        if data_gaps:
+            flags.append(f"数据缺口: {', '.join(data_gaps[:5])}")
+            suggestions.append("为缺失字段补充数据源或降低对应维度权重")
         if low_quality:
             flags.append(f"低质量数据: {', '.join(low_quality[:5])}")
             suggestions.append("检查数据源 freshness/tier/nature，必要时下调维度权重")
 
         if flags:
-            severity = Severity.HIGH if speculation_in_scoring else Severity.MEDIUM
+            severity = Severity.HIGH if (speculation_in_scoring or data_gaps) else Severity.MEDIUM
             return AgentVerdict(
                 agent=AgentRole.DATA_PROVENANCE,
-                passed=not speculation_in_scoring,
+                passed=not (speculation_in_scoring or data_gaps),
                 score=max(10, score),
                 severity=severity,
                 flags=flags,
@@ -275,7 +281,7 @@ class MultiAgentQualityChecker:
             agent=AgentRole.DATA_PROVENANCE,
             passed=True,
             score=score,
-            details=f"所有 citation 均标注 tier/nature，平均质量 {avg_quality:.2f}",
+            details=f"所有 citation 均标注 source_tier/nature，平均质量 {avg_quality:.2f}",
         )
 
     # ------------------------------------------------------------------

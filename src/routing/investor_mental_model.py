@@ -106,7 +106,7 @@ class InvestorMentalModelAnalyzer:
                     provider="investor_preference",
                     field="circle_of_competence",
                     data_type="fundamental",
-                    tier="primary",
+                    source_tier="T1",
                     nature="fact",
                 )
             )
@@ -125,7 +125,7 @@ class InvestorMentalModelAnalyzer:
                 provider="investor_preference",
                 field="risk_profile",
                 data_type="fundamental",
-                tier="primary",
+                source_tier="T1",
                 nature="fact",
             )
         )
@@ -139,7 +139,7 @@ class InvestorMentalModelAnalyzer:
                 provider="investor_preference",
                 field="investment_horizon",
                 data_type="fundamental",
-                tier="primary",
+                source_tier="T1",
                 nature="fact",
             )
         )
@@ -176,7 +176,7 @@ class InvestorMentalModelAnalyzer:
                     provider="learner",
                     field="user_profile",
                     data_type="fundamental",
-                    tier="tertiary",
+                    source_tier="T3",
                     nature="interpretation",
                 )
             )

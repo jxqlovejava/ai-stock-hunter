@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
-from src.data.source_citation import SourceCitation
+from src.data.source_citation import SourceCitation, make_citation, make_data_gap_citation
 from src.industry.bottleneck import BottleneckAnalysis, BottleneckType
 from src.industry.supply_chain import classify_stock
 from src.alpha.schema import AlphaProfile
@@ -55,6 +55,10 @@ class AnalysisReport:
     # Phase 6: 博弈论 + 投资思维模型
     game_theory_profile: Optional[GameTheoryProfile] = None
     investor_mental_model: Optional[InvestorMentalModelFit] = None
+    # Phase 6+: AI Berkshire 四视角辩论
+    debate_result: Optional[object] = None
+    # Phase 6+: Munger 思维模型匹配
+    mental_models: list[dict] = field(default_factory=list)
 
 
 class L1Analyzer:
@@ -135,27 +139,43 @@ class L1Analyzer:
         macro: dict | None,
         executive: dict | None = None,
     ) -> list[SourceCitation]:
-        """收集所有数据点的来源引用。"""
+        """收集所有数据点的来源引用（T0-T3 分级）。"""
         citations: list[SourceCitation] = []
         if quote:
             provider = quote.get("_source", "mootdx")
-            citations.append(SourceCitation(
-                provider=provider, field="quote",
-                confidence=0.85 if provider == "mootdx" else 0.70,
+            citations.append(make_citation(
+                provider=provider, field="quote", data_type="realtime_quote",
+                source_tier="T1" if provider in ("mootdx", "guosen") else "T2",
+                nature="fact",
             ))
+            # 记录交叉验证状态
+            if quote.get("cross_validated"):
+                citations.append(make_citation(
+                    provider="miaoxiang" if quote.get("miaoxiang_source") else "mootdx",
+                    field="cross_validated_quote", data_type="realtime_quote",
+                    source_tier="T2", nature="fact",
+                ))
+            if quote.get("dispute"):
+                citations.append(make_data_gap_citation(
+                    provider="aggregator", field="quote_dispute",
+                    reason="双源行情价格分歧 >5%",
+                ))
         if financials:
-            citations.append(SourceCitation(
-                provider="mootdx", field="financials", confidence=0.85,
+            citations.append(make_citation(
+                provider="mootdx", field="financials", data_type="financials",
+                source_tier="T1", nature="fact",
             ))
         if macro:
             provider = macro.get("_source", "akshare")
-            citations.append(SourceCitation(
-                provider=provider, field="macro", confidence=0.75,
+            citations.append(make_citation(
+                provider=provider, field="macro", data_type="macro_indicator",
+                source_tier="T1" if provider in ("pboc", "mootdx") else "T2",
+                nature="fact",
             ))
         if executive:
-            citations.append(SourceCitation(
+            citations.append(make_citation(
                 provider="miaoxiang-data-executive", field="executive",
-                confidence=0.80, data_freshness=timedelta(hours=4),
+                data_type="executive", source_tier="T2", nature="fact",
             ))
         return citations
 

@@ -104,7 +104,7 @@ class GameTheoryAnalyzer:
                     provider="game_theory",
                     field="dominance",
                     data_type="factor",
-                    tier="tertiary",
+                    source_tier="T3",
                     nature="interpretation",
                 )
             )
@@ -118,7 +118,7 @@ class GameTheoryAnalyzer:
                     provider="game_theory",
                     field="fund_crowding",
                     data_type="factor",
-                    tier="tertiary",
+                    source_tier="T3",
                     nature="interpretation",
                 )
             )
@@ -132,7 +132,7 @@ class GameTheoryAnalyzer:
                     provider="akshare",
                     field="margin",
                     data_type="factor",
-                    tier="secondary",
+                    source_tier="T2",
                     nature="interpretation",
                 )
             )
@@ -146,7 +146,7 @@ class GameTheoryAnalyzer:
                     provider="tonghuashun",
                     field="northbound",
                     data_type="factor",
-                    tier="secondary",
+                    source_tier="T2",
                     nature="interpretation",
                 )
             )
@@ -161,7 +161,7 @@ class GameTheoryAnalyzer:
                     provider="eastmoney",
                     field="dragon_tiger_seats",
                     data_type="factor",
-                    tier="secondary",
+                    source_tier="T2",
                     nature="fact",
                 )
             )
@@ -178,7 +178,7 @@ class GameTheoryAnalyzer:
                         provider="manual",
                         field="price_impact_profile",
                         data_type="analyst_report",
-                        tier="secondary",
+                        source_tier="T2",
                         nature="interpretation",
                     )
                 )
