@@ -14,6 +14,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from src.data.source_citation import SourceCitation
+
 
 # ---------------------------------------------------------------------------
 # 行情数据
@@ -34,8 +36,22 @@ class Quote(BaseModel):
     prev_close: Optional[float] = Field(default=None, description="前收盘价")
     limit_up: Optional[float] = Field(default=None, description="涨停价")
     limit_down: Optional[float] = Field(default=None, description="跌停价")
+    # 估值字段 (Phase 5: 腾讯财经补全)
+    pe_ttm: Optional[float] = Field(default=None, description="滚动市盈率")
+    pe_static: Optional[float] = Field(default=None, description="静态市盈率")
+    pb: Optional[float] = Field(default=None, description="市净率")
+    market_cap: Optional[float] = Field(default=None, description="总市值（元）")
+    dividend_yield: Optional[float] = Field(default=None, description="股息率 (%)")
+    # 军规/L0 门禁字段
+    is_st: Optional[bool] = Field(default=None, description="是否为 ST/*ST")
+    suspended: Optional[bool] = Field(default=None, description="是否停牌")
+    listing_date: Optional[datetime] = Field(default=None, description="上市日期")
+    # 数据溯源
     source: str = Field(..., description="数据来源: guosen / akshare")
     fetched_at: datetime = Field(default_factory=datetime.now)
+    citation: Optional[SourceCitation] = Field(default=None, description="数据溯源引用")
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +89,9 @@ class FundamentalMetrics(BaseModel):
     sources: list[str] = Field(default_factory=list, description="数据来源列表")
     cross_validated: bool = Field(default=False, description="是否经过 ≥2 源交叉验证")
     dispute: bool = Field(default=False, description="多源差异 > 5%，数据可信度低")
+    citations: list[SourceCitation] = Field(default_factory=list, description="各来源 citation")
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 # ---------------------------------------------------------------------------
@@ -117,3 +136,61 @@ class ScreeningResult(BaseModel):
     market_cap: Optional[float] = Field(default=None, description="总市值")
     extra_fields: dict = Field(default_factory=dict, description="来源返回的其他字段")
     provider: str = Field(default="miaoxiang-xuangu", description="数据提供方")
+
+
+# ---------------------------------------------------------------------------
+# 高管数据 (Phase: executive-data) — mx-data NL 查询
+# ---------------------------------------------------------------------------
+
+
+class ExecutiveTrade(BaseModel):
+    """mx-data 高管增减持数据。"""
+
+    executive_name: str = Field(..., description="高管姓名")
+    position: str = Field(default="", description="职务")
+    trade_type: str = Field(default="buy", description="buy/sell")
+    trade_date: str = Field(default="", description="交易日期 YYYY-MM-DD")
+    volume: Optional[int] = Field(default=None, description="变动股数")
+    price: Optional[float] = Field(default=None, description="交易均价（元）")
+    total_value: Optional[float] = Field(default=None, description="变动金额（元）")
+    change_after_trade_pct: Optional[float] = Field(default=None, description="变动后持股比例 (%)")
+    provider: str = Field(default="miaoxiang-data-executive", description="数据提供方")
+
+
+class ExecutiveProfile(BaseModel):
+    """mx-data 高管背景履历。"""
+
+    name: str = Field(..., description="高管姓名")
+    position: str = Field(default="", description="现任职务")
+    age: Optional[int] = Field(default=None, description="年龄")
+    education: str = Field(default="", description="学历")
+    background: str = Field(default="", description="职业背景描述")
+    tenure_start: str = Field(default="", description="任职起始日期")
+    provider: str = Field(default="miaoxiang-data-executive", description="数据提供方")
+
+
+class BoardChange(BaseModel):
+    """mx-data 董监高变动。"""
+
+    person_name: str = Field(..., description="变动人姓名")
+    old_position: str = Field(default="", description="原职务")
+    new_position: str = Field(default="", description="新职务")
+    change_date: str = Field(default="", description="变动日期 YYYY-MM-DD")
+    reason: str = Field(default="", description="变动原因：任期届满/辞职/换届/其他")
+    provider: str = Field(default="miaoxiang-data-executive", description="数据提供方")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Alpha Lens DTO 引用（统一入口）
+# ---------------------------------------------------------------------------
+# 核心 Alpha 类型从 src.alpha 模块导入，
+# 此处提供便捷引用路径：from src.data.schema import AlphaProfile, AlphaSource, ...
+from src.alpha.schema import (  # noqa: F401, E402
+    AlphaDecayStatus,
+    AlphaProfile,
+    AlphaSource,
+    ConsensusGap,
+    NarrativeLifecycle,
+    NarrativeStage,
+    SourceTier,
+)

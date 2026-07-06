@@ -14,11 +14,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
+import pandas as pd
+
 from .akshare import AKShareProvider
 from .base import DataProvider
 from .guosen import GuosenProvider
+from .loaders import FALLBACK_CHAINS, LOADER_REGISTRY, NoAvailableSourceError
 from .mootdx_tencent import MootdxTencentProvider
 from .schema import (
+    BoardChange,
+    ExecutiveProfile,
+    ExecutiveTrade,
     Financials,
     FundamentalMetrics,
     NewsItem,
@@ -26,6 +32,8 @@ from .schema import (
     RelatedParty,
     ScreeningResult,
 )
+from .source_citation import make_citation, make_data_gap_citation
+from src.utils.decimal_utils import D, safe_divide
 
 
 class DataAggregator:
@@ -88,66 +96,146 @@ class DataAggregator:
         return self._miaoxiang
 
     # ------------------------------------------------------------------
+    # Loader helpers
+    # ------------------------------------------------------------------
+
+    def _walk_quote_chain(self, symbol: str, market: str = "SH") -> Optional[Quote]:
+        """按 a_share fallback 链获取单只股票行情，并附加 citation。"""
+        for name in FALLBACK_CHAINS.get("a_share", []):
+            loader_cls = LOADER_REGISTRY.get(name)
+            if loader_cls is None:
+                continue
+            try:
+                loader = loader_cls()
+            except Exception:
+                continue
+            if not loader.is_available():
+                continue
+            q = loader.get_quote(symbol, market)
+            if q is not None:
+                if q.citation is None:
+                    q.citation = make_citation(
+                        provider=q.source,
+                        field="quote",
+                        data_type="realtime_quote",
+                    )
+                return q
+        return None
+
+    def _walk_history_chain(
+        self,
+        symbol: str,
+        start_date: str = "",
+        end_date: str = "",
+        period: str = "daily",
+    ) -> pd.DataFrame:
+        """按 a_share fallback 链获取历史 K 线，并附加 citation。"""
+        for name in FALLBACK_CHAINS.get("a_share", []):
+            loader_cls = LOADER_REGISTRY.get(name)
+            if loader_cls is None:
+                continue
+            try:
+                loader = loader_cls()
+            except Exception:
+                continue
+            if not loader.is_available():
+                continue
+            df = loader.get_history(symbol, start_date, end_date, period)
+            if df is not None and not df.empty:
+                if "source_citation" not in df.attrs:
+                    df.attrs["source_citation"] = make_citation(
+                        provider=loader.name,
+                        field="ohlcv",
+                        data_type="daily_bar",
+                    )
+                return df
+        return pd.DataFrame()
+
+    def _walk_financials_chain(
+        self, symbol: str, market: str = "SH", count: int = 4
+    ) -> list[Financials]:
+        """按 a_share fallback 链获取财务报表，并附加 citation。"""
+        for name in FALLBACK_CHAINS.get("a_share", []):
+            loader_cls = LOADER_REGISTRY.get(name)
+            if loader_cls is None:
+                continue
+            try:
+                loader = loader_cls()
+            except Exception:
+                continue
+            if not loader.is_available():
+                continue
+            fins = loader.get_financials(symbol, market, count)
+            if fins:
+                citation = make_citation(
+                    provider=loader.name,
+                    field="financials",
+                    data_type="financials",
+                )
+                for fin in fins:
+                    if fin.citation is None:
+                        fin.citation = citation
+                return fins
+        return []
+
+    # ------------------------------------------------------------------
     # Quote
     # ------------------------------------------------------------------
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:
-        """获取单只股票行情。mootdx+腾讯优先 → 国信 → AKShare 降级。"""
+        """获取单只股票行情。按 registry fallback 链：verified_cache > guosen > mootdx > akshare > tencent。"""
         cache_key = f"quote:{symbol}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
 
-        # V3: mootdx+腾讯优先（不封IP）
-        q = self.mootdx.get_quote(symbol, market)
+        q = self._walk_quote_chain(symbol, market)
         if q is not None:
             self._cache_set(cache_key, q)
             return q
-
-        # 国信
-        gs = self.guosen
-        if gs is not None:
-            q = gs.get_quote(symbol, market)
-            if q is not None:
-                self._cache_set(cache_key, q)
-                return q
-
-        # AKShare 降级
-        q = self.akshare.get_quote(symbol, market)
-        if q is not None:
-            self._cache_set(cache_key, q)
-        return q
+        return None
 
     def get_quotes_batch(
         self, stocks: list[tuple[str, str]]
     ) -> list[Quote]:
-        """批量获取行情。mootdx+腾讯优先。"""
-        # V3: mootdx+腾讯批量优先
+        """批量获取行情。按 registry fallback 链逐源补全，并附加 citation。"""
         symbols = [s[0] for s in stocks]
-        results = self.mootdx.get_quotes_batch(symbols)
-        if len(results) >= len(stocks):
-            return results
+        markets = [s[1] for s in stocks]
+        results: list[Quote] = []
+        got: set[str] = set()
 
-        # 腾讯缺漏 → 国信补
-        got = {r.symbol for r in results}
-        gs = self.guosen
-        if gs is not None:
-            remaining = [(s, m) for s, m in stocks if s not in got]
-            for i in range(0, len(remaining), 10):
-                batch = remaining[i : i + 10]
-                batch_syms = [s[0] for s in batch]
-                batch_mkts = [s[1] for s in batch]
-                batch_results = gs.get_quotes_batch(batch_syms, batch_mkts)
-                results.extend(batch_results)
+        for name in FALLBACK_CHAINS.get("a_share", []):
+            if len(results) >= len(stocks):
+                break
+            loader_cls = LOADER_REGISTRY.get(name)
+            if loader_cls is None:
+                continue
+            try:
+                loader = loader_cls()
+            except Exception:
+                continue
+            if not loader.is_available():
+                continue
 
-        # AKShare 最终补漏
-        if len(results) < len(stocks):
-            got = {r.symbol for r in results}
-            for sym, mkt in stocks:
-                if sym not in got:
-                    q = self.akshare.get_quote(sym, mkt)
-                    if q is not None:
-                        results.append(q)
+            remaining = [(s, m) for s, m in zip(symbols, markets) if s not in got]
+            batch_symbols = [s for s, _ in remaining]
+            batch_markets = [m for _, m in remaining]
+            try:
+                batch_results = loader.get_quotes_batch(batch_symbols, batch_markets)
+            except Exception:
+                batch_results = []
+
+            citation = make_citation(
+                provider=loader.name,
+                field="quote",
+                data_type="realtime_quote",
+            )
+            for q in batch_results:
+                if q.symbol not in got:
+                    if q.citation is None:
+                        q.citation = citation
+                    results.append(q)
+                    got.add(q.symbol)
 
         return results
 
@@ -158,29 +246,16 @@ class DataAggregator:
     def get_financials(
         self, symbol: str, market: str = "SH", count: int = 4
     ) -> list[Financials]:
-        """获取财务报表。mootdx优先 → 国信 → AKShare。"""
+        """获取财务报表。按 registry fallback 链。"""
         cache_key = f"fin:{symbol}:{count}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
 
-        # V3: mootdx 优先
-        fin = self.mootdx.get_financials(symbol, market, count)
-        if fin:
-            self._cache_set(cache_key, fin)
-            return fin
-
-        gs = self.guosen
-        if gs is not None:
-            fin = gs.get_financials(symbol, market, count)
-            if fin:
-                self._cache_set(cache_key, fin)
-                return fin
-
-        fin = self.akshare.get_financials(symbol, market, count)
-        if fin:
-            self._cache_set(cache_key, fin)
-        return fin
+        fins = self._walk_financials_chain(symbol, market, count)
+        if fins:
+            self._cache_set(cache_key, fins)
+        return fins
 
     # ------------------------------------------------------------------
     # Scan
@@ -201,36 +276,10 @@ class DataAggregator:
         end_date: str = "",
         period: str = "daily",
     ):
-        """获取历史K线数据（用于回测）。mootdx优先 → AKShare。
-
-        Args:
-            symbol: 股票代码，如 "600519"
-            start_date: 起始日期 "YYYYMMDD"
-            end_date: 结束日期 "YYYYMMDD"，默认今天
-            period: K线周期 "daily" | "weekly" | "monthly"
-
-        Returns:
-            pd.DataFrame，列含: 日期,开盘,收盘,最高,最低,成交量,成交额,涨跌幅
-        """
-        import pandas as pd
-
+        """获取历史K线数据（用于回测）。按 registry fallback 链。"""
         if not end_date:
             end_date = datetime.now().strftime("%Y%m%d")
-
-        # V3: mootdx 优先（不封IP，TCP直连）
-        start_fmt = start_date.replace("-", "")[:8] if start_date else ""
-        df = self.mootdx.get_history(
-            symbol=symbol, period=period,
-            start_date=start_fmt, end_date=end_date,
-        )
-        if df is not None and not df.empty:
-            return df
-
-        # AKShare 降级
-        return self.akshare.get_history(
-            symbol=symbol, period=period,
-            start_date=start_date, end_date=end_date,
-        )
+        return self._walk_history_chain(symbol, start_date, end_date, period)
 
     # ------------------------------------------------------------------
     # Status
@@ -279,6 +328,27 @@ class DataAggregator:
             return mx.get_related_parties(symbol)
         return []
 
+    def get_executive_trades(self, symbol: str) -> list[ExecutiveTrade]:
+        """获取高管增减持。mx-data 独有能力，无降级源。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.get_executive_trades(symbol)
+        return []
+
+    def get_executive_profiles(self, symbol: str) -> list[ExecutiveProfile]:
+        """获取高管背景履历。mx-data 独有能力，无降级源。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.get_executive_profiles(symbol)
+        return []
+
+    def get_board_changes(self, symbol: str) -> list[BoardChange]:
+        """获取董监高变动。mx-data 独有能力，无降级源。"""
+        mx = self.miaoxiang
+        if mx is not None:
+            return mx.get_board_changes(symbol)
+        return []
+
     def screen_stocks(self, conditions: str) -> list[ScreeningResult]:
         """条件选股。mx-xuangu 优先 → AKShare scan_all_stocks() 降级（客户端过滤）。"""
         mx = self.miaoxiang
@@ -319,6 +389,191 @@ class DataAggregator:
         # 双源交叉验证
         dispute = abs(q1.price - q2.price) / max(q1.price, q2.price) > 0.05
         return q1, True, dispute
+
+    # ------------------------------------------------------------------
+    # Phase 5: 估值 + 周期数据方法
+    # ------------------------------------------------------------------
+
+    def get_fundamental_metrics(
+        self, symbol: str, market: str = "SH"
+    ) -> Optional[FundamentalMetrics]:
+        """聚合基本面指标: PE/PB/ROE/资产负债率/市值。
+
+        Quote.PE/PB + Financials.ROE → FundamentalMetrics。
+        """
+        cache_key = f"fmetrics:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(minutes=30))
+        if cached:
+            return cached
+
+        quote, cross_validated, dispute = self.get_cross_validated_quote(symbol, market)
+        if quote is None:
+            return None
+
+        fin_list = self.get_financials(symbol, market, count=1)
+        roe: Optional[float] = None
+        debt: Optional[float] = None
+        if fin_list:
+            fin = fin_list[0]
+            if fin.net_profit and fin.total_assets and fin.total_liabilities:
+                equity = D(fin.total_assets) - D(fin.total_liabilities)
+                if equity > D("0"):
+                    roe = float(safe_divide(D(fin.net_profit), equity, precision=4) * D("100"))
+                if fin.total_assets > 0:
+                    debt = float(safe_divide(D(fin.total_liabilities), D(fin.total_assets), precision=4) * D("100"))
+
+        citations = [make_citation(provider=quote.source, field="quote", data_type="realtime_quote", source_tier="T1")]
+        if cross_validated:
+            mx = self.miaoxiang
+            if mx is not None:
+                citations.append(make_citation(provider="miaoxiang", field="quote", data_type="realtime_quote", source_tier="T2"))
+        if dispute:
+            citations.append(make_data_gap_citation(provider="aggregator", field="quote_dispute", reason="行情双源价格分歧 >5%"))
+
+        metrics = FundamentalMetrics(
+            symbol=symbol,
+            name=quote.name,
+            pe_ttm=quote.pe_ttm,
+            pb=quote.pb,
+            roe=roe,
+            debt_to_equity=debt,
+            market_cap=quote.market_cap,
+            sources=[quote.source],
+            cross_validated=cross_validated,
+            dispute=dispute,
+            citations=citations,
+        )
+        self._cache_set(cache_key, metrics)
+        return metrics
+
+    def get_industry_pe_pb(
+        self, symbol: str, market: str = "SH"
+    ) -> tuple[Optional[float], Optional[float]]:
+        """获取个股所属行业 PE/PB 中位数。
+
+        优先用 AKShare 行业板块数据，无法分类时返回 None。
+        Returns: (industry_pe_median, industry_pb_median)
+        """
+        cache_key = f"ind_pe:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached:
+            return cached
+
+        try:
+            import akshare as ak
+            # 获取所有行业板块的 PE/PB 数据
+            df = ak.stock_board_industry_spot_em()
+            if df is None or df.empty:
+                self._cache_set(cache_key, (None, None))
+                return None, None
+
+            # 从中取中位数作为市场参考（后续可细化到具体行业）
+            pe_vals = df.iloc[:, 6] if df.shape[1] > 6 else None  # 板块PE列
+            pb_vals = df.iloc[:, 7] if df.shape[1] > 7 else None  # 板块PB列
+
+            pe_median: Optional[float] = None
+            pb_median: Optional[float] = None
+            if pe_vals is not None and len(pe_vals) > 0:
+                try:
+                    pe_vals_num = pe_vals.apply(
+                        lambda x: float(x) if x and str(x).replace(".", "").replace("-", "").isdigit() else None
+                    ).dropna()
+                    if len(pe_vals_num) > 0:
+                        pe_median = round(float(pe_vals_num.median()), 2)
+                except Exception:
+                    pe_median = None
+            if pb_vals is not None and len(pb_vals) > 0:
+                try:
+                    pb_vals_num = pb_vals.apply(
+                        lambda x: float(x) if x and str(x).replace(".", "").replace("-", "").isdigit() else None
+                    ).dropna()
+                    if len(pb_vals_num) > 0:
+                        pb_median = round(float(pb_vals_num.median()), 2)
+                except Exception:
+                    pb_median = None
+
+            result = (pe_median, pb_median)
+            self._cache_set(cache_key, result)
+            return result
+        except Exception:
+            logger = __import__("logging").getLogger(__name__)
+            logger.debug("Industry PE/PB fetch failed for %s", symbol, exc_info=True)
+            result = (None, None)
+            self._cache_set(cache_key, result)
+            return result
+
+    def get_dividend_data(self, symbol: str) -> Optional[float]:
+        """获取股息率 (%)。使用 AKShare 历史分红数据。
+
+        Returns: dividend_yield as percentage, or None.
+        """
+        cache_key = f"div:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        try:
+            import akshare as ak
+            df = ak.stock_history_dividend()
+            if df is None or df.empty:
+                self._cache_set(cache_key, None)
+                return None
+
+            # 筛选该股票的分红记录
+            stock_col = None
+            for col in ["代码", "股票代码", "symbol"]:
+                if col in df.columns:
+                    stock_col = col
+                    break
+            if stock_col is None:
+                self._cache_set(cache_key, None)
+                return None
+
+            stock_div = df[df[stock_col].astype(str).str.contains(symbol)]
+            if stock_div.empty:
+                self._cache_set(cache_key, None)
+                return None
+
+            result: Optional[float] = None
+            # 尝试取股息率列
+            for col in ["股息率", "dividend_yield", "div_rate"]:
+                if col in stock_div.columns:
+                    vals = stock_div[col].dropna()
+                    if len(vals) > 0:
+                        result = round(float(vals.iloc[0]), 2)
+                        break
+            self._cache_set(cache_key, result)
+            return result
+        except Exception:
+            logger = __import__("logging").getLogger(__name__)
+            logger.debug("Dividend data fetch failed for %s", symbol, exc_info=True)
+            self._cache_set(cache_key, None)
+            return None
+
+    def get_earnings_growth(self, symbol: str, market: str = "SH") -> Optional[float]:
+        """获取净利润 YoY 增速 (%)。从最近两期财报计算。
+
+        Returns: YoY growth rate as percentage, or None.
+        """
+        cache_key = f"eg:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        fin_list = self.get_financials(symbol, market, count=2)
+        if len(fin_list) < 2:
+            self._cache_set(cache_key, None)
+            return None
+
+        latest = fin_list[0]
+        prior = fin_list[1]
+        if not latest.net_profit or not prior.net_profit or prior.net_profit == 0:
+            self._cache_set(cache_key, None)
+            return None
+
+        growth = round((latest.net_profit - prior.net_profit) / abs(prior.net_profit) * 100, 2)
+        self._cache_set(cache_key, growth)
+        return growth
 
     # ------------------------------------------------------------------
     # Cache
