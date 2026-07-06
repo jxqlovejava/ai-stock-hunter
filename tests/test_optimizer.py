@@ -52,10 +52,13 @@ def _make_engine_with_dummy_data():
         "low": close * 0.98,
         "close": close,
         "volume": np.random.randint(1_000_000, 10_000_000, n),
+        "pe_pct": 25.0,
+        "roe": 15.0,
+        "momentum": 1.0,
     }, index=dates)
 
     engine = BacktestEngine(initial_cash=1_000_000)
-    engine.add_data("TEST001", df, pe_percentile=25, roe=15.0, northbound=1)
+    engine.add_data("TEST001", df)
     return engine
 
 
@@ -76,14 +79,14 @@ class TestGridSearchOptimizer:
 
         opt = GridSearchOptimizer(_make_engine_with_dummy_data, MVP1Strategy)
         grid = {
-            "pe_percentile": [30, 40],
-            "roe_threshold": [10.0, 15.0],
+            "pe_pct_threshold": [30, 40],
+            "stop_loss_pct": [-0.10, -0.15],
         }
         result = opt.optimize(grid, "2020-01-01", "2024-12-31")
         assert result.search_method == "grid"
         assert result.target_metric == "sharpe_ratio"
         assert len(result.best_params) == 2
-        assert "pe_percentile" in result.best_params
+        assert "pe_pct_threshold" in result.best_params
         assert len(result.all_results) >= 1
 
     def test_optimize_targets_max_drawdown(self):
@@ -91,7 +94,7 @@ class TestGridSearchOptimizer:
         from src.backtest.mvp1_strategy import MVP1Strategy
 
         opt = GridSearchOptimizer(_make_engine_with_dummy_data, MVP1Strategy)
-        grid = {"pe_percentile": [30], "stop_loss_pct": [-0.10]}
+        grid = {"pe_pct_threshold": [30], "stop_loss_pct": [-0.10]}
         result = opt.optimize(grid, "2020-01-01", "2024-12-31", target_metric="max_drawdown")
         assert result.target_metric == "max_drawdown"
         assert len(result.best_params) >= 1
@@ -100,19 +103,19 @@ class TestGridSearchOptimizer:
         from src.backtest.optimizer import GridSearchOptimizer
         opt = GridSearchOptimizer(_make_engine_with_dummy_data)
         with pytest.raises(ValueError, match="不支持的优化指标"):
-            opt.optimize({"pe_percentile": [30]}, "2020-01-01", "2024-12-31", target_metric="invalid")
+            opt.optimize({"pe_pct_threshold": [30]}, "2020-01-01", "2024-12-31", target_metric="invalid")
 
     def test_save_and_load(self):
         from src.backtest.optimizer import GridSearchOptimizer, OptimizationResult
         result = OptimizationResult(
-            best_params={"pe_percentile": 30},
+            best_params={"pe_pct_threshold": 30},
             best_score=0.8,
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "opt_result.json")
             GridSearchOptimizer(_make_engine_with_dummy_data).save(result, path)
             loaded = GridSearchOptimizer.load(path)
-            assert loaded["best_params"] == {"pe_percentile": 30}
+            assert loaded["best_params"] == {"pe_pct_threshold": 30}
             assert loaded["best_score"] == 0.8
 
     def test_optimization_result_to_dict(self):
@@ -150,9 +153,9 @@ class TestBayesianOptimizer:
             _make_engine_with_dummy_data, MVP1Strategy, n_calls=5, n_initial_points=3
         )
         space = [
-            Integer(20, 50, name="pe_percentile"),
-            Real(5.0, 20.0, name="roe_threshold"),
+            Integer(20, 50, name="pe_pct_threshold"),
             Real(-0.25, -0.05, name="stop_loss_pct"),
+            Integer(5, 30, name="max_positions"),
         ]
         result = opt.optimize(space, "2020-01-01", "2024-12-31")
         assert result.search_method == "bayesian"
@@ -167,7 +170,7 @@ class TestBayesianOptimizer:
         opt = BayesianOptimizer(
             _make_engine_with_dummy_data, MVP1Strategy, n_calls=5
         )
-        space = [Real(5.0, 20.0, name="roe_threshold")]
+        space = [Real(-0.25, -0.05, name="stop_loss_pct")]
         result = opt.optimize(space, "2020-01-01", "2024-12-31")
         assert result.search_method == "bayesian"
 
@@ -181,9 +184,9 @@ class TestStrategyRegistry:
     def test_register_and_get(self):
         from src.backtest.strategy_registry import StrategyRegistry
         reg = StrategyRegistry(db_path=":memory:")  # won't persist
-        sv = reg.register("MVP1", "1.0.0", {"pe_percentile": 30})
+        sv = reg.register("MVP1", "1.0.0", {"pe_pct_threshold": 30})
         assert sv.name == "MVP1"
-        assert sv.params["pe_percentile"] == 30
+        assert sv.params["pe_pct_threshold"] == 30
 
         retrieved = reg.get_latest("MVP1")
         assert retrieved is not None
