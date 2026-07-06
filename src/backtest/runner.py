@@ -22,6 +22,7 @@ from typing import Optional
 import pandas as pd
 
 from .engine import BacktestEngine, BacktestResult
+from .engine_v2 import VibeBacktestEngine
 from .mvp1_strategy import MVP1Strategy
 
 # 缓存目录
@@ -181,7 +182,8 @@ def run_backtest(
     initial_cash: float = 1_000_000,
     max_positions: int = 20,
     rebalance_days: int = 63,  # 季调
-) -> BacktestResult:
+    engine: str = "legacy",
+) -> BacktestResult | EngineResult:
     """运行完整回测。
 
     1. 下载 HS300 成分股历史 K 线
@@ -198,6 +200,15 @@ def run_backtest(
     data = download_universe(symbols, start_date, end_date)
     if len(data) < 5:
         raise RuntimeError("数据不足，无法运行回测")
+
+    if engine == "v2":
+        v2 = VibeBacktestEngine(initial_cash=initial_cash)
+        return v2.run(
+            symbols=list(data.keys()),
+            start_date=start_date,
+            end_date=end_date,
+            data_map=data,
+        )
 
     # 计算因子
     print("计算因子...")
@@ -274,6 +285,7 @@ if __name__ == "__main__":
     parser.add_argument("--universe", default="hs300", choices=["hs300", "custom"])
     parser.add_argument("--max-positions", type=int, default=20)
     parser.add_argument("--rebalance-days", type=int, default=63)
+    parser.add_argument("--engine", default="legacy", choices=["legacy", "v2"])
     parser.add_argument("--reversal", action="store_true", help="运行因子反转测试")
     parser.add_argument("--symbols", nargs="*", help="自定义股票池")
     args = parser.parse_args()
@@ -287,14 +299,24 @@ if __name__ == "__main__":
         end_date=args.end,
         max_positions=args.max_positions,
         rebalance_days=args.rebalance_days,
+        engine=args.engine,
     )
 
     # 打印报告
     print("\n" + "=" * 60)
-    print(BacktestEngine().report(result))
+    if hasattr(result, "report"):
+        print(result.report())
+    else:
+        print(f"总收益: {result.total_return:.2%}")
+        print(f"年化收益: {result.annual_return:.2%}")
+        print(f"夏普: {result.sharpe_ratio:.2f}")
+        print(f"最大回撤: {result.max_drawdown:.2%}")
+        print(f"交易次数: {result.total_trades}")
+        if result.trading_blocked:
+            print(f"⚠️ 交易被阻断: {result.block_reason}")
 
     # 因子反转测试
-    if args.reversal:
+    if args.reversal and args.engine == "legacy":
         rev_result = run_reversal_test(
             result,
             symbols=symbols,
