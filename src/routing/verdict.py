@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L2 法官 — 加权评分 + 置信度 + 反共识检查 + 主题生命周期调整。"""
+"""综合裁决（原 L2 Judge）— 加权评分 + 置信度 + 反共识检查 + 主题生命周期调整。"""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from .l1_analyze import AnalysisReport
+from .diagnosis import DiagnosisReport
 
 
 @dataclass
 class Verdict:
-    """L2 裁决结果。"""
+    """综合裁决结果。"""
     symbol: str
     score: int = 50                          # 0-100
     confidence: float = 0.5                  # 0.0-1.0
@@ -34,20 +34,20 @@ class Verdict:
     created_at: datetime = field(default_factory=datetime.now)
 
 
-class L2Judge:
-    """L2 法官。
+class VerdictEngine:
+    """综合裁决引擎（原 L2Judge）。
 
     评分权重:
-      - 基本面 (L1 价值 + 质量): 30%
-      - 估值 (L1 多维估值): 15%
-      - 技术面 (L1 动量): 15%
+      - 基本面 (诊断 价值 + 质量): 30%
+      - 估值 (诊断 多维估值): 15%
+      - 技术面 (诊断 动量): 15%
       - 宏观适配: 10%
       - 周期阶段: 10%
       - 行业景气: 10%
       - 情绪溢价: 5%
       - 高管: 5%
 
-    置信度 < 0.6 不进入 L3。
+    置信度 < 0.6 不进入仓位调度。
     Phase 3: 主题生命周期调整 (topic_adj) 影响行业权重。
     """
 
@@ -66,7 +66,7 @@ class L2Judge:
 
     def judge(
         self,
-        report: AnalysisReport,
+        report: DiagnosisReport,
         sector_score: float = 50.0,
         topic_adj: Optional[dict] = None,
         weights_override: Optional[dict] = None,
@@ -229,7 +229,7 @@ class L2Judge:
 
     def _alpha_multiplier(
         self,
-        report: AnalysisReport,
+        report: DiagnosisReport,
     ) -> tuple[float, str, str]:
         """Phase 4: Alpha Lens — 基于 AlphaProfile 计算评分乘数。
 
@@ -327,3 +327,7 @@ class L2Judge:
             "GREED": 40,     # 贪婪中谨慎
         }
         return mapping.get(level, 50.0)
+
+
+# -- 向后兼容别名 (deprecated) --
+L2Judge = VerdictEngine

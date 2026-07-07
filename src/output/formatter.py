@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.routing.orchestrator import OrchestratorResult
-    from src.routing.l1_analyze import AnalysisReport
-    from src.routing.l2_judge import Verdict
+    from src.routing.diagnosis import DiagnosisReport
+    from src.routing.verdict import Verdict
     from src.data.source_citation import SourceCitation
 
 # ── 常量 ────────────────────────────────────────────────────────────────────
@@ -603,7 +603,7 @@ def format_citations_summary(citations: list[SourceCitation]) -> str:
     return "\n".join(lines)
 
 
-def format_l1_score_panel(report: AnalysisReport | None) -> str:
+def format_l1_score_panel(report: DiagnosisReport | None) -> str:
     """L1 多维评分面板。"""
     if report is None:
         return "    ⚠️ L1 分析报告不可用"

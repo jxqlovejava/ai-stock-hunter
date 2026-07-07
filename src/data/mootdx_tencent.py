@@ -171,14 +171,20 @@ class MootdxTencentProvider(DataProvider):
             now = datetime.now()
             period = f"{now.year}Q{(now.month - 1) // 3 + 1}"
 
+            # mootdx 返回 pandas DataFrame，字段名为拼音
+            # 需要先提取标量再计算，避免 Series 布尔判断报错
+            liudong = self._safe_float(fin.get("liudongfuzhai", 0)) or 0.0
+            changqi = self._safe_float(fin.get("changqifuzhai", 0)) or 0.0
             results.append(Financials(
                 symbol=symbol,
                 report_period=period,
-                revenue=self._safe_float(fin.get("income", 0)),
-                net_profit=self._safe_float(fin.get("profit", 0)),
+                revenue=self._safe_float(fin.get("zhuyingshouru", 0)),
+                net_profit=self._safe_float(fin.get("jinglirun", 0)),
                 total_assets=self._safe_float(fin.get("total_assets", fin.get("zongzichan", 0))),
-                total_liabilities=self._safe_float(fin.get("total_liabilities", fin.get("zongfuzhai", 0))),
-                operating_cash_flow=None,  # mootdx finance doesn't have cash flow
+                total_liabilities=self._safe_float(
+                    fin.get("total_liabilities", liudong + changqi)
+                ),
+                operating_cash_flow=self._safe_float(fin.get("jingyingxianjinliu", None)),
                 source=self.source_name,
             ))
 

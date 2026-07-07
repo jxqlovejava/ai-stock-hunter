@@ -103,7 +103,7 @@ def cmd_scan(args: list[str]):
     """全市场选股扫描。"""
     import argparse
     from src.data.aggregator import DataAggregator
-    from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
+    from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS as _SCREENING_PRESETS
 
     parser = argparse.ArgumentParser(description="全市场选股扫描")
     parser.add_argument(

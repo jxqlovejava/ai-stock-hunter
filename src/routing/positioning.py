@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L3 交易员 — 信号→仓位映射。Phase 4: Alpha 时序注入。Phase 5: 凯利公式仓位管理。"""
+"""仓位调度（原 L3 Trade）— 信号→仓位映射。Phase 4: Alpha 时序注入。Phase 5: 凯利公式仓位管理。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 
-from .l2_judge import Verdict
+from .verdict import Verdict
 from src.utils.decimal_utils import D, safe_divide
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,8 @@ class TradeSignal:
     target_2: float = 0.0         # 第二止盈目标位
 
 
-class L3Trader:
-    """L3 交易员。
+class PositioningEngine:
+    """仓位调度引擎（原 L3Trader）。
 
     信号映射:
       - score ≥ 75 → 建仓/加仓
@@ -259,3 +259,7 @@ class L3Trader:
             return "REDUCE"
         else:
             return "CLOSE"
+
+
+# -- 向后兼容别名 (deprecated) --
+L3Trader = PositioningEngine

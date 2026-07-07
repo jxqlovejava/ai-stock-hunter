@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""L1 分析师 — 多维扫描（量化为主，AI 为辅）。
+"""多维诊断（原 L1 Analyze）— 多维度扫描（量化为主，AI 为辅）。
 
-分析维度:
+诊断维度:
   1. 宏观环境打分 (PMI/ERP/M1-M2/社融/LPR/DR007/货币信用象限)
   2. 量化因子扫描 (价值/质量/动量/盈利修正)
-  3. 物理瓶颈分析 (借鉴 cyberagent: 供应链定位 + 瓶颈分类)
+  3. 物理瓶颈分析 (供应链定位 + 瓶颈分类)
   4. 情绪信号检测
   5. 多空双视角
 """
@@ -24,8 +24,8 @@ from src.routing.investor_mental_model import InvestorMentalModelFit
 
 
 @dataclass
-class AnalysisReport:
-    """L1 分析报告。"""
+class DiagnosisReport:
+    """多维诊断报告（原 DiagnosisReport / L1）。"""
     symbol: str
     name: str
     macro_score: float = 50.0
@@ -62,8 +62,8 @@ class AnalysisReport:
     mental_models: list[dict] = field(default_factory=list)
 
 
-class L1Analyzer:
-    """L1 分析师: 5+ 个分析维度。"""
+class DiagnosisEngine:
+    """多维诊断引擎（原 L1Analyzer）: 宏观/价值/质量/动量/估值/周期/情绪/高管 8+ 维度。"""
 
     def analyze(
         self,
@@ -81,8 +81,8 @@ class L1Analyzer:
         executive: Optional[dict] = None,              # V4: 高管数据
         valuation_result: Optional[object] = None,     # Phase 5: ValuationResult
         cycle_analysis: Optional[object] = None,       # Phase 5: CycleAnalysis
-    ) -> AnalysisReport:
-        report = AnalysisReport(symbol=symbol, name=name)
+    ) -> DiagnosisReport:
+        report = DiagnosisReport(symbol=symbol, name=name)
 
         if macro:
             report.macro_score = self._score_macro(macro, macro_regime, fiscal_regime)
@@ -221,7 +221,7 @@ class L1Analyzer:
 
     @staticmethod
     def _calc_confidence(
-        report: AnalysisReport,
+        report: DiagnosisReport,
         quote: dict | None,
         financials: list | None,
     ) -> float:
@@ -474,7 +474,7 @@ class L1Analyzer:
         preset_name: str,
         candidates: list[dict],
         limit: int = 20,
-    ) -> list[tuple[str, AnalysisReport, float]]:
+    ) -> list[tuple[str, DiagnosisReport, float]]:
         """按预设方法论筛选股票。
 
         Args:
@@ -489,7 +489,7 @@ class L1Analyzer:
         if preset is None:
             raise ValueError(f"未知预设 '{preset_name}', 可选: {list(SCREENING_PRESETS.keys())}")
 
-        results: list[tuple[str, AnalysisReport, float]] = []
+        results: list[tuple[str, DiagnosisReport, float]] = []
         for c in candidates[:100]:  # 最多扫描 100 只
             symbol = c.get("symbol", "")
             name = c.get("name", "")
@@ -539,7 +539,7 @@ class L1Analyzer:
         return True
 
     @staticmethod
-    def _calc_preset_score(report: AnalysisReport, preset: ScreeningPreset) -> float:
+    def _calc_preset_score(report: DiagnosisReport, preset: ScreeningPreset) -> float:
         """按预设权重计算综合得分。"""
         w = preset.weight_overrides
         val_score = report.valuation_score if report.valuation_score != 50.0 else report.value_score
@@ -667,3 +667,8 @@ SCREENING_PRESETS: dict[str, ScreeningPreset] = {
         ],
     ),
 }
+
+
+# -- 向后兼容别名 (deprecated) --
+L1Analyzer = DiagnosisEngine
+AnalysisReport = DiagnosisReport

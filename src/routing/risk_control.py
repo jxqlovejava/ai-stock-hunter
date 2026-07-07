@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L4 风控官 — 硬约束执行（不可覆盖）。Phase 4: Alpha 衰减风控。"""
+"""风控执行（原 L4 Risk）— 硬约束执行（不可覆盖）。Phase 4: Alpha 衰减风控。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 
-from .l3_trade import TradeSignal
+from .positioning import TradeSignal
 from src.utils.decimal_utils import D, safe_divide
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ class RiskCheck:
     source_citations: list = field(default_factory=list)  # Phase 1: 继承引用链
 
 
-class L4RiskOfficer:
-    """L4 风控官。
+class RiskControlEngine:
+    """风控执行引擎（原 L4RiskOfficer）。
 
     硬约束（不可覆盖）:
       - 单票最大仓位: 20%
@@ -277,7 +277,7 @@ class L4RiskOfficer:
         violations = []
 
         # Static blacklist
-        if symbol in L4RiskOfficer.STATIC_BLACKLIST:
+        if symbol in RiskControlEngine.STATIC_BLACKLIST:
             violations.append(f"黑名单: {symbol} 在静态黑名单中")
             return violations
 
@@ -306,3 +306,7 @@ class L4RiskOfficer:
                 violations.append("审计意见非标")
 
         return violations
+
+
+# -- 向后兼容别名 (deprecated) --
+L4RiskOfficer = RiskControlEngine

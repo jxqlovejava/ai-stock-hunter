@@ -1,18 +1,31 @@
 # -*- coding: utf-8 -*-
 """5 层路由内核。"""
 
-from .l0_gate import L0Gate, SecurityPass
-from .l1_analyze import L1Analyzer, AnalysisReport
-from .l2_judge import L2Judge, Verdict
-from .l3_trade import L3Trader, TradeSignal
-from .l4_risk import L4RiskOfficer, RiskCheck
+from .admission import AdmissionCheck, AdmissionResult
+from .diagnosis import DiagnosisEngine, DiagnosisReport
+from .verdict import VerdictEngine, Verdict
+from .positioning import PositioningEngine, TradeSignal
+from .risk_control import RiskControlEngine, RiskCheck
 from .orchestrator import Orchestrator
 
 __all__ = [
     "Orchestrator",
+    "AdmissionCheck", "AdmissionResult",
+    "DiagnosisEngine", "DiagnosisReport",
+    "VerdictEngine", "Verdict",
+    "PositioningEngine", "TradeSignal",
+    "RiskControlEngine", "RiskCheck",
+    # -- 向后兼容 (deprecated) --
     "L0Gate", "SecurityPass",
     "L1Analyzer", "AnalysisReport",
-    "L2Judge", "Verdict",
-    "L3Trader", "TradeSignal",
-    "L4RiskOfficer", "RiskCheck",
+    "L2Judge",
+    "L3Trader",
+    "L4RiskOfficer",
 ]
+
+# 向后兼容模块级别名
+from .admission import L0Gate, SecurityPass  # noqa: E402, F811
+from .diagnosis import L1Analyzer, AnalysisReport  # noqa: E402, F811
+from .verdict import L2Judge  # noqa: E402, F811
+from .positioning import L3Trader  # noqa: E402, F811
+from .risk_control import L4RiskOfficer  # noqa: E402, F811

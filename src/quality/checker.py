@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # L1 分析报告类型引用（延迟导入避免循环）
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from src.routing.l1_analyze import AnalysisReport
+    from src.routing.diagnosis import DiagnosisReport as AnalysisReport  # 向后兼容别名
 
 
 class MultiAgentQualityChecker:

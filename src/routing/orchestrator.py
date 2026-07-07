@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""编排器 — 画像→军规→L0→L1→L2→L3→L4 全链路。
+"""编排器 — 画像→军规→准入检查→多维诊断→综合裁决→仓位调度→风控执行 全链路。
 
 Phase 3: 注入 MacroRegime, NorthboundProfile, DominanceProfile,
          EarningsRevisionFactor, Topic 生命周期调整。
@@ -23,11 +23,11 @@ from src.kelly.tracker import TradeTracker
 from src.kelly.sizer import KellyPositionSizer
 from src.quality.checker import MultiAgentQualityChecker
 
-from .l0_gate import L0Gate
-from .l1_analyze import AnalysisReport, L1Analyzer
-from .l2_judge import L2Judge, Verdict
-from .l3_trade import L3Trader, TradeSignal
-from .l4_risk import L4RiskOfficer, RiskCheck
+from .admission import AdmissionCheck
+from .diagnosis import DiagnosisReport, DiagnosisEngine
+from .verdict import VerdictEngine, Verdict
+from .positioning import PositioningEngine, TradeSignal
+from .risk_control import RiskControlEngine, RiskCheck
 from .guardrails import GuardrailEnforcer, GuardrailViolation
 from .game_theory_analyzer import GameTheoryAnalyzer, GameTheoryProfile
 from .investor_mental_model import InvestorMentalModelAnalyzer, InvestorMentalModelFit
@@ -48,7 +48,7 @@ class OrchestratorResult:
     strategy_params: dict = field(default_factory=dict)
     passed: bool = False
     gate_status: str = ""
-    report: Optional[AnalysisReport] = None
+    report: Optional[DiagnosisReport] = None
     verdict: Optional[Verdict] = None
     signal: Optional[TradeSignal] = None
     risk: Optional[RiskCheck] = None
@@ -91,7 +91,7 @@ class OrchestratorResult:
     using_default_profile: bool = False  # 是否使用系统默认画像（未自定义）
     profile_completeness: int = 0         # 画像完整度 0-100
     profile_missing: list[str] = field(default_factory=list)  # 画像缺失项
-    # L3/L4 仓位管理详情
+    # 仓位调度/风控执行 详情
     sizing_detail: Optional[dict] = None  # 仓位计算方法 + 凯利参数
     position_limits_summary: Optional[dict] = None  # 仓位约束摘要
     created_at: datetime = field(default_factory=datetime.now)
@@ -100,7 +100,7 @@ class OrchestratorResult:
 class Orchestrator:
     """多层路由编排器。
 
-    流程: 军规 → L0 → L1 → 质量审查 → 博弈论 → 投资思维模型 → L2 → L3 → L4
+    流程: 军规 → 准入检查 → 多维诊断 → 质量审查 → 博弈论 → 投资思维模型 → 综合裁决 → 仓位调度 → 风控执行
 
     用法:
         orch = Orchestrator()
@@ -115,16 +115,16 @@ class Orchestrator:
     def __init__(self):
         self.data = DataAggregator()
         self.doctrine = DoctrineChecker()
-        self.l0 = L0Gate()
-        self.l1 = L1Analyzer()
-        self.l2 = L2Judge()
+        self.admission = AdmissionCheck()
+        self.diagnosis = DiagnosisEngine()
+        self.verdict_engine = VerdictEngine()
         # Phase 5: 注入 KellyPositionSizer（默认 half-Kelly=0.5）
         self.trade_tracker = TradeTracker()
         self.kelly_sizer = KellyPositionSizer(
             self.trade_tracker, default_kelly_fraction=0.5,
         )
-        self.l3 = L3Trader(kelly_sizer=self.kelly_sizer)
-        self.l4 = L4RiskOfficer()
+        self.positioning = PositioningEngine(kelly_sizer=self.kelly_sizer)
+        self.risk_ctrl = RiskControlEngine()
         self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
         self.alpha_lens = AlphaLens()        # Phase 4: Alpha Lens 引擎
         self.quality_checker = MultiAgentQualityChecker()  # CogAlpha: 多 Agent 质量审查
@@ -239,14 +239,14 @@ class Orchestrator:
             "infos": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.infos],
         }
 
-        # Step 2: L0 保安
+        # Step 2: 准入检查
         gate_ctx = {
             "is_limit_up": False,
             "is_limit_down": False,
             "is_suspended": False,
             "listing_days": 365,
         }
-        gate_result = self.l0.check(symbol, name, gate_ctx)
+        gate_result = self.admission.check(symbol, name, gate_ctx)
         result.gate_status = gate_result.status.value
         if gate_result.status.value == "REJECTED":
             result.passed = False
@@ -336,11 +336,11 @@ class Orchestrator:
         alpha_profile = self._get_alpha_profile(symbol, name, news_context)
         result.alpha_profile = alpha_profile
 
-        # Step 3: L1 分析师
-        # 使用真实行情 + 财务数据（转换为 dict 以兼容 L1）
+        # Step 3: 多维诊断
+        # 使用真实行情 + 财务数据
         fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
         sentiment_dict = self._get_sentiment(nb_profile)
-        report = self.l1.analyze(
+        report = self.diagnosis.analyze(
             symbol, name,
             quote_dict, fin_list,
             enriched_macro,
@@ -368,9 +368,9 @@ class Orchestrator:
                 source_tier="T2", nature="fact",
             ))
 
-        # Phase 1: L1 护栏检查
+        # Phase 1: 诊断护栏检查
         l1_violations = self.enforcer.enforce(
-            stage="L1",
+            stage="diagnosis",
             source_citations=report.source_citations,
             confidence=report.confidence,
         )
@@ -470,7 +470,7 @@ class Orchestrator:
         result.warnings.extend(quality_report.warnings[:5])
         result.quality_report = quality_report.to_dict()
 
-        # Phase 6+: 反偏见 — 红线检查（L2 前）
+        # Phase 6+: 反偏见 — 红线检查（综合裁决前）
         red_line_report = self.anti_bias_engine.check_red_lines(
             quote=quote_dict, financials=fin_list, executive=executive,
         )
@@ -480,7 +480,7 @@ class Orchestrator:
                 [f"红线 {line}: 触发" for line in red_line_report.triggered_lines]
             )
 
-        # Phase 1+: 信源交叉验证 guard — T1+ 来源不足则阻止进入 L2
+        # Phase 1+: 信源交叉验证 guard — T1+ 来源不足则阻止进入综合裁决
         t1_plus_count = sum(1 for sc in report.source_citations if getattr(sc, "is_t1_or_above", False))
         if t1_plus_count < 2:
             result.passed = False
@@ -489,17 +489,17 @@ class Orchestrator:
             )
             return result
 
-        # Step 4: L2 法官
-        verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
+        # Step 4: 综合裁决
+        verdict = self.verdict_engine.judge(report, topic_adj=topic_adj, weights_override=weights)
         result.verdict = verdict
-        if verdict.confidence < L2Judge.MIN_CONFIDENCE:
+        if verdict.confidence < VerdictEngine.MIN_CONFIDENCE:
             result.passed = False
-            result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})")
+            result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {VerdictEngine.MIN_CONFIDENCE})")
             return result
 
-        # Phase 1: L2 护栏检查
+        # Phase 1: 裁决护栏检查
         l2_violations = self.enforcer.enforce(
-            stage="L2",
+            stage="verdict",
             source_citations=verdict.source_citations,
             confidence=verdict.confidence,
         )
@@ -576,9 +576,9 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Scenario valuation failed for %s: %s", symbol, e)
 
-        # Step 5: L3 交易员
+        # Step 5: 仓位调度
         effective_macro_cap = 0.80 * risk_mult
-        signal = self.l3.generate_signal(
+        signal = self.positioning.generate_signal(
             verdict,
             macro_cap=effective_macro_cap,
             position_limits=position_limits,
@@ -596,9 +596,9 @@ class Orchestrator:
             "risk_multiplier": risk_mult,
         }
 
-        # Phase 1: L3 护栏检查
+        # Phase 1: 仓位调度护栏检查
         l3_violations = self.enforcer.enforce(
-            stage="L3",
+            stage="positioning",
             source_citations=signal.source_citations,
             confidence=signal.confidence,
         )
@@ -607,7 +607,7 @@ class Orchestrator:
             result.passed = False
             result.blocked_by.extend(self.enforcer.get_warnings(l3_violations))
 
-        # Step 6: L4 风控官
+        # Step 6: 风控执行
         enriched_portfolio = (portfolio or {}).copy()
         if related_parties:
             enriched_portfolio["related_parties"] = related_parties  # V4: 关联关系风险
@@ -622,7 +622,7 @@ class Orchestrator:
                 ),
                 "narrative_stage": alpha_profile.narrative.stage.value,
             }
-        # Phase 6: 博弈论风险注入 L4
+        # Phase 6: 博弈论风险注入风控执行
         if gt_profile:
             enriched_portfolio["game_theory_risks"] = gt_profile.risks
             enriched_portfolio["dominant_player"] = gt_profile.dominant_player
@@ -631,12 +631,12 @@ class Orchestrator:
             enriched_portfolio["mental_model_bias_flags"] = imm_fit.bias_flags
             enriched_portfolio["mental_model_warnings"] = imm_fit.warnings
 
-        risk = self.l4.check(signal, enriched_portfolio, position_limits=position_limits)
+        risk = self.risk_ctrl.check(signal, enriched_portfolio, position_limits=position_limits)
         result.risk = risk
 
-        # Phase 1: L4 护栏检查
+        # Phase 1: 风控护栏检查
         l4_violations = self.enforcer.enforce(
-            stage="L4",
+            stage="risk_control",
             source_citations=risk.source_citations,
         )
         result.violations.extend(l4_violations)
@@ -645,14 +645,14 @@ class Orchestrator:
         return result
 
     def quick_check(self, symbol: str, name: str = "") -> OrchestratorResult:
-        """快速检查（仅军规 + L0，不做完整分析）。"""
+        """快速检查（仅军规 + 准入检查，不做完整分析）。"""
         result = OrchestratorResult(symbol=symbol, name=name)
         doctrine_result = self.doctrine.check(symbol, {"stock_name": name})
         if not doctrine_result.passed:
             result.passed = False
             result.blocked_by = [r.name for r in doctrine_result.blocked_by]
             return result
-        gate_result = self.l0.check(symbol, name)
+        gate_result = self.admission.check(symbol, name)
         result.gate_status = gate_result.status.value
         result.passed = gate_result.status.value != "REJECTED"
         if not result.passed:
@@ -723,7 +723,7 @@ class Orchestrator:
         macro: dict | None = None,
         topic_adj: dict | None = None,
     ) -> dict:
-        """Analysis Worker: 军规→L0→L1→L2 (只读)。
+        """Analysis Worker: 军规→准入检查→多维诊断→综合裁决 (只读)。
 
         映射到 analysis-worker Agent 的职责边界。
         返回 verdict 或 blocked 信息。
@@ -753,12 +753,12 @@ class Orchestrator:
                 "warnings": [r.name for r in doctrine_result.warnings],
             }
 
-        # L0 门禁
+        # 准入检查
         gate_ctx = {
             "is_limit_up": False, "is_limit_down": False,
             "is_suspended": False, "listing_days": 365,
         }
-        gate_result = self.l0.check(symbol, name, gate_ctx)
+        gate_result = self.admission.check(symbol, name, gate_ctx)
         if gate_result.status.value == "REJECTED":
             return {"blocked": True, "blocked_by": gate_result.flags}
 
@@ -782,11 +782,11 @@ class Orchestrator:
                 "sf_trend": "accelerating" if (macro_regime.social_financing_growth or 0) > 6 else "stable",
             })
 
-        # L1
+        # 多维诊断
         quote_dict = {"pe_percentile": 40, "northbound": 1}
         fin_list = [{"roe": 15}]
         sentiment_dict = self._get_sentiment(nb_profile)
-        report = self.l1.analyze(
+        report = self.diagnosis.analyze(
             symbol, name, quote_dict, fin_list,
             enriched_macro, sentiment_dict,
             macro_regime=macro_regime,
@@ -795,9 +795,9 @@ class Orchestrator:
             executive=executive,
         )
 
-        # L1 护栏
+        # 诊断护栏
         l1_violations = self.enforcer.enforce(
-            stage="L1",
+            stage="diagnosis",
             source_citations=report.source_citations,
             confidence=report.confidence,
         )
@@ -820,7 +820,7 @@ class Orchestrator:
         report.investor_mental_model = imm_fit
         report.source_citations.extend(gt_profile.source_citations + imm_fit.source_citations)
 
-        # L2 (with investor preference weights)
+        # 综合裁决 (with investor preference weights)
         weights = None
         if investor is not None:
             try:
@@ -828,19 +828,19 @@ class Orchestrator:
                 weights = resolve_weights(investor)
             except Exception:
                 pass
-        verdict = self.l2.judge(report, topic_adj=topic_adj, weights_override=weights)
+        verdict = self.verdict_engine.judge(report, topic_adj=topic_adj, weights_override=weights)
 
-        # L2 护栏
+        # 裁决护栏
         l2_violations = self.enforcer.enforce(
-            stage="L2",
+            stage="verdict",
             source_citations=verdict.source_citations,
             confidence=verdict.confidence,
         )
 
-        if verdict.confidence < L2Judge.MIN_CONFIDENCE:
+        if verdict.confidence < VerdictEngine.MIN_CONFIDENCE:
             return {
                 "blocked": True,
-                "blocked_by": [f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})"],
+                "blocked_by": [f"置信度不足 ({verdict.confidence:.2f} < {VerdictEngine.MIN_CONFIDENCE})"],
             }
 
         return {
@@ -882,22 +882,22 @@ class Orchestrator:
                 risk_mult = resolve_macro_cap_multiplier(investor)
             except Exception:
                 pass
-        signal = self.l3.generate_signal(
+        signal = self.positioning.generate_signal(
             verdict,
             macro_cap=0.80 * risk_mult,
             position_limits=position_limits,
             risk_multiplier=risk_mult,
         )
         l3_violations = self.enforcer.enforce(
-            stage="L3",
+            stage="positioning",
             source_citations=signal.source_citations,
             confidence=signal.confidence,
         )
 
         # L4 (with investor preference limits)
-        risk = self.l4.check(signal, portfolio, position_limits=position_limits)
+        risk = self.risk_ctrl.check(signal, portfolio, position_limits=position_limits)
         l4_violations = self.enforcer.enforce(
-            stage="L4",
+            stage="risk_control",
             source_citations=risk.source_citations,
         )
 
@@ -1001,7 +1001,7 @@ class Orchestrator:
                 "sf_trend": "accelerating" if (macro_regime.social_financing_growth or 0) > 6 else "stable",
             })
 
-        report = self.l1.analyze(
+        report = self.diagnosis.analyze(
             symbol, name, quote_dict, fin_list, enriched_macro, {"level": "NORMAL"},
             macro_regime=macro_regime, northbound_profile=nb_profile,
             earnings_factor=earnings_factor, executive=executive,
@@ -1025,16 +1025,16 @@ class Orchestrator:
         } if analyses.get("debate") else None
         result.mental_models = report.mental_models
 
-        verdict = self.l2.judge(report)
+        verdict = self.verdict_engine.judge(report)
         result.verdict = verdict
-        if verdict.confidence < L2Judge.MIN_CONFIDENCE:
+        if verdict.confidence < VerdictEngine.MIN_CONFIDENCE:
             result.passed = False
-            result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {L2Judge.MIN_CONFIDENCE})")
+            result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {VerdictEngine.MIN_CONFIDENCE})")
             return result
 
-        signal = self.l3.generate_signal(verdict, macro_cap=0.80, name=name, extra=quote_dict)
+        signal = self.positioning.generate_signal(verdict, macro_cap=0.80, name=name, extra=quote_dict)
         result.signal = signal
-        risk = self.l4.check(signal, portfolio or {})
+        risk = self.risk_ctrl.check(signal, portfolio or {})
         result.risk = risk
         result.passed = True
         return result

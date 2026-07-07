@@ -23,24 +23,24 @@ class GateStatus(str, Enum):
 
 
 @dataclass
-class SecurityPass:
-    """L0 保安审查结果。"""
+class AdmissionResult:
+    """准入检查结果（原 AdmissionResult）。"""
     symbol: str
     name: str
     status: GateStatus
     flags: list[str] = field(default_factory=list)
 
 
-class L0Gate:
-    """L0 保安: 股票资质过滤。
+class AdmissionCheck:
+    """准入检查（原 L0 Gate）: 股票资质过滤。
 
-    纯规则引擎，不依赖 AI。在军规之后、L1 分析之前运行。
+    纯规则引擎，不依赖 AI。在军规之后、多维诊断之前运行。
     """
 
     MIN_DAILY_VOLUME = 50_000_000    # 5000万
     MIN_LISTING_DAYS = 60
 
-    def check(self, symbol: str, name: str = "", context: dict | None = None) -> SecurityPass:
+    def check(self, symbol: str, name: str = "", context: dict | None = None) -> AdmissionResult:
         """审查单只股票。
 
         Args:
@@ -49,41 +49,41 @@ class L0Gate:
             context: 包含上市天数/停牌状态/违规记录等
 
         Returns:
-            SecurityPass with status
+            AdmissionResult with status
         """
         ctx = context or {}
         flags = []
 
         # 1. ST/*ST
         if "ST" in name.upper():
-            return SecurityPass(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["ST/*ST"])
+            return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["ST/*ST"])
 
         # 2. 次新股
         listing_days = ctx.get("listing_days", 365)
         if listing_days < self.MIN_LISTING_DAYS:
-            return SecurityPass(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=[f"次新股 ({listing_days}d)"])
+            return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=[f"次新股 ({listing_days}d)"])
 
         # 3. 流动性
         avg_volume = ctx.get("avg_daily_volume", 1e9)
         if avg_volume < self.MIN_DAILY_VOLUME:
-            return SecurityPass(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["流动性不足"])
+            return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["流动性不足"])
 
         # 4. 涨跌停
         if ctx.get("is_limit_up") or ctx.get("is_limit_down"):
-            return SecurityPass(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["涨跌停板"])
+            return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["涨跌停板"])
 
         # 5. 停牌
         if ctx.get("is_suspended"):
-            return SecurityPass(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["停牌中"])
+            return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["停牌中"])
 
         # 6. 违规记录
         if ctx.get("has_violation"):
             flags.append("近12月有违规记录")
 
         status = GateStatus.FLAGGED if flags else GateStatus.ACCEPTED
-        return SecurityPass(symbol=symbol, name=name, status=status, flags=flags)
+        return AdmissionResult(symbol=symbol, name=name, status=status, flags=flags)
 
-    def filter_batch(self, candidates: list[dict]) -> tuple[list[dict], list[SecurityPass]]:
+    def filter_batch(self, candidates: list[dict]) -> tuple[list[dict], list[AdmissionResult]]:
         """批量过滤。返回 (通过, 被拒)。"""
         accepted, rejected = [], []
         for c in candidates:
@@ -93,3 +93,8 @@ class L0Gate:
             else:
                 accepted.append(c)
         return accepted, rejected
+
+
+# -- 向后兼容别名 (deprecated) --
+L0Gate = AdmissionCheck
+SecurityPass = AdmissionResult
