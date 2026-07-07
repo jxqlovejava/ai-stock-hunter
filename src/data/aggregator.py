@@ -39,13 +39,14 @@ from src.utils.decimal_utils import D, safe_divide
 class DataAggregator:
     """多源数据聚合器。
 
-    优先级规则 (V4):
-      - 实时行情: mootdx+腾讯 > mx-data(交叉验证) > 国信 > AKShare
-      - 全市场扫描: mx-xuangu > AKShare
-      - 财务数据: mootdx > mx-data(NL补充) > 国信 > AKShare
-      - 历史K线: mootdx > AKShare
+    优先级规则 (V5):
+      - 实时行情: 华泰(HT_APIKEY) > 国信(GS_API_KEY) > 腾讯(免费) > mootdx(TCP) > AKShare
+      - 全市场扫描: AKShare
+      - 财务数据: 华泰 > 国信 > mootdx > AKShare
+      - 历史K线: 国信 > mootdx > AKShare
       - 资讯搜索: mx-search > 东财新闻
       - 独有数据: 各自专属源
+      - 降级: 任一源不可用时自动跳过，无可用源时抛出 NoAvailableSourceError
     """
 
     def __init__(self):
@@ -288,9 +289,17 @@ class DataAggregator:
     def source_status(self) -> dict:
         """检查各数据源状态。"""
         status = {}
-        status["mootdx+tencent"] = "✅" if self.mootdx.health_check() else "❌ (mootdx TCP 或腾讯 HTTP 不可达)"
+        # 华泰 (主数据源)
+        try:
+            from src.data.huatai import HuataiProvider
+            ht = HuataiProvider()
+            status["huatai"] = "✅" if ht.health_check() else "❌ (无 HT_APIKEY 或 skill 不可用)"
+        except Exception:
+            status["huatai"] = "❌ (不可用)"
         gs = self.guosen
-        status["guosen"] = "✅" if (gs is not None and gs.health_check()) else "❌ (无 key 或不可用)"
+        status["guosen"] = "✅" if (gs is not None and gs.health_check()) else "❌ (无 GS_API_KEY)"
+        status["tencent"] = "✅" if self.mootdx.health_check() else "❌ (腾讯 HTTP 不可达)"
+        status["mootdx"] = "✅" if self.mootdx.health_check() else "❌ (mootdx TCP 不可达)"
         status["akshare"] = "✅" if self.akshare.health_check() else "❌"
         mx = self.miaoxiang
         status["miaoxiang"] = "✅" if (mx is not None and mx.health_check()) else "❌ (无 MX_APIKEY 或不可用)"

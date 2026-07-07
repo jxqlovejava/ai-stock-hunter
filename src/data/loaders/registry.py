@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 
-# 市场级 fallback 链：按数据源优先级与被封风险排序。
-# 已核实缓存最高；国信官方 API 次之；mootdx+腾讯不封 IP；AKShare 作为降级。
+# 市场级 fallback 链：按数据源优先级排序。
+# 华泰(HT_APIKEY) > 国信(GS_API_KEY) > 腾讯(免费不封IP) > mootdx(TCP行情) > AKShare(爬虫降级)
 FALLBACK_CHAINS: dict[str, list[str]] = {
-    "a_share": ["verified_cache", "guosen", "mootdx", "akshare", "tencent"],
+    "a_share": ["verified_cache", "huatai", "guosen", "tencent", "mootdx", "akshare"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }
@@ -48,10 +48,11 @@ def _ensure_registered() -> None:
 
     modules = [
         "src.data.loaders.cache_loader",
+        "src.data.loaders.huatai_loader",
         "src.data.loaders.guosen_loader",
+        "src.data.loaders.tencent_loader",
         "src.data.loaders.mootdx_loader",
         "src.data.loaders.akshare_loader",
-        "src.data.loaders.tencent_loader",
     ]
     for mod_name in modules:
         try:
