@@ -259,8 +259,11 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append("  💰 L3 仓位 & L4 风控")
         lines.append(SEP_HALF)
         s = result.signal
-        lines.append(f"    信号: {s.action}  原始仓位: {s.weight:.1%}  调整后: {result.risk.adjusted_weight:.1%}")
-        lines.append(f"    信号置信度: {s.confidence:.0%}  风控: {'✅ 通过' if result.risk.passed else '⚠️  不通过'}")
+        action_emoji = {"OPEN": "🟢", "ADD": "🔵", "HOLD": "🟡", "REDUCE": "🟠", "CLOSE": "🔴"}.get(s.action, "⚪")
+        lines.append(f"    信号: {action_emoji} {s.action}  "
+                     f"目标仓位: {s.target_weight:.1%}  调整后: {result.risk.adjusted_weight:.1%}")
+        lines.append(f"    信号置信度: {s.confidence:.0%}  "
+                     f"风控: {'✅ 通过' if result.risk.passed else '⚠️  不通过'}")
         if result.risk.violations:
             for v in result.risk.violations[:5]:
                 lines.append(f"    🚫 {v}")
