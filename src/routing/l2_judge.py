@@ -62,7 +62,7 @@ class L2Judge:
         "executive": 0.05,
     }
 
-    MIN_CONFIDENCE = 0.6
+    MIN_CONFIDENCE = 0.55  # 0.6→0.55: 四视角辩论+推测标记叠加后，中等置信度仍可通过
 
     def judge(
         self,

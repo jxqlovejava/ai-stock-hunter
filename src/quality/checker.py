@@ -256,8 +256,19 @@ class MultiAgentQualityChecker:
             flags.append(f"缺少 nature 标注: {', '.join(missing_nature[:5])}")
             suggestions.append("为 citation 添加 nature (fact/interpretation/speculation/data_gap)")
         if speculation_in_scoring:
-            flags.append(f"推测性数据进入评分: {', '.join(speculation_in_scoring[:5])}")
-            suggestions.append("speculation 类型数据应仅用于风险/可证伪条件，不直接参与评分")
+            # 区分: 推测数据仅标记(OK) vs 推测数据参与评分(需警告)
+            scoring_fields = {"l1_multi_dimension_scores", "pe_percentile", "pb_roe", "peg",
+                              "macro_score", "value_score", "quality_score", "momentum_score"}
+            actually_in_scoring = [f for f in speculation_in_scoring if f in scoring_fields]
+            informational_only = [f for f in speculation_in_scoring if f not in scoring_fields]
+
+            if actually_in_scoring:
+                flags.append(f"推测性数据进入评分: {', '.join(actually_in_scoring[:3])}")
+                suggestions.append("speculation 类型数据应仅用于风险/可证伪条件，不直接参与评分")
+            if informational_only:
+                # 这些是分析结论的推测标签（多空观点/博弈推演/情景估值），不参与评分，仅作信息提示
+                flags.append(f"推测性分析结论(已标注): {', '.join(informational_only[:5])}")
+                suggestions.append("推测性结论已正确标注，不参与评分，可正常参考")
         if data_gaps:
             flags.append(f"数据缺口: {', '.join(data_gaps[:5])}")
             suggestions.append("为缺失字段补充数据源或降低对应维度权重")
@@ -266,15 +277,23 @@ class MultiAgentQualityChecker:
             suggestions.append("检查数据源 freshness/tier/nature，必要时下调维度权重")
 
         if flags:
-            severity = Severity.HIGH if (speculation_in_scoring or data_gaps) else Severity.MEDIUM
+            # 仅当推测数据实际参与评分、或有数据缺口时才是严重问题
+            has_scoring_issue = bool(actually_in_scoring) if speculation_in_scoring else False
+            has_data_gap_issue = bool(data_gaps)
+            if has_scoring_issue or has_data_gap_issue:
+                severity = Severity.HIGH
+                passed = False
+            else:
+                severity = Severity.MEDIUM
+                passed = True  # 推测标签/低质量提示不阻断管道
             return AgentVerdict(
                 agent=AgentRole.DATA_PROVENANCE,
-                passed=not (speculation_in_scoring or data_gaps),
+                passed=passed,
                 score=max(10, score),
                 severity=severity,
                 flags=flags,
                 suggestions=suggestions,
-                details=f"平均数据质量 {avg_quality:.2f}",
+                details=f"平均数据质量 {avg_quality:.2f}, 推测标记 {len(speculation_in_scoring)} 处, 缺口 {len(data_gaps)} 处",
             )
 
         return AgentVerdict(

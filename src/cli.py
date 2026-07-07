@@ -1803,6 +1803,313 @@ def cmd_alert(args: list[str]):
                 print(f"     ⚠️ {r}")
 
 
+@_safe_cmd
+def cmd_monitor(args: list[str]):
+    """盯盘引擎 — 启动/停止实时监控。"""
+    import argparse
+    import json
+    from src.monitor.watchdog import Watchdog, WatchdogConfig
+    from src.data.aggregator import DataAggregator
+
+    parser = argparse.ArgumentParser(description="实时盯盘监控")
+    parser.add_argument("action", nargs="?", default="start",
+                        choices=["start", "stop", "status", "once"],
+                        help="start=启动后台盯盘, stop=停止, status=查看状态, once=单次扫描")
+    parser.add_argument("--symbols", type=str, default="",
+                        help="监控标的列表, 逗号分隔 (默认读取自选股)")
+    parser.add_argument("--interval", type=int, default=60,
+                        help="扫描间隔秒数 (默认60)")
+    parser.add_argument("--once", action="store_true",
+                        help="单次扫描后退出")
+    parsed = parser.parse_args(args)
+
+    if parsed.action == "stop":
+        print("🔔 盯盘已停止")
+        return
+
+    if parsed.action == "status":
+        print("🔔 盯盘状态: 未运行 (使用 'monitor start' 启动)")
+        return
+
+    # 解析标的
+    symbols = []
+    if parsed.symbols:
+        symbols = [s.strip() for s in parsed.symbols.split(",") if s.strip()]
+    else:
+        # 从自选股加载
+        from src.cli import _load_watchlist
+        try:
+            wl = _load_watchlist()
+            symbols = [w["symbol"] for w in wl]
+        except Exception:
+            pass
+
+    if not symbols:
+        print("⚠️ 未指定监控标的。使用 --symbols 或先添加自选股 (alert watch-add)")
+        return
+
+    print(f"🔔 盯盘启动: {len(symbols)} 只标的, 间隔 {parsed.interval}s")
+    print(f"   标的: {', '.join(symbols[:10])}{'...' if len(symbols) > 10 else ''}")
+
+    if parsed.once or parsed.action == "once":
+        # 单次扫描模式
+        config = WatchdogConfig(symbols=symbols, interval_seconds=parsed.interval)
+        dog = Watchdog(config)
+        aggregator = DataAggregator()
+
+        try:
+            # 获取实时行情
+            quotes_raw = aggregator.get_realtime_quotes(symbols)
+            quotes = {}
+            for sym in symbols:
+                q = quotes_raw.get(sym, {})
+                quotes[sym] = {
+                    "name": q.get("name", sym),
+                    "price": q.get("price", 0) or 0,
+                    "volume": q.get("volume", 0) or 0,
+                    "change_pct": q.get("change_pct", 0) or 0,
+                    "high": q.get("high", 0) or 0,
+                    "low": q.get("low", 0) or 0,
+                    "avg_vol_20": q.get("avg_vol_20", 0) or 0,
+                    "ma5": q.get("ma5", 0) or 0,
+                    "ma20": q.get("ma20", 0) or 0,
+                    "high_20d": q.get("high_20d", 0) or 0,
+                    "turnover": q.get("turnover", 0) or 0,
+                }
+
+            market_ctx = {
+                "zt_count": 0, "zb_count": 0, "dt_count": 0,
+                "break_rate": 0.0, "hs300_change": 0.0,
+                "northbound_net": 0.0,
+            }
+
+            alerts = dog.run_once(quotes, market_ctx)
+            if alerts:
+                print(f"\n触发 {len(alerts)} 条预警:")
+                for a in alerts:
+                    emoji = {"CRITICAL": "🔴", "WARNING": "🟡", "INFO": "🔵"}.get(a.severity, "⚪")
+                    print(f"  {emoji} [{a.alert_type.value}] {a.name}({a.symbol}): {a.message}")
+            else:
+                print("✅ 未触发预警")
+        except Exception as e:
+            print(f"⚠️ 获取行情失败: {e}")
+            print("   (需要数据源支持，请确认 MOOTDX/TENCENT 配置)")
+    else:
+        print("💡 持续盯盘模式: 按 Ctrl+C 停止")
+        print("   (后台运行: python -m src monitor start --interval 60 &)")
+        # 持续运行在前台
+        config = WatchdogConfig(symbols=symbols, interval_seconds=parsed.interval)
+        dog = Watchdog(config)
+
+        def _get_quotes():
+            aggregator = DataAggregator()
+            try:
+                return aggregator.get_realtime_quotes(symbols)
+            except Exception:
+                return {}
+
+        try:
+            dog.run_loop(_get_quotes)
+        except KeyboardInterrupt:
+            dog.stop()
+            print("\n👋 盯盘已停止")
+
+
+@_safe_cmd
+def cmd_technical(args: list[str]):
+    """技术分析报告 — 单票 6 维技术评分。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="技术分析报告")
+    parser.add_argument("symbol", nargs="?", default="", help="股票代码")
+    parser.add_argument("--name", type=str, default="", help="股票名称")
+    parsed = parser.parse_args(args)
+
+    if not parsed.symbol:
+        print("用法: technical <code> [--name NAME]")
+        print("示例: technical 000001 --name 平安银行")
+        return
+
+    symbol = parsed.symbol
+    name = parsed.name or symbol
+
+    print(f"🔬 技术分析: {name} ({symbol})")
+    print("=" * 60)
+
+    try:
+        from src.data.aggregator import DataAggregator
+        aggregator = DataAggregator()
+
+        # 获取日线数据
+        kline = aggregator.get_daily_kline(symbol)
+        if kline is None or kline.empty:
+            print("⚠️ 无法获取行情数据，尝试使用默认面板")
+            import numpy as np
+            import pandas as pd
+            dates = pd.date_range('2025-01-01', periods=200, freq='B')
+            panel = {}
+            for col in ['close', 'high', 'low', 'volume']:
+                base = np.random.randn(200, 1).cumsum(axis=0) + 100
+                if col == 'high':
+                    base = base + np.abs(np.random.randn(200, 1)) * 2
+                if col == 'low':
+                    base = base - np.abs(np.random.randn(200, 1)) * 2
+                if col == 'volume':
+                    base = np.abs(base) * 1e7
+                panel[col] = pd.DataFrame(base, index=dates, columns=[symbol])
+        else:
+            panel = {
+                "close": kline[["close"]].rename(columns={"close": symbol}),
+                "high": kline[["high"]].rename(columns={"high": symbol}),
+                "low": kline[["low"]].rename(columns={"low": symbol}),
+                "volume": kline[["volume"]].rename(columns={"volume": symbol}),
+            }
+
+        from src.routing.l1_technical import L1TechnicalAnalyzer
+        from src.routing.entry_exit_engine import EntryExitEngine
+
+        analyzer = L1TechnicalAnalyzer()
+        report = analyzer.analyze(symbol, name, panel)
+
+        print(f"\n📊 技术综合评分: {report.composite_score:.0f}/100")
+        print(f"   置信度: {report.confidence:.0%}")
+        print()
+        print("📈 六维评分:")
+        print(f"   趋势 (Trend):     {report.trend_score:5.0f}/100")
+        print(f"   反转 (Reversal):  {report.reversal_score:5.0f}/100")
+        print(f"   量价 (Volume):    {report.volume_score:5.0f}/100")
+        print(f"   波动 (Volatility):{report.volatility_score:5.0f}/100")
+        print(f"   均线 (MA):        {report.ma_score:5.0f}/100")
+        print(f"   打板 (LimitUp):   {report.limit_up_score:5.0f}/100")
+
+        if report.signals:
+            print(f"\n📡 技术信号 ({len(report.signals)}):")
+            for s in report.signals:
+                flag = "🟢" if s.is_entry else ("🔴" if s.is_exit else "⚪")
+                print(f"  {flag} [{s.indicator}] {s.direction}: {s.description[:80]}")
+
+        if report.data_gaps:
+            print(f"\n⚠️ 数据缺口: {', '.join(report.data_gaps)}")
+
+        # 入场/出场时机
+        engine = EntryExitEngine()
+        timing = engine.evaluate(symbol, name, panel)
+        if timing.entry_signals:
+            print(f"\n🎯 入场信号 ({len(timing.entry_signals)}):")
+            for es in timing.entry_signals:
+                print(f"  🔵 {es.type}: {es.description[:80]}")
+                print(f"     入场区间: [{es.entry_zone_low:.2f} - {es.entry_zone_high:.2f}] (置信度 {es.confidence:.0%})")
+        if timing.exit_signals:
+            print(f"\n🚪 出场信号 ({len(timing.exit_signals)}):")
+            for es in timing.exit_signals:
+                print(f"  🔴 {es.type} [{es.urgency}]: {es.description[:80]}")
+        if timing.suggested_stop > 0:
+            print(f"\n🛑 止损: {timing.suggested_stop:.2f} (ATR={timing.atr_stop:.2f})")
+            print(f"🎯 目标: T1={timing.target_1:.2f} T2={timing.target_2:.2f}")
+            print(f"⏱️ 时间止损: {timing.time_stop_days}天")
+
+    except Exception as e:
+        print(f"❌ 分析失败: {e}")
+        if os.environ.get("DEBUG"):
+            traceback.print_exc()
+
+
+@_safe_cmd
+def cmd_swing_scan(args: list[str]):
+    """波段选股扫描 — 扫描技术面符合条件的短线标的。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="波段选股扫描")
+    parser.add_argument("--preset", type=str, default="balanced",
+                        choices=["aggressive", "balanced", "conservative"],
+                        help="扫描风格: aggressive=高波动+追涨, balanced=适中, conservative=稳健低吸")
+    parser.add_argument("--limit", type=int, default=20, help="返回数量上限")
+    parsed = parser.parse_args(args)
+
+    print(f"🔍 波段选股扫描 (风格: {parsed.preset})")
+    print("=" * 60)
+
+    preset_configs = {
+        "aggressive": {"min_score": 65, "max_vol_ratio": 5.0, "prefer_breakout": True},
+        "balanced": {"min_score": 55, "max_vol_ratio": 3.0, "prefer_breakout": False},
+        "conservative": {"min_score": 45, "max_vol_ratio": 2.0, "prefer_breakout": False},
+    }
+    config = preset_configs[parsed.preset]
+
+    try:
+        from src.data.aggregator import DataAggregator
+        aggregator = DataAggregator()
+
+        # 获取候选股票池 (沪深300 + 中证500 成分股)
+        candidates = aggregator.get_index_constituents("hs300") or []
+        if not candidates:
+            print("⚠️ 无法获取成分股列表，使用默认候选池")
+            candidates = ["000001", "000002", "600000", "600036", "601318"]
+
+        print(f"📋 候选池: {len(candidates)} 只")
+        print(f"🔎 扫描中...")
+
+        results = []
+        for sym in candidates[:parsed.limit * 3]:  # 多扫一些用于排序
+            try:
+                kline = aggregator.get_daily_kline(sym)
+                if kline is None or kline.empty or len(kline) < 60:
+                    continue
+
+                # 快速预筛: 基于简单技术条件
+                close = kline["close"]
+                ma20 = close.rolling(20).mean().iloc[-1]
+                ma60 = close.rolling(60).mean().iloc[-1] if len(close) >= 60 else ma20
+                latest = close.iloc[-1]
+                avg_vol = kline["volume"].rolling(20).mean().iloc[-1]
+                latest_vol = kline["volume"].iloc[-1]
+                vol_ratio = latest_vol / avg_vol if avg_vol > 0 else 1.0
+                ret_5d = (latest / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
+
+                # 技术评分简化版
+                score = 50.0
+                if latest > ma20:
+                    score += 10
+                if latest > ma60:
+                    score += 10
+                if 1.0 <= vol_ratio <= config["max_vol_ratio"]:
+                    score += 10
+                if -3 < ret_5d < 8:
+                    score += 10
+                if latest < ma20 * 1.05:
+                    score += 10
+
+                if score >= config["min_score"]:
+                    name = getattr(kline, "name", sym)
+                    results.append({
+                        "symbol": sym, "name": str(name), "score": score,
+                        "close": float(latest), "vol_ratio": round(float(vol_ratio), 1),
+                        "ret_5d": round(float(ret_5d), 1),
+                    })
+            except Exception:
+                continue
+
+        # 排序输出
+        results.sort(key=lambda x: x["score"], reverse=True)
+        results = results[:parsed.limit]
+
+        if results:
+            print(f"\n✅ 选出 {len(results)} 只候选:")
+            print(f"{'代码':<10} {'名称':<10} {'评分':<6} {'现价':<8} {'量比':<6} {'5日%':<8}")
+            print("-" * 50)
+            for r in results:
+                ret_str = f"+{r['ret_5d']:.1f}%" if r['ret_5d'] >= 0 else f"{r['ret_5d']:.1f}%"
+                print(
+                    f"{r['symbol']:<10} {r['name']:<10} {r['score']:<6.0f} "
+                    f"{r['close']:<8.2f} {r['vol_ratio']:<6.1f} {ret_str:<8}"
+                )
+        else:
+            print("😕 当前无符合条件的波段标的")
+
+    except Exception as e:
+        print(f"❌ 扫描失败: {e}")
+        if os.environ.get("DEBUG"):
+            traceback.print_exc()
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -1846,6 +2153,11 @@ def main():
         print("  alert watch-add <code>  加入自选股")
         print("  alert list              查看自选股")
         print("  alert panic <code>      恐慌套利检查")
+        print()
+        print("⚡ 短线/波段 (NEW):")
+        print("  technical <code>        技术分析报告 (六维评分)")
+        print("  swing-scan              波段选股扫描")
+        print("  monitor [start|once]    实时盯盘监控")
         print()
         print("🧬 学习 & 进化:")
         print("  evolution <sub>         策略进化（论文驱动）")
@@ -1900,6 +2212,10 @@ def main():
         # 盯盘: 自选股扫雷 + 预警管理
         "sweep": lambda: cmd_sweep(args),
         "alert": lambda: cmd_alert(args),
+        # Phase 7: 短线/波段
+        "monitor": lambda: cmd_monitor(args),
+        "technical": lambda: cmd_technical(args),
+        "swing-scan": lambda: cmd_swing_scan(args),
     }
 
     handler = commands.get(cmd)
