@@ -299,12 +299,21 @@ def format_analysis_result(result: OrchestratorResult) -> str:
                          f"({PERSPECTIVE_TAG[key]})")
             lines.append(f"       {'⭐'*max(1,int(p.get('score',0)))} {p.get('score',0):.1f}/5  "
                          f"{icon} {p.get('verdict','')}  (信心{p.get('confidence',0):.0%})")
+            if p.get("methodology"):
+                lines.append(f"       📐 方法论: {p['methodology'][:120]}")
             if p.get("one_line_thesis"):
                 lines.append(f"       💡 {p['one_line_thesis']}")
+            # 看多/看空依据
+            bull = p.get("bull_points", [])
+            bear = p.get("bear_points", [])
+            if bull:
+                for b in bull[:2]:
+                    lines.append(f"       🟢 {b}")
+            if bear:
+                for b in bear[:2]:
+                    lines.append(f"       🔴 {b}")
             if p.get("key_concern"):
                 lines.append(f"       ⚠️  {p['key_concern']}")
-            for ev in p.get("evidence", [])[:2]:
-                lines.append(f"       📋 {ev}")
             if p.get("unique_insight"):
                 lines.append(f"       🔍 {p['unique_insight']}")
     elif result.debate_result:
