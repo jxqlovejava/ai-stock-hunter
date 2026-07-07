@@ -8,13 +8,19 @@
 from __future__ import annotations
 
 from .model import (
+    AlertPreferences,
     CircleOfCompetence,
+    HoldingPeriod,
     InvestorPreference,
     InvestorTier,
     InvestmentGoal,
+    MonitorFrequency,
     PositionLimits,
     RiskProfile,
     ScoreWeights,
+    TIMING_PRESETS,
+    TimeHorizonConfig,
+    TradingStyle,
 )
 
 # ------------------------------------------------------------------
@@ -223,3 +229,132 @@ def resolve_competence_penalty(
     if familiarity == 2:
         return 0.90
     return 0.70        # 熟悉度 1
+
+
+# ------------------------------------------------------------------
+# 时间维度解析 — trading_style + holding_period → TimeHorizonConfig
+# ------------------------------------------------------------------
+
+def resolve_time_horizon(prefs: InvestorPreference) -> TimeHorizonConfig:
+    """解析时间维度配置。
+
+    优先级:
+      1. (trading_style, holding_period) 精确匹配 TIMING_PRESETS
+      2. 同一 trading_style 的默认 holding_period
+      3. 全局默认 (MIXED, MEDIUM)
+    """
+    # 精确匹配
+    key = (prefs.trading_style, prefs.holding_period)
+    if key in TIMING_PRESETS:
+        return TIMING_PRESETS[key]
+
+    # 同一 trading_style 的 fallback
+    for period in (HoldingPeriod.MEDIUM, HoldingPeriod.LONG, HoldingPeriod.SHORT):
+        fallback_key = (prefs.trading_style, period)
+        if fallback_key in TIMING_PRESETS:
+            return TIMING_PRESETS[fallback_key]
+
+    # 全局默认
+    default_key = (TradingStyle.MIXED, HoldingPeriod.MEDIUM)
+    return TIMING_PRESETS.get(
+        default_key,
+        TimeHorizonConfig(),
+    )
+
+
+def resolve_stop_loss(prefs: InvestorPreference) -> dict:
+    """解析止损参数，供 L4RiskOfficer 使用。
+
+    短线/波段模式返回 ATR+时间+移动止损；长线模式返回固定止损。
+    """
+    time_config = resolve_time_horizon(prefs)
+    limits = prefs.position_limits
+
+    base = {
+        "stop_loss_pct": limits.single_stop_loss_pct,
+        "max_drawdown": -abs(limits.portfolio_drawdown_pct),
+        "max_total_loss_pct": limits.max_total_loss_pct,
+    }
+
+    if time_config.is_short_term:
+        # 短线模式：ATR + 时间 + 移动止损
+        base.update({
+            "use_atr_stop": True,
+            "atr_stop_multiplier": time_config.atr_stop_multiplier,
+            "time_stop_days": time_config.time_stop_days,
+            "trailing_stop_pct": time_config.trailing_stop_pct,
+        })
+    else:
+        # 长线模式：仅固定止损
+        base.update({
+            "use_atr_stop": False,
+            "atr_stop_multiplier": 0,
+            "time_stop_days": time_config.time_stop_days,
+            "trailing_stop_pct": time_config.trailing_stop_pct,
+        })
+
+    return base
+
+
+def resolve_alert_config(prefs: InvestorPreference) -> dict:
+    """解析盯盘预警配置。
+
+    短线/波段模式强制启用实时盯盘；长线可手动开启但默认关闭。
+    """
+    time_config = resolve_time_horizon(prefs)
+    alert = prefs.alert_preferences
+
+    # 短线/波段自动启用实时盯盘，除非用户显式关闭
+    auto_enable = time_config.is_short_term and not _user_explicitly_disabled_monitor(prefs)
+
+    return {
+        "enable_realtime": alert.enable_realtime or auto_enable,
+        "monitor_frequency": time_config.monitor_frequency.value,
+        "channels": [ch.value for ch in alert.channels],
+        "watch_breakout": alert.watch_breakout,
+        "watch_volume": alert.watch_volume,
+        "watch_limit_up": alert.watch_limit_up,
+        "watch_ma_cross": alert.watch_ma_cross,
+        "watch_northbound": alert.watch_northbound,
+        "watch_risk_flash": alert.watch_risk_flash,
+        "quiet_hours_start": alert.quiet_hours_start,
+        "quiet_hours_end": alert.quiet_hours_end,
+        "min_interval_seconds": alert.min_interval_seconds,
+    }
+
+
+def _user_explicitly_disabled_monitor(prefs: InvestorPreference) -> bool:
+    """检测用户是否显式关闭了盯盘。
+
+    如果用户在 alert_preferences 中设置了 enable_realtime=False
+    且 setup_step > 0（已完成设置向导），视为显式关闭。
+    """
+    return (
+        not prefs.alert_preferences.enable_realtime
+        and prefs.setup_step > 0
+    )
+
+
+def resolve_trading_style_weights(prefs: InvestorPreference) -> dict[str, float]:
+    """根据 trading_style 调整 L2 权重，覆盖 risk_profile 的预设。
+
+    短线/波段：技术+情绪权重↑，基本面↓
+    长线：基本面权重↑，技术↓
+    """
+    time_config = resolve_time_horizon(prefs)
+
+    if time_config.is_short_term:
+        # 短线/波段：技术+情绪为主
+        return {
+            "fundamental": time_config.l2_fundamental_weight,
+            "technical": time_config.l2_technical_weight,
+            "macro": 0.10,
+            "sector": 0.10,
+            "sentiment": round(
+                1.0 - time_config.l2_fundamental_weight
+                - time_config.l2_technical_weight - 0.20, 2
+            ),
+        }
+
+    # 长线/混合：不做额外调整，依赖原有 risk_profile 预设
+    return resolve_weights(prefs)

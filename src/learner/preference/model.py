@@ -41,6 +41,20 @@ class HoldingPeriod(str, Enum):
     ULTRA_LONG = "ultra"   # 超长线 (3年以上)
 
 
+class AlertChannel(str, Enum):
+    """预警通知渠道。"""
+    CLI = "cli"            # 终端输出（默认）
+    LOG = "log"            # 日志文件
+    # Phase 5: WEBHOOK / EMAIL / SMS 预留
+
+
+class MonitorFrequency(str, Enum):
+    """盯盘扫描频率。"""
+    HIGH = "high"          # 30s（短线专用）
+    MEDIUM = "medium"      # 5min（波段）
+    LOW = "low"            # 1h（长线）
+
+
 class InvestorTier(str, Enum):
     """投资者层级（成长路径）。
 
@@ -117,6 +131,149 @@ class CircleOfCompetence:
 
 
 @dataclass
+class AlertPreferences:
+    """盯盘预警偏好 — 控制实时预警的行为与粒度。
+
+    短线投资者通常需要高频/多类型预警；长线投资者可关闭或仅保留风险预警。
+    """
+    enable_realtime: bool = False          # 是否启用实时盯盘
+    monitor_frequency: MonitorFrequency = MonitorFrequency.MEDIUM
+    channels: list[AlertChannel] = field(default_factory=lambda: [AlertChannel.CLI])
+    # 预警类型开关
+    watch_breakout: bool = True            # 技术突破（放量突破关键位）
+    watch_volume: bool = True              # 量价异动（放量/缩量异常）
+    watch_limit_up: bool = True            # 涨停/炸板/连板动态
+    watch_ma_cross: bool = True            # 均线金叉/死叉
+    watch_northbound: bool = True          # 北向资金突变
+    watch_risk_flash: bool = True          # 风险速报（天地板/黑天鹅）
+    # 静默与节流
+    quiet_hours_start: str = ""            # 静默开始 HH:MM（如 "22:00"）
+    quiet_hours_end: str = ""              # 静默结束 HH:MM（如 "08:00"）
+    min_interval_seconds: int = 60         # 同一标的同类型预警最小间隔
+
+    def to_dict(self) -> dict:
+        return {
+            "enable_realtime": self.enable_realtime,
+            "monitor_frequency": self.monitor_frequency.value,
+            "channels": [ch.value for ch in self.channels],
+            "watch_breakout": self.watch_breakout,
+            "watch_volume": self.watch_volume,
+            "watch_limit_up": self.watch_limit_up,
+            "watch_ma_cross": self.watch_ma_cross,
+            "watch_northbound": self.watch_northbound,
+            "watch_risk_flash": self.watch_risk_flash,
+            "quiet_hours_start": self.quiet_hours_start,
+            "quiet_hours_end": self.quiet_hours_end,
+            "min_interval_seconds": self.min_interval_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> AlertPreferences:
+        if d is None:
+            return cls()
+        freq_raw = d.get("monitor_frequency", "medium")
+        try:
+            freq = MonitorFrequency(freq_raw)
+        except ValueError:
+            freq = MonitorFrequency.MEDIUM
+        channels_raw = d.get("channels", ["cli"])
+        channels = []
+        for ch in channels_raw:
+            try:
+                channels.append(AlertChannel(ch))
+            except ValueError:
+                pass
+        if not channels:
+            channels = [AlertChannel.CLI]
+        return cls(
+            enable_realtime=d.get("enable_realtime", False),
+            monitor_frequency=freq,
+            channels=channels,
+            watch_breakout=d.get("watch_breakout", True),
+            watch_volume=d.get("watch_volume", True),
+            watch_limit_up=d.get("watch_limit_up", True),
+            watch_ma_cross=d.get("watch_ma_cross", True),
+            watch_northbound=d.get("watch_northbound", True),
+            watch_risk_flash=d.get("watch_risk_flash", True),
+            quiet_hours_start=d.get("quiet_hours_start", ""),
+            quiet_hours_end=d.get("quiet_hours_end", ""),
+            min_interval_seconds=d.get("min_interval_seconds", 60),
+        )
+
+
+@dataclass
+class TimeHorizonConfig:
+    """时间维度配置 — 由 trading_style + holding_period 解析。
+
+    用于驱动 L1/L2/L3/L4 的参数差异化：
+      - 短线：技术因子为主，ATR 止损，高频盯盘
+      - 长线：基本面因子为主，固定止损，低频或无盯盘
+    """
+    is_short_term: bool = False            # 是否为短线/波段模式
+    l2_technical_weight: float = 0.20      # L2 技术权重建议
+    l2_fundamental_weight: float = 0.40    # L2 基本面权重建议
+    stop_loss_pct: float = -0.02           # 单笔止损比例
+    atr_stop_multiplier: float = 2.0       # ATR 止损倍率（短线用）
+    time_stop_days: int = 60               # 时间止损天数（短线 3-7）
+    trailing_stop_pct: float = -0.03       # 移动止损回撤比例
+    enable_intraday: bool = False          # 是否启用日内/分钟级分析
+    enable_monitor: bool = False           # 是否启用实时盯盘
+    monitor_frequency: MonitorFrequency = MonitorFrequency.LOW
+    factor_set: str = "fundamental"        # 因子集: "fundamental" / "technical" / "hybrid"
+
+
+# 时间维度 → 参数预设
+TIMING_PRESETS: dict[tuple[TradingStyle, HoldingPeriod], TimeHorizonConfig] = {
+    # 长线 + 超长持有
+    (TradingStyle.LONG_TERM, HoldingPeriod.ULTRA_LONG): TimeHorizonConfig(
+        is_short_term=False, l2_technical_weight=0.10, l2_fundamental_weight=0.55,
+        stop_loss_pct=-0.03, atr_stop_multiplier=3.0, time_stop_days=180,
+        trailing_stop_pct=-0.05, enable_intraday=False, enable_monitor=False,
+        monitor_frequency=MonitorFrequency.LOW, factor_set="fundamental",
+    ),
+    (TradingStyle.LONG_TERM, HoldingPeriod.LONG): TimeHorizonConfig(
+        is_short_term=False, l2_technical_weight=0.15, l2_fundamental_weight=0.50,
+        stop_loss_pct=-0.02, atr_stop_multiplier=2.5, time_stop_days=90,
+        trailing_stop_pct=-0.04, enable_intraday=False, enable_monitor=False,
+        monitor_frequency=MonitorFrequency.LOW, factor_set="fundamental",
+    ),
+    # 混合 / 中线
+    (TradingStyle.MIXED, HoldingPeriod.MEDIUM): TimeHorizonConfig(
+        is_short_term=False, l2_technical_weight=0.20, l2_fundamental_weight=0.40,
+        stop_loss_pct=-0.02, atr_stop_multiplier=2.0, time_stop_days=60,
+        trailing_stop_pct=-0.03, enable_intraday=False, enable_monitor=False,
+        monitor_frequency=MonitorFrequency.LOW, factor_set="hybrid",
+    ),
+    # 波段 + 中线持有
+    (TradingStyle.SWING, HoldingPeriod.MEDIUM): TimeHorizonConfig(
+        is_short_term=True, l2_technical_weight=0.30, l2_fundamental_weight=0.30,
+        stop_loss_pct=-0.02, atr_stop_multiplier=2.0, time_stop_days=20,
+        trailing_stop_pct=-0.03, enable_intraday=True, enable_monitor=True,
+        monitor_frequency=MonitorFrequency.MEDIUM, factor_set="technical",
+    ),
+    (TradingStyle.SWING, HoldingPeriod.SHORT): TimeHorizonConfig(
+        is_short_term=True, l2_technical_weight=0.35, l2_fundamental_weight=0.25,
+        stop_loss_pct=-0.015, atr_stop_multiplier=1.5, time_stop_days=10,
+        trailing_stop_pct=-0.02, enable_intraday=True, enable_monitor=True,
+        monitor_frequency=MonitorFrequency.HIGH, factor_set="technical",
+    ),
+    # 短线 + 短持有
+    (TradingStyle.SHORT_TERM, HoldingPeriod.SHORT): TimeHorizonConfig(
+        is_short_term=True, l2_technical_weight=0.45, l2_fundamental_weight=0.15,
+        stop_loss_pct=-0.01, atr_stop_multiplier=1.5, time_stop_days=5,
+        trailing_stop_pct=-0.02, enable_intraday=True, enable_monitor=True,
+        monitor_frequency=MonitorFrequency.HIGH, factor_set="technical",
+    ),
+    (TradingStyle.SHORT_TERM, HoldingPeriod.MEDIUM): TimeHorizonConfig(
+        is_short_term=True, l2_technical_weight=0.35, l2_fundamental_weight=0.25,
+        stop_loss_pct=-0.015, atr_stop_multiplier=1.5, time_stop_days=10,
+        trailing_stop_pct=-0.02, enable_intraday=True, enable_monitor=True,
+        monitor_frequency=MonitorFrequency.MEDIUM, factor_set="technical",
+    ),
+}
+
+
+@dataclass
 class ScoreWeights:
     """L2 评分权重覆盖。None = 使用系统默认值。"""
     fundamental: float | None = None
@@ -169,6 +326,7 @@ class InvestorPreference:
     benchmark: str = "沪深300"
     investment_horizon: str = "3-5年"
     # 自选股关注列表 (symbol → name)，与 data/watchlist.json 联动
+    alert_preferences: AlertPreferences = field(default_factory=AlertPreferences)
     watchlist: dict[str, str] = field(default_factory=dict)
     # 画像完整度追踪
     last_updated: str = ""           # 上次更新时间 ISO
@@ -187,6 +345,7 @@ class InvestorPreference:
             "enabled_rules": self.enabled_rules,
             "benchmark": self.benchmark,
             "investment_horizon": self.investment_horizon,
+            "alert_preferences": self.alert_preferences.to_dict(),
             "watchlist": self.watchlist,
             "last_updated": self.last_updated,
             "setup_step": self.setup_step,
@@ -217,6 +376,7 @@ class InvestorPreference:
             enabled_rules=d.get("enabled_rules"),
             benchmark=d.get("benchmark", "沪深300"),
             investment_horizon=d.get("investment_horizon", "3-5年"),
+            alert_preferences=AlertPreferences.from_dict(d.get("alert_preferences")),
             watchlist=watchlist_raw if isinstance(watchlist_raw, dict) else {},
             last_updated=d.get("last_updated", ""),
             setup_step=d.get("setup_step", 0),
