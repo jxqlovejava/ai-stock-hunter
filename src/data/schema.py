@@ -70,6 +70,7 @@ class Financials(BaseModel):
     operating_cash_flow: Optional[float] = Field(default=None, description="经营活动现金流（元）")
     source: str = Field(..., description="数据来源")
     fetched_at: datetime = Field(default_factory=datetime.now)
+    citation: Optional["SourceCitation"] = Field(default=None, description="数据溯源引用")
 
 
 # ---------------------------------------------------------------------------

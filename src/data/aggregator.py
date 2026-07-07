@@ -104,6 +104,8 @@ class DataAggregator:
 
     def _walk_quote_chain(self, symbol: str, market: str = "SH") -> Optional[Quote]:
         """按 a_share fallback 链获取单只股票行情，并附加 citation。"""
+        from src.data.loaders.registry import _ensure_registered
+        _ensure_registered()
         for name in FALLBACK_CHAINS.get("a_share", []):
             loader_cls = LOADER_REGISTRY.get(name)
             if loader_cls is None:
@@ -133,6 +135,8 @@ class DataAggregator:
         period: str = "daily",
     ) -> pd.DataFrame:
         """按 a_share fallback 链获取历史 K 线，并附加 citation。"""
+        from src.data.loaders.registry import _ensure_registered
+        _ensure_registered()
         for name in FALLBACK_CHAINS.get("a_share", []):
             loader_cls = LOADER_REGISTRY.get(name)
             if loader_cls is None:
@@ -158,6 +162,8 @@ class DataAggregator:
         self, symbol: str, market: str = "SH", count: int = 4
     ) -> list[Financials]:
         """按 a_share fallback 链获取财务报表，并附加 citation。"""
+        from src.data.loaders.registry import _ensure_registered
+        _ensure_registered()
         for name in FALLBACK_CHAINS.get("a_share", []):
             loader_cls = LOADER_REGISTRY.get(name)
             if loader_cls is None:
