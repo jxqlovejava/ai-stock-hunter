@@ -14,7 +14,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Optional
+
+
+class AlertType(str, Enum):
+    """预警类型枚举。"""
+    PRICE = "PRICE"                      # 价格突破
+    STOP_LOSS = "STOP_LOSS"              # 止损触发
+    TECH_BREAK = "TECH_BREAK"            # 技术突破（放量突破关键位）
+    MA_CROSS = "MA_CROSS"                # 均线金叉/死叉
+    VOL_SPIKE = "VOL_SPIKE"              # 成交量异常（放量/缩量）
+    LIMIT_UP_BREAK = "LIMIT_UP_BREAK"    # 涨停炸板/连板中断
+    NORTHBOUND_SURGE = "NORTHBOUND_SURGE"  # 北向资金突变
+    RISK_FLASH = "RISK_FLASH"            # 风险速报（黑天鹅/急跌）
+    SENTIMENT = "SENTIMENT"              # 情绪异动
 
 
 @dataclass
@@ -22,9 +36,9 @@ class Alert:
     """预警信号。"""
     symbol: str
     name: str
-    alert_type: str          # PRICE / STOP_LOSS / SENTIMENT / VOLUME_SPIKE
-    severity: str            # CRITICAL / WARNING / INFO
-    message: str
+    alert_type: AlertType = AlertType.PRICE
+    severity: str = "INFO"     # CRITICAL / WARNING / INFO
+    message: str = ""
     triggered_at: datetime = field(default_factory=datetime.now)
 
 
@@ -91,13 +105,13 @@ class AlertManager:
             if alert["above"] and price >= alert["above"]:
                 triggered.append(Alert(
                     symbol=sym, name=alert["name"],
-                    alert_type="PRICE", severity="WARNING",
+                    alert_type=AlertType.PRICE, severity="WARNING",
                     message=f"{alert['name']}({sym}) 突破 {alert['above']}，现价 {price}",
                 ))
             if alert["below"] and price <= alert["below"]:
                 triggered.append(Alert(
                     symbol=sym, name=alert["name"],
-                    alert_type="PRICE", severity="WARNING",
+                    alert_type=AlertType.PRICE, severity="WARNING",
                     message=f"{alert['name']}({sym}) 跌破 {alert['below']}，现价 {price}",
                 ))
 
@@ -108,7 +122,7 @@ class AlertManager:
             if price is not None and price <= alert["stop_price"]:
                 triggered.append(Alert(
                     symbol=sym, name=alert["name"],
-                    alert_type="STOP_LOSS", severity="CRITICAL",
+                    alert_type=AlertType.STOP_LOSS, severity="CRITICAL",
                     message=f"🔴 {alert['name']}({sym}) 触及止损线 {alert['stop_price']}，建议立即平仓",
                 ))
 
