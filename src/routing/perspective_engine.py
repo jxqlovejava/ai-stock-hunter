@@ -460,7 +460,8 @@ class PerspectiveAnalyzer:
             ps.one_line_thesis = "成长性不足或估值过高 — 不属于 Lynch 六类中可投资范畴"
         ps.key_concern = ("增速是否可持续？PEG好看但增速一旦放缓就是双杀"
                           if ps.score < 3.5 else "'增长放缓+估值压缩'的双杀风险")
-        ps.unique_insight = f"Lynch PEG模型: PE{pe:.1f}/增速{er}% = PEG代理{pe/er:.2f if er>0 else 'N/A'} → 综合{ps.score:.1f}/5"
+        peg_str = f"{pe/er:.2f}" if (er > 0 and pe > 0) else "N/A"
+        ps.unique_insight = f"Lynch PEG模型: PE{pe:.1f}/增速{er}% = PEG代理{peg_str} → 综合{ps.score:.1f}/5"
         ps.questions_to_ask = [
             "这家公司属于Lynch六类中的哪一类？(慢增长/稳增长/快增长/周期/反转/隐蔽资产)",
             "你能用三句话向一个12岁孩子解释这家公司做什么吗？",
