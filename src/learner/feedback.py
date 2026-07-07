@@ -53,6 +53,9 @@ class Feedback:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     strategy_name: str = ""
     strategy_version: str = ""
+    # Phase 4: Alpha 归因
+    alpha_contribution_pct: Optional[float] = None  # Alpha 贡献占比
+    alpha_quality_score: Optional[float] = None     # Alpha 来源质量 0-100
 
 
 @dataclass

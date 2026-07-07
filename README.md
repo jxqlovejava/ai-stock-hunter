@@ -280,7 +280,7 @@ python -m src.cli profile
 | [Backtrader](https://github.com/mementum/backtrader) | — | 回测引擎核心 |
 | [cyberagent](https://github.com/CyberK13/cyberagent) | — | 物理瓶颈分析链 |
 | [AlphaEvo](https://github.com/ZhuLinsen/AlphaEvo) | — | 策略自我进化 + 防过拟合 |
-| [open-xquant](https://github.com/open-xquant/open-xquant) | 75 | 可复现回测审计流水线 |
+| [open-xquant](https://github.com/xingwudao/open-xquant) | 75 | 可复现回测审计流水线 |
 | [PanWatch](https://github.com/PanWatch/PanWatch) | 648 | 盯盘 + 多 Agent 调度 |
 
 完整借鉴清单：[`docs/open-source-credits.md`](docs/open-source-credits.md)

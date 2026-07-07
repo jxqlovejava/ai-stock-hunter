@@ -98,7 +98,54 @@ def sample_verdict() -> object:
 
 
 @pytest.fixture
-def sample_source_citation():
+def sample_valuation_result():
+    """模拟估值分析结果。"""
+    try:
+        from src.valuation.schema import ValuationResult, ValuationPhase, ValuationSubScores
+        return ValuationResult(
+            symbol="600519",
+            name="贵州茅台",
+            composite_score=58.5,
+            sub_scores=ValuationSubScores(
+                pe_percentile_score=65.0,
+                peg_score=60.0,
+                industry_relative_score=50.0,
+                pb_roe_match_score=55.0,
+                dividend_yield_score=60.0,
+                signals_available=4,
+                confidence=0.85,
+            ),
+            phase=ValuationPhase.FAIR_VALUE,
+            pe_ttm=25.5,
+            pb=8.2,
+            pe_percentile=35.0,
+        )
+    except ImportError:
+        return None
+
+
+@pytest.fixture
+def sample_cycle_analysis():
+    """模拟周期分析结果。"""
+    try:
+        from src.cycle.schema import CycleAnalysis, CyclePhase
+        return CycleAnalysis(
+            phase=CyclePhase.EXPANSION,
+            confidence=0.80,
+            pmi=53.5,
+            pmi_trend="rising",
+            industrial_production=7.2,
+            gdp_growth=5.6,
+            ppi=2.1,
+            signals_available=4,
+            cycle_score=85.0,
+            cycle_adjustment_factor=1.1,
+            preferred_sectors=["消费", "科技"],
+            avoid_sectors=["公用事业"],
+        )
+    except ImportError:
+        return None
+
     """模拟数据源引用。"""
     try:
         from src.data.source_citation import SourceCitation

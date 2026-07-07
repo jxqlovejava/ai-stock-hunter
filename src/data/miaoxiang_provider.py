@@ -21,6 +21,9 @@ from typing import Optional
 from .base import DataProvider
 from .miaoxiang_adapter import MiaoXiangAdapter
 from .schema import (
+    BoardChange,
+    ExecutiveProfile,
+    ExecutiveTrade,
     Financials,
     FundamentalMetrics,
     NewsItem,
@@ -53,6 +56,7 @@ class MiaoXiangProvider(DataProvider):
         self._cache_ttl_quote = timedelta(minutes=5)
         self._cache_ttl_fin = timedelta(hours=1)
         self._cache_ttl_news = timedelta(minutes=30)
+        self._cache_ttl_executive = timedelta(hours=4)
 
     # ------------------------------------------------------------------
     # DataProvider 接口
@@ -178,6 +182,46 @@ class MiaoXiangProvider(DataProvider):
     def get_main_force_flow(self, symbol: str) -> Optional[dict]:
         """获取个股主力资金流向。"""
         return self._adapter.query_main_force_flow(symbol)
+
+    # ------------------------------------------------------------------
+    # 独有能力: mx-data 高管数据 (executive-data)
+    # ------------------------------------------------------------------
+
+    def get_executive_trades(self, symbol: str) -> list[ExecutiveTrade]:
+        """获取高管增减持数据。"""
+        cache_key = f"exec_trades:{symbol}"
+        cached = self._cache_get(cache_key, self._cache_ttl_executive)
+        if cached is not None:
+            return cached
+
+        raw = self._adapter.query_executive_trades(symbol)
+        result = self._parse_executive_trades_from_raw(raw)
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_executive_profiles(self, symbol: str) -> list[ExecutiveProfile]:
+        """获取高管背景履历。"""
+        cache_key = f"exec_profiles:{symbol}"
+        cached = self._cache_get(cache_key, self._cache_ttl_executive)
+        if cached is not None:
+            return cached
+
+        raw = self._adapter.query_executive_profiles(symbol)
+        result = self._parse_executive_profiles_from_raw(raw)
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_board_changes(self, symbol: str) -> list[BoardChange]:
+        """获取董监高变动。"""
+        cache_key = f"board_changes:{symbol}"
+        cached = self._cache_get(cache_key, self._cache_ttl_executive)
+        if cached is not None:
+            return cached
+
+        raw = self._adapter.query_board_changes(symbol)
+        result = self._parse_board_changes_from_raw(raw)
+        self._cache_set(cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # 独有能力: mx-xuangu 条件选股
@@ -387,6 +431,67 @@ class MiaoXiangProvider(DataProvider):
             ))
         return results
 
+    @staticmethod
+    def _parse_executive_trades_from_raw(raw: Optional[list[dict]]) -> list[ExecutiveTrade]:
+        """解析高管增减持数据。输入为 _extract_table_rows 的行列表。"""
+        if not raw:
+            return []
+        results = []
+        for row in raw:
+            try:
+                results.append(ExecutiveTrade(
+                    executive_name=row.get("高管姓名", row.get("股东名称", row.get("姓名", ""))),
+                    position=row.get("职务", row.get("担任职务", "")),
+                    trade_type="buy" if "增持" in str(row.get("变动方向", row.get("变动类型", ""))) else "sell",
+                    trade_date=str(row.get("变动日期", row.get("交易日期", ""))),
+                    volume=_safe_int(row.get("变动股数", row.get("变动数量"))),
+                    price=_safe_float(row.get("交易均价", row.get("成交均价"))),
+                    total_value=_safe_float(row.get("变动金额", row.get("交易金额"))),
+                    change_after_trade_pct=_safe_float(row.get("变动后持股比例", row.get("变动后持股%"))),
+                ))
+            except Exception:
+                continue
+        return results
+
+    @staticmethod
+    def _parse_executive_profiles_from_raw(raw: Optional[list[dict]]) -> list[ExecutiveProfile]:
+        """解析高管背景履历。输入为 _extract_table_rows 的行列表。"""
+        if not raw:
+            return []
+        results = []
+        for row in raw:
+            try:
+                results.append(ExecutiveProfile(
+                    name=row.get("姓名", row.get("高管姓名", "")),
+                    position=row.get("职务", row.get("现任职务", "")),
+                    age=_safe_int(row.get("年龄")),
+                    education=row.get("学历", row.get("教育背景", "")),
+                    background=row.get("背景", row.get("履历", row.get("个人简介", ""))),
+                    tenure_start=str(row.get("任职起始日", row.get("任职日期", ""))),
+                ))
+            except Exception:
+                continue
+        return results
+
+    @staticmethod
+    def _parse_board_changes_from_raw(raw: Optional[list[dict]]) -> list[BoardChange]:
+        """解析董监高变动。输入为 _extract_table_rows 的行列表。"""
+        if not raw:
+            return []
+        results = []
+        for row in raw:
+            try:
+                results.append(BoardChange(
+                    person_name=row.get("姓名", row.get("变动人", row.get("人员姓名", ""))),
+                    old_position=row.get("原职务", row.get("变动前职务", "")),
+                    new_position=row.get("新职务", row.get("变动后职务", "")),
+                    change_date=str(row.get("变动日期", row.get("公告日期", ""))),
+                    reason=row.get("变动原因", row.get("原因", "")),
+                ))
+            except Exception:
+                continue
+        return results
+
     # ------------------------------------------------------------------
     # Cache
     # ------------------------------------------------------------------
@@ -423,3 +528,23 @@ def _find_value(values: dict[str, float], candidates: list[str]) -> float | None
             if key in k or k in key:
                 return v
     return None
+
+
+def _safe_int(val) -> Optional[int]:
+    """安全转换为 int，失败返回 None。"""
+    if val is None:
+        return None
+    try:
+        return int(float(str(val).replace(",", "").replace("，", "")))
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_float(val) -> Optional[float]:
+    """安全转换为 float，失败返回 None。"""
+    if val is None:
+        return None
+    try:
+        return float(str(val).replace(",", "").replace("，", ""))
+    except (ValueError, TypeError):
+        return None

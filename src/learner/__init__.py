@@ -16,6 +16,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from src.alpha.schema import AlphaProfile
+
 from .calibrator import (
     Calibrator,
     CalibrationRecord,
@@ -65,13 +67,17 @@ from .signal_tracker import (
     SignalTracker,
 )
 
+# Phase 4: Alpha 归因引擎
+from src.alpha.attribution import AlphaAttribution, AttributionReport
+
 
 class DecisionJournal:
-    """决策日志 — 记录每笔系统建议与用户实际操作。"""
+    """决策日志 — 记录每笔系统建议与用户实际操作。Phase 4: Alpha 归因。"""
 
     def __init__(self, db_path: str = "data/journal.db"):
         self._path = db_path
         self._entries: list[dict] = []
+        self._attribution = AlphaAttribution()
 
     def log(
         self,
@@ -80,8 +86,30 @@ class DecisionJournal:
         user_action: str,
         user_reason: str = "",
         market_sentiment: str = "NORMAL",
+        entry_alpha: Optional[AlphaProfile] = None,
+        exit_alpha: Optional[AlphaProfile] = None,
+        total_return_pct: float = 0.0,
+        market_return_pct: float = 0.0,
+        sector_return_pct: float = 0.0,
+        holding_days: int = 0,
     ):
-        """记录一条决策。"""
+        """记录一条决策（含 Alpha 归因）。"""
+        # Alpha 归因
+        attribution_report = None
+        if entry_alpha and abs(total_return_pct) > 0.01:
+            try:
+                attribution_report = self._attribution.attribute(
+                    symbol=symbol,
+                    total_return_pct=total_return_pct,
+                    market_return_pct=market_return_pct,
+                    sector_return_pct=sector_return_pct,
+                    entry_profile=entry_alpha,
+                    exit_profile=exit_alpha,
+                    holding_period_days=holding_days,
+                )
+            except Exception:
+                pass
+
         self._entries.append({
             "timestamp": datetime.now().isoformat(),
             "symbol": symbol,
@@ -92,10 +120,12 @@ class DecisionJournal:
             "outcome_1w": None,
             "outcome_1m": None,
             "lessons": [],
+            "total_return_pct": total_return_pct,
+            "alpha_report": attribution_report,
         })
 
     def weekly_review(self) -> str:
-        """生成周度复盘报告。"""
+        """生成周度复盘报告（含 Alpha 归因）。"""
         if not self._entries:
             return "本周无交易记录。"
         recent = [e for e in self._entries
@@ -119,6 +149,16 @@ class DecisionJournal:
                 f"{icon} {e['symbol']}: 系统建议 {e['system_action']}, "
                 f"你做了 {e['user_action']} ({e['user_reason']})"
             )
+            # Phase 4: Alpha 归因
+            ar = e.get("alpha_report")
+            if ar:
+                driver = "Alpha 驱动" if ar.is_alpha_driven else "Beta 驱动"
+                lines.append(
+                    f"   📊 收益 {ar.total_return_pct:+.1f}%: "
+                    f"Alpha {ar.alpha_return_pct:+.1f}% / "
+                    f"Beta {ar.market_beta_return_pct:+.1f}% [{driver}] "
+                    f"质量 {ar.alpha_quality_score:.0f}/100"
+                )
         return "\n".join(lines)
 
     def count(self) -> int:
@@ -165,4 +205,7 @@ __all__ = [
     "SignalStatus",
     "ReportGenerator",
     "LearningReport",
+    # Phase 4: Alpha 归因
+    "AlphaAttribution",
+    "AttributionReport",
 ]

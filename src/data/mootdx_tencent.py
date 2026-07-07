@@ -88,6 +88,10 @@ class MootdxTencentProvider(DataProvider):
             prev_close=tq.get("prev_close"),
             limit_up=tq.get("limit_up"),
             limit_down=tq.get("limit_down"),
+            pe_ttm=tq.get("pe_ttm"),
+            pe_static=tq.get("pe_static"),
+            pb=tq.get("pb"),
+            market_cap=(tq.get("mcap_yi") or 0) * 1e8 if tq.get("mcap_yi") else None,
             source=self.source_name,
         )
         self._cache_set(cache_key, quote)
@@ -132,6 +136,10 @@ class MootdxTencentProvider(DataProvider):
                     prev_close=float(vals[4]) if vals[4] else None,
                     limit_up=float(vals[47]) if vals[47] else None,
                     limit_down=float(vals[48]) if vals[48] else None,
+                    pe_ttm=float(vals[39]) if vals[39] else None,
+                    pe_static=float(vals[52]) if vals[52] else None,
+                    pb=float(vals[46]) if vals[46] else None,
+                    market_cap=float(vals[44]) * 1e8 if vals[44] else None,  # 亿→元
                     source=self.source_name,
                 )
                 quotes.append(quote)

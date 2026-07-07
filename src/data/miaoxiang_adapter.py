@@ -102,6 +102,59 @@ class MiaoXiangAdapter:
         """查询个股主力资金流向。"""
         return self.query_data(f"{symbol} 主力资金流向")
 
+    def query_executive_trades(self, symbol: str) -> Optional[list[dict]]:
+        """查询高管增减持数据。"""
+        result = self.query_data(f"{symbol} 高管增减持 近一年")
+        if result is None:
+            return None
+        return self._extract_table_rows(result)
+
+    def query_executive_profiles(self, symbol: str) -> Optional[list[dict]]:
+        """查询高管背景履历。"""
+        result = self.query_data(f"{symbol} 高管简介 履历 背景")
+        if result is None:
+            return None
+        return self._extract_table_rows(result)
+
+    def query_board_changes(self, symbol: str) -> Optional[list[dict]]:
+        """查询董监高变动。"""
+        result = self.query_data(f"{symbol} 董监高变动 董事变更 高管离职")
+        if result is None:
+            return None
+        return self._extract_table_rows(result)
+
+    @staticmethod
+    def _extract_table_rows(result: dict) -> list[dict]:
+        """将 mx-data dataTableDTOList 表格格式转为行列表。
+
+        mx-data 表格格式:
+          {"data": {"dataTableDTOList": [{"headName": ["列1","列2",...],
+                                         "col_1": [...], "col_2": [...]}]}}
+
+        每列 col_N 的第 i 个元素 = 第 i 行的对应字段值。
+        """
+        data = result.get("data", result)
+        tables = data.get("dataTableDTOList", [])
+        if not tables:
+            return []
+        rows = []
+        for table in tables:
+            head = table.get("headName", [])
+            if not head:
+                continue
+            cols = {k: v for k, v in table.items() if k.startswith("col_")}
+            if not cols:
+                continue
+            num_rows = len(next(iter(cols.values()), []))
+            for i in range(num_rows):
+                row = {}
+                for j, col_name in enumerate(head):
+                    col_key = f"col_{j + 1}"
+                    col_data = cols.get(col_key, [])
+                    row[col_name] = col_data[i] if i < len(col_data) else None
+                rows.append(row)
+        return rows
+
     # ------------------------------------------------------------------
     # mx-search: 金融资讯搜索
     # ------------------------------------------------------------------
