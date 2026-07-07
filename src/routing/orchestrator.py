@@ -230,13 +230,30 @@ class Orchestrator:
             result.warnings = [r.name for r in doctrine_result.warnings]
             return result
         result.warnings = [r.name for r in doctrine_result.warnings]
-        # 保存完整军规结果供格式化器使用
+        # 保存完整军规结果供格式化器使用 — 含全部 31 条规则的逐条状态
+        triggered_ids = {r.id for r in doctrine_result.blocked_by + doctrine_result.warnings + doctrine_result.infos}
+        from src.doctrine.rules import MILITARY_RULES
+        all_rules = []
+        for rule in MILITARY_RULES:
+            if enabled_rules is not None and rule.id not in enabled_rules:
+                continue
+            status = "blocked" if rule in doctrine_result.blocked_by else (
+                "warn" if rule in doctrine_result.warnings else (
+                "info" if rule in doctrine_result.infos else "passed"))
+            all_rules.append({
+                "id": rule.id, "name": rule.name,
+                "category": rule.category.value,
+                "severity": rule.severity.value,
+                "description": rule.description,
+                "status": status,
+            })
         result.doctrine_result = {
             "passed": doctrine_result.passed,
-            "total_rules": len(doctrine_result.blocked_by) + len(doctrine_result.warnings) + len(doctrine_result.infos),
-            "blocked": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.blocked_by],
-            "warnings": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.warnings],
-            "infos": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.infos],
+            "total": len(all_rules),
+            "blocked_count": len(doctrine_result.blocked_by),
+            "warn_count": len(doctrine_result.warnings),
+            "info_count": len(doctrine_result.infos),
+            "rules": all_rules,
         }
 
         # Step 2: 准入检查

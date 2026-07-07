@@ -126,10 +126,51 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     # ═══════════════════════════════════════════════════════════════
     doctrine = result.doctrine_result
     lines.append(f"\n{SEP_EQ}")
-    lines.append("  Step 1 🏥 军规审查 — 30条硬规则逐条核查")
+    lines.append("  Step 1 🏥 军规审查 — 31条硬规则逐条核查")
     lines.append(SEP_EQ)
 
-    if doctrine:
+    if doctrine and doctrine.get("rules"):
+        rules = doctrine["rules"]
+        total = doctrine.get("total", len(rules))
+        blocked_c = doctrine.get("blocked_count", 0)
+        warn_c = doctrine.get("warn_count", 0)
+        info_c = doctrine.get("info_count", 0)
+        passed_c = total - blocked_c - warn_c - info_c
+
+        passed_icon = "✅" if doctrine.get("passed") else "⛔"
+        lines.append(f"  {passed_icon} 审查结果: {passed_c}通过 | "
+                     f"🔴阻断{blocked_c} | 🟠警告{warn_c} | ℹ️信息{info_c} | 共{total}条")
+
+        # 按类别分组展示
+        CATEGORY_LABELS = {
+            "position": "💰 仓位与资金管理",
+            "selection": "🔍 选股与估值纪律",
+            "trading": "📈 买卖纪律",
+            "emotion": "🧘 情绪纪律",
+            "information": "📰 信息纪律",
+            "risk": "🛡️ 风控与止盈止损",
+            "review": "📝 复盘与进化",
+            "meta": "⚙️ 元风控",
+        }
+        STATUS_ICON = {"passed": "✅", "warn": "🟠", "blocked": "🔴", "info": "ℹ️"}
+
+        by_category: dict[str, list[dict]] = {}
+        for r in rules:
+            cat = r.get("category", "other")
+            by_category.setdefault(cat, []).append(r)
+
+        for cat_key in ["position", "selection", "trading", "emotion", "information", "risk", "review", "meta"]:
+            cat_rules = by_category.get(cat_key, [])
+            if not cat_rules:
+                continue
+            label = CATEGORY_LABELS.get(cat_key, cat_key)
+            lines.append(f"\n  {label}")
+            for r in cat_rules:
+                icon = STATUS_ICON.get(r["status"], "❓")
+                sev = r["severity"].upper()
+                lines.append(f"    {icon} [{r['id']}] {r['name']:12s} [{sev}] {r['description']}")
+    elif doctrine:
+        # 旧版兼容
         b = doctrine.get("blocked", [])
         w = doctrine.get("warnings", [])
         inf = doctrine.get("infos", [])
@@ -139,10 +180,6 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             lines.append(f"    🔴 [{r['id']}] {r['name']} — {r['description'][:120]}")
         for r in w[:5]:
             lines.append(f"    🟠 [{r['id']}] {r['name']} — {r['description'][:120]}")
-        if len(w) > 5:
-            lines.append(f"    ... 还有 {len(w)-5} 条警告")
-        for r in inf[:3]:
-            lines.append(f"    ℹ️  [{r['id']}] {r['name']}")
     else:
         lines.append("  ⚠️ 军规审查数据不可用")
 
