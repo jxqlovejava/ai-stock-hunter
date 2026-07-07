@@ -49,6 +49,7 @@ class AnalysisReport:
     bottlenecks: list[str] = field(default_factory=list)
     upstream_risks: list[str] = field(default_factory=list)
     source_citations: list[SourceCitation] = field(default_factory=list)  # Phase 1: 数据溯源
+    data_gaps: list[str] = field(default_factory=list)  # Phase 1: 数据缺口标记
     confidence: float = 0.7  # Phase 1: 综合信心度 0.0-1.0
     data_freshness: datetime = field(default_factory=datetime.now)  # Phase 1: 数据新鲜度
     created_at: datetime = field(default_factory=datetime.now)
@@ -90,6 +91,14 @@ class L1Analyzer:
             report.value_score = self._score_value(quote, valuation_result)
             report.quality_score = self._score_quality(financials, earnings_factor)
             report.momentum_score = self._score_momentum(quote, northbound_profile)
+        else:
+            # 财务数据不可用 — 标记 DATA_GAP，使用中性默认值
+            if not financials:
+                report.data_gaps = getattr(report, 'data_gaps', []) or []
+                report.data_gaps.append("[DATA_GAP] 财务数据不可用 — 价值/质量/动量评分使用中性值 50，置信度大幅下调")
+            if quote and not financials:
+                # 仅有行情无财务：只能算动量
+                report.momentum_score = self._score_momentum(quote, northbound_profile)
 
         # Phase 5: 估值评分（独立于 value_score）
         report.valuation_score = self._score_valuation(valuation_result)

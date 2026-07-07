@@ -169,17 +169,27 @@ class GuosenProvider(DataProvider):
             d = r.json()
             if d.get("result", [{}])[0].get("code") != 0 if isinstance(d.get("result"), list) else True:
                 return []
-            return self._parse_financials(symbol, d.get("data", {}))
+            # API 返回 income (利润表) / balance (资产负债表) / cashflow (现金流量表)
+            income_data = d.get("income") or d.get("data", {})
+            return self._parse_financials(symbol, income_data)
         except Exception:
             return []
 
-    def _parse_financials(self, symbol: str, data: dict) -> list[Financials]:
-        """解析国信财务数据为 Financials 列表。"""
+    def _parse_financials(self, symbol: str, data) -> list[Financials]:
+        """解析国信财务数据为 Financials 列表。
+
+        支持两种格式:
+          1. list: income[] 直接包含各期数据 (利润表 API)
+          2. dict: {"records": [...]} (旧格式/其他报表)
+        """
         results = []
-        if not data or not isinstance(data, dict):
+        # 统一转为记录列表
+        if isinstance(data, list):
+            records = data
+        elif isinstance(data, dict):
+            records = data.get("records", [])
+        else:
             return results
-        # 国信返回结构: data.info[] 含字段元数据，data.records[] 含数据行
-        records = data.get("records", [])
         if not records:
             return results
         for rec in records:
