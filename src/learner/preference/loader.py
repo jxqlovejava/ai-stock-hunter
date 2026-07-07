@@ -16,6 +16,7 @@ from .model import InvestorPreference
 logger = logging.getLogger(__name__)
 
 DEFAULT_PATH = "data/portfolio.yaml"
+EXAMPLE_PATH = "data/portfolio.example.yaml"
 
 
 class InvestorPreferenceLoader:
@@ -29,10 +30,19 @@ class InvestorPreferenceLoader:
         return os.path.abspath(self._path)
 
     def load(self) -> InvestorPreference:
-        """加载偏好。文件缺失或损坏时返回默认值。"""
+        """加载偏好。文件缺失时从 template 自动创建，损坏时返回默认值。"""
         if not os.path.exists(self._path):
-            logger.info("偏好文件 %s 不存在，使用默认值", self._path)
-            return InvestorPreference()
+            # 尝试从 example 模板复制
+            if os.path.exists(EXAMPLE_PATH):
+                try:
+                    import shutil
+                    shutil.copy(EXAMPLE_PATH, self._path)
+                    logger.info("从 %s 创建初始偏好文件 %s", EXAMPLE_PATH, self._path)
+                except Exception as e:
+                    logger.warning("无法复制模板文件: %s", e)
+            if not os.path.exists(self._path):
+                logger.info("偏好文件 %s 不存在，使用默认值", self._path)
+                return InvestorPreference()
         try:
             with open(self._path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)

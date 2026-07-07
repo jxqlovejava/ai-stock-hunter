@@ -1,0 +1,59 @@
+# 白泽 — 投资者偏好配置模板
+# 复制此文件到 portfolio.yaml 并修改:
+#   cp data/portfolio.example.yaml data/portfolio.yaml
+#
+# 或运行交互式设置向导 (推荐):
+#   python -m src preference setup
+#
+# portfolio.yaml 在 .gitignore 中，不会被提交到仓库。
+# 每个人 fork 后可以有自己的独立配置。
+
+# ── 基本信息 ──
+risk_profile: balanced         # conservative | balanced | aggressive
+investment_goal: absolute_return  # absolute_return | relative_return | cash_flow
+trading_style: mixed           # long_term | swing | short_term | mixed
+holding_period: medium         # short | medium | long | ultra
+tier: beginner                 # beginner | intermediate | pro
+benchmark: 沪深300
+investment_horizon: 3-5年
+
+# ── 仓位约束 ──
+position_limits:
+  total_capital: 500000        # 总投资本金 (元)
+  max_single_pct: 0.20         # 单票最大仓位 20%
+  max_sector_pct: 0.40         # 单行业最大仓位 40%
+  max_total_exposure: 0.80     # 总仓位上限 80%
+  min_cash_pct: 0.20           # 最低现金保留 20%
+  single_stop_loss_pct: 0.02   # 单笔最大亏损 2%
+  portfolio_drawdown_pct: 0.15 # 组合最大回撤 15%
+  max_total_loss_pct: 0.25     # 能忍受的最大总亏损 25%
+  gem_discount: 0.80           # 创业板/科创板仓位打 8 折
+  kelly_fraction: 0.50         # half-Kelly (0.1-1.0)
+
+# ── 能力圈: 行业 → 熟悉度 1-5 ──
+# 5=从业者/深度跟踪  4=深入研究  3=基本了解  2=略知一二  1=听说过
+circle_of_competence:
+  消费: 3
+  新能源: 2
+  科技: 2
+  # 常见行业参考: 医药、金融、制造、通信、半导体、白酒、汽车、互联网、军工、地产
+
+# ── L2 评分权重 (None = 系统默认) ──
+score_weights:
+  fundamental: null
+  technical: null
+  macro: null
+  sector: null
+  sentiment: null
+
+# ── 军规过滤 (null = 基于 tier 自动决定) ──
+enabled_rules: null
+
+# ── 自选股关注列表 (可选) ──
+# watchlist:
+#   600519: 贵州茅台
+#   000001: 平安银行
+
+# ── 系统字段 (由 setup wizard 自动填写) ──
+last_updated: ""
+setup_step: 0

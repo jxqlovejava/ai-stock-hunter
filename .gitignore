@@ -25,6 +25,10 @@ data/evolution_lifecycles.json
 *.db
 *.sqlite3
 
+# 用户个人数据 (每人一份，不进仓库)
+data/portfolio.yaml
+data/watchlist.json
+
 # Claude
 .claude/plans/
 .claude/weread_invest_booklist.md
