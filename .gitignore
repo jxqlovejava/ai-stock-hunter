@@ -1,6 +1,7 @@
 # Secrets
 SECRET.md
 memory.md
+.env
 
 # macOS
 .DS_Store
@@ -10,3 +11,20 @@ memory.md
 .vscode/
 *.swp
 *.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime data (generated at runtime, not source code)
+data/kline_cache/
+data/evolution_lifecycles.json
+*.db
+*.sqlite3
+
+# Claude
+.claude/plans/
+.claude/weread_invest_booklist.md
