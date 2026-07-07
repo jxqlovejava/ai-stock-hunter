@@ -88,18 +88,26 @@ class MentalModelMatcher:
                     relevance=relevance,
                 ))
 
-        # 按相关度降序，返回前 3-5
+        # 按相关度降序，返回前 15（含完整描述）
         candidates.sort(key=lambda x: x.relevance, reverse=True)
-        top = candidates[:5]
-        return [
-            {
+        top = candidates[:15]
+        result = []
+        for m in top:
+            # 从原始模型数据中获取完整描述
+            desc = ""
+            for raw in self._models:
+                if raw.get("slug") == m.slug:
+                    desc = raw.get("description", "")
+                    break
+            result.append({
                 "slug": m.slug,
                 "name_cn": m.name_cn,
                 "discipline": m.discipline,
                 "reason_for_match": m.reason_for_match,
-            }
-            for m in top
-        ]
+                "description": desc,
+                "relevance": m.relevance,
+            })
+        return result
 
     @staticmethod
     def _score_model(
