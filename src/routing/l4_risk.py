@@ -29,11 +29,16 @@ class L4RiskOfficer:
     硬约束（不可覆盖）:
       - 单票最大仓位: 20%
       - 单行业最大仓位: 40%
-      - 单笔最大亏损: 2%
+      - 单笔最大亏损: 2% (短线用 ATR 止损)
       - 组合最大回撤: 15%
       - 双创折扣: ×0.8
       - 黑天鹅熔断: 沪深300 单日 -5%
       - 流动性上限: 持仓 < 日均成交额 5%
+
+    Phase 7 短线模式新增:
+      - ATR 倍率止损 (替代固定 -2%)
+      - 时间止损 (N 日不涨即离场)
+      - 移动止损 (最高价回撤 N%)
     """
 
     SINGLE_STOCK_CAP = Decimal("0.20")
@@ -163,11 +168,44 @@ class L4RiskOfficer:
             violations.append(f"组合回撤熔断: {float(drawdown):.1%} < {float(_max_drawdown):.0%}")
             weight = min(weight, D("0"))
 
-        # 单笔止损
+        # 单笔止损 (支持 ATR/时间/移动止损)
         position_loss = D((portfolio or {}).get("position_loss_pct", 0))
-        if position_loss <= _stop_loss:
+        if signal.suggested_stop > 0 and (portfolio or {}).get("current_price", 0) > 0:
+            current_price = D((portfolio or {}).get("current_price", 0))
+            stop_price = D(signal.suggested_stop)
+            if current_price <= stop_price:
+                violations.append(
+                    f"ATR止损触发: 现价{float(current_price):.2f} <= 止损价{float(stop_price):.2f}"
+                )
+                weight = D("0")
+        elif position_loss <= _stop_loss:
             violations.append(f"单笔止损: {float(position_loss):.1%} 触及 {float(_stop_loss):.0%}")
             weight = D("0")  # 强制平仓
+
+        # 时间止损 (短线模式特有)
+        holding_days = (portfolio or {}).get("holding_days", 0) or 0
+        if signal.time_stop_days > 0 and holding_days >= signal.time_stop_days:
+            position_pnl = D((portfolio or {}).get("position_pnl_pct", 0))
+            if position_pnl <= D("0"):
+                violations.append(
+                    f"时间止损: 持有{holding_days}天 >= {signal.time_stop_days}天且未盈利"
+                )
+                weight = min(weight, D("0"))
+
+        # 移动止损 (短线模式: 从最高点回撤 N%)
+        if signal.suggested_stop > 0 and signal.atr_stop > 0:
+            peak_price = D((portfolio or {}).get("peak_price", 0) or 0)
+            current_px = D((portfolio or {}).get("current_price", 0) or 0)
+            if peak_price > D("0") and current_px > D("0"):
+                drawdown_from_peak = (current_px - peak_price) / peak_price
+                trailing_pct = D("-0.03")  # default -3%
+                if position_limits:
+                    trailing_pct = D(position_limits.get("trailing_stop_pct", float(trailing_pct)))
+                if drawdown_from_peak <= trailing_pct:
+                    violations.append(
+                        f"移动止损: 从高点{float(peak_price):.2f}回撤{float(drawdown_from_peak):.1%}"
+                    )
+                    weight = min(weight, D("0"))
 
         # Phase 4: Alpha 衰减风控检查
         alpha_violations = self._check_alpha_decay(signal, portfolio or {})

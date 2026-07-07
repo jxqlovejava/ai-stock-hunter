@@ -32,6 +32,16 @@ class TradeSignal:
     kelly_params_source: str = ""  # 凯利参数来源说明
     name: str = ""                # 股票名称 (for L4 黑名单/流动性检查)
     extra: dict = field(default_factory=dict)  # 原始行情数据 (for L4 黑名单检查)
+    # Phase 7: 短线/波段入场出场时机
+    entry_zone_low: float = 0.0   # 入场区间下限
+    entry_zone_high: float = 0.0  # 入场区间上限
+    exit_zone_low: float = 0.0    # 出场区间下限
+    exit_zone_high: float = 0.0   # 出场区间上限
+    suggested_stop: float = 0.0   # 建议止损价 (ATR 或固定百分比)
+    time_stop_days: int = 0       # 时间止损天数 (短线 3-7, 长线 60-180)
+    atr_stop: float = 0.0         # ATR 止损价
+    target_1: float = 0.0         # 第一止盈目标位
+    target_2: float = 0.0         # 第二止盈目标位
 
 
 class L3Trader:
@@ -71,6 +81,7 @@ class L3Trader:
         risk_multiplier: float = 1.0,
         name: str = "",
         extra: Optional[dict] = None,
+        timing_result=None,  # Phase 7: EntryExitEngine.TimingResult
     ) -> TradeSignal:
         """生成交易信号。
 
@@ -81,6 +92,7 @@ class L3Trader:
             is_gem: 是否双创 (创业板/科创板折扣)
             position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., "kelly_fraction": ...}
             risk_multiplier: 风险偏好仓位乘数 (conservative=0.7, balanced=1.0, aggressive=1.2)
+            timing_result: Phase 7 入场/出场时机结果 (仅短线/波段模式)
         """
         score = verdict.score
         action = self._score_to_action(score)
@@ -132,6 +144,30 @@ class L3Trader:
         if verdict.alpha_rationale:
             alpha_timing = verdict.alpha_rationale
 
+        # Phase 7: 入场/出场时机注入
+        entry_low = 0.0
+        entry_high = 0.0
+        exit_low = 0.0
+        exit_high = 0.0
+        suggested_stop = 0.0
+        time_stop_days = 60
+        atr_stop = 0.0
+        target_1 = 0.0
+        target_2 = 0.0
+
+        if timing_result is not None:
+            if timing_result.best_entry:
+                entry_low = timing_result.best_entry.entry_zone_low
+                entry_high = timing_result.best_entry.entry_zone_high
+            if timing_result.exit_signals:
+                exit_low = timing_result.exit_signals[0].exit_zone_low
+                exit_high = timing_result.exit_signals[0].exit_zone_high
+            suggested_stop = timing_result.suggested_stop
+            time_stop_days = timing_result.time_stop_days
+            atr_stop = timing_result.atr_stop
+            target_1 = timing_result.target_1
+            target_2 = timing_result.target_2
+
         return TradeSignal(
             symbol=symbol,
             action=action,
@@ -146,6 +182,15 @@ class L3Trader:
             kelly_params_source=sizing_source,
             name=name,
             extra=extra or {},
+            entry_zone_low=entry_low,
+            entry_zone_high=entry_high,
+            exit_zone_low=exit_low,
+            exit_zone_high=exit_high,
+            suggested_stop=suggested_stop,
+            time_stop_days=time_stop_days,
+            atr_stop=atr_stop,
+            target_1=target_1,
+            target_2=target_2,
         )
 
     # ------------------------------------------------------------------
