@@ -312,30 +312,38 @@ def cmd_preference(args: list[str]):
 
 
 def _cmd_preference_setup(loader):
-    """交互式投资者画像设置向导。"""
+    """交互式投资者画像设置向导 — 10 步完整画像。"""
+    from datetime import datetime
     from src.learner.preference.model import (
         InvestorPreference, RiskProfile, InvestmentGoal,
-        TradingStyle, InvestorTier, PositionLimits,
+        TradingStyle, InvestorTier, HoldingPeriod, PositionLimits,
     )
 
     prefs = loader.load()
+    step = 0
 
     print("\n🎯 投资者画像设置向导")
     print("=" * 50)
-    print("花 2 分钟设置你的专属画像，分析引擎会根据你的实际情况")
-    print("调整 L2 评分权重、L3 仓位建议、L4 风控参数。\n")
+    print("花 3 分钟设置你的专属画像，分析引擎会根据你的实际情况")
+    print("调整 L2 评分权重、L3 仓位建议、L4 风控参数。")
+    print("(按回车跳过，保持当前值)\n")
+
+    # ── 基本信息 ──
+    print("── 基本信息 ──")
 
     # 1. 风险偏好
-    print("1️⃣  风险偏好 (risk_profile)")
+    step += 1
+    print(f"\n{step}️⃣  风险偏好 — 你能接受多大的波动？")
     print("   conservative = 保守型：追求稳定，少亏钱比多赚钱重要")
-    print("   balanced     = 均衡型：在风险与收益间取平衡 (推荐)")
+    print("   balanced     = 均衡型：在风险与收益间取平衡")
     print("   aggressive   = 进取型：愿意承受较大波动博取高收益")
     choice = input(f"   选择 [{prefs.risk_profile.value}]: ").strip().lower()
     if choice in ("conservative", "balanced", "aggressive"):
         prefs.risk_profile = RiskProfile(choice)
 
     # 2. 投资目标
-    print("\n2️⃣  投资目标 (investment_goal)")
+    step += 1
+    print(f"\n{step}️⃣  投资目标 — 你投资的主要目的是什么？")
     print("   absolute_return = 绝对收益：跑赢存款/理财，正收益优先")
     print("   relative_return = 相对收益：跑赢沪深300指数")
     print("   cash_flow       = 现金流：追求稳定股息分红")
@@ -343,17 +351,43 @@ def _cmd_preference_setup(loader):
     if choice in ("absolute_return", "relative_return", "cash_flow"):
         prefs.investment_goal = InvestmentGoal(choice)
 
-    # 3. 投资者级别
-    print("\n3️⃣  投资者级别 (tier)")
-    print("   beginner     = 小白：全量军规保护，输出更详细易懂")
-    print("   intermediate = 进阶：部分军规可放宽，输出适中")
-    print("   pro          = 专业：仅保留核心风控规则")
+    # 3. 交易风格 + 持有时间
+    step += 1
+    print(f"\n{step}️⃣  交易风格")
+    print("   long_term  = 中长线配置：持有数月到数年")
+    print("   swing      = 波段交易：持有数周到数月")
+    print("   short_term = 短线交易：持有数天到数周")
+    print("   mixed      = 混合风格")
+    choice = input(f"   选择 [{prefs.trading_style.value}]: ").strip().lower()
+    if choice in ("long_term", "swing", "short_term", "mixed"):
+        prefs.trading_style = TradingStyle(choice)
+
+    step += 1
+    print(f"\n{step}️⃣  典型持有时间")
+    print("   short = 短线 (<1个月)")
+    print("   medium = 中线 (1-12个月)")
+    print("   long = 长线 (1-3年)")
+    print("   ultra = 超长线 (3年以上)")
+    choice = input(f"   选择 [{prefs.holding_period.value}]: ").strip().lower()
+    if choice in ("short", "medium", "long", "ultra"):
+        prefs.holding_period = HoldingPeriod(choice)
+
+    # ── 风控参数 ──
+    print("\n── 风控参数 ──")
+
+    # 5. 投资者级别
+    step += 1
+    print(f"\n{step}️⃣  投资者级别")
+    print("   beginner     = 小白：全量军规保护，输出详细易懂")
+    print("   intermediate = 进阶：部分军规可放宽")
+    print("   pro          = 专业：仅保留核心风控")
     choice = input(f"   选择 [{prefs.tier.value}]: ").strip().lower()
     if choice in ("beginner", "intermediate", "pro"):
         prefs.tier = InvestorTier(choice)
 
-    # 4. 投资本金
-    print("\n4️⃣  总投资本金 (万元)")
+    # 6. 投资本金
+    step += 1
+    print(f"\n{step}️⃣  总投资本金 (万元)")
     current = prefs.position_limits.total_capital / 10000
     choice = input(f"   输入 [{current:.0f}]: ").strip()
     if choice:
@@ -362,15 +396,21 @@ def _cmd_preference_setup(loader):
         except ValueError:
             print("   ⚠️ 输入无效，保持原值")
 
-    # 5. 投资期限
-    print("\n5️⃣  投资期限")
-    print("   例如: 1-3年 / 3-5年 / 5年以上")
-    choice = input(f"   输入 [{prefs.investment_horizon}]: ").strip()
+    # 7. 能忍受的最大总亏损
+    step += 1
+    print(f"\n{step}️⃣  能忍受的最大总亏损 (%)")
+    print("   即全部资金最多能亏多少就停止交易")
+    current_pct = prefs.position_limits.max_total_loss_pct * 100
+    choice = input(f"   输入 [{current_pct:.0f}]: ").strip()
     if choice:
-        prefs.investment_horizon = choice
+        try:
+            prefs.position_limits.max_total_loss_pct = float(choice) / 100
+        except ValueError:
+            print("   ⚠️ 输入无效，保持原值")
 
-    # 6. 止损线
-    print("\n6️⃣  单笔最大亏损容忍 (%)")
+    # 8. 单笔止损 + 投资期限
+    step += 1
+    print(f"\n{step}️⃣  单笔最大亏损容忍 (%)")
     current_pct = prefs.position_limits.single_stop_loss_pct * 100
     choice = input(f"   输入 [{current_pct:.0f}]: ").strip()
     if choice:
@@ -379,9 +419,18 @@ def _cmd_preference_setup(loader):
         except ValueError:
             print("   ⚠️ 输入无效，保持原值")
 
-    # 7. 能力圈
-    print("\n7️⃣  能力圈 — 你熟悉哪些行业？")
-    print("   当前已设置的行业:")
+    step += 1
+    print(f"\n{step}️⃣  投资期限（预期投资多久）")
+    print("   例如: 1-3年 / 3-5年 / 5年以上 / 长期不用")
+    choice = input(f"   输入 [{prefs.investment_horizon}]: ").strip()
+    if choice:
+        prefs.investment_horizon = choice
+
+    # ── 能力圈与自选股 ──
+    print("\n── 能力圈 & 自选股 ──")
+
+    step += 1
+    print(f"\n{step}️⃣  能力圈 — 你熟悉哪些行业？")
     coc = prefs.circle_of_competence
     current_industries = dict(coc.industries)
     if current_industries:
@@ -389,10 +438,10 @@ def _cmd_preference_setup(loader):
             print(f"     {ind}: {'⭐' * fam} ({fam}/5)")
     else:
         print("     (无)")
-
     print("\n   常见行业参考: 消费、新能源、科技、医药、金融、制造、通信、半导体、白酒、汽车、互联网、军工、地产")
     print("   输入格式: 行业名 熟悉度(1-5)，例如: 医药 4")
-    print("   输入空行结束。熟悉度建议: 5=从业者 4=深度研究 3=基本了解 2=略知 1=听说过")
+    print("   熟悉度: 5=从业者/深度跟踪 4=深入研究 3=基本了解 2=略知 1=听说过")
+    print("   输入空行结束。")
     new_industries = dict(current_industries)
     while True:
         line = input("   添加: ").strip()
@@ -405,22 +454,32 @@ def _cmd_preference_setup(loader):
                 fam = int(parts[1])
                 if 1 <= fam <= 5:
                     new_industries[name] = fam
+                    print(f"     ✅ {name}: {'⭐' * fam}")
                 else:
                     print("   ⚠️ 熟悉度需在 1-5 之间")
             except ValueError:
                 print("   ⚠️ 格式错误，例如: 医药 4")
     coc.industries = new_industries
 
-    # 8. 保存
+    # ── 保存 ──
+    prefs.last_updated = datetime.now().isoformat()
+    prefs.setup_step = step
+    comp = prefs.completeness()
+
     print(f"\n{'=' * 50}")
     print("📋 配置预览:")
     print(f"   风险偏好: {prefs.risk_profile.value}")
     print(f"   投资目标: {prefs.investment_goal.value}")
+    print(f"   交易风格: {prefs.trading_style.value} / 持有: {prefs.holding_period.value}")
     print(f"   投资级别: {prefs.tier.value}")
     print(f"   投资本金: {prefs.position_limits.total_capital:,.0f}")
-    print(f"   投资期限: {prefs.investment_horizon}")
+    print(f"   总投资期限: {prefs.investment_horizon}")
+    print(f"   最大总亏损: {prefs.position_limits.max_total_loss_pct:.0%}")
     print(f"   单笔止损: {prefs.position_limits.single_stop_loss_pct:.0%}")
     print(f"   能力圈: {', '.join(f'{k}({v}/5)' for k, v in sorted(coc.industries.items()))}")
+    print(f"\n   📊 画像完整度: {comp['score']}%")
+    if comp["missing"]:
+        print(f"   📝 还可以补充: {', '.join(comp['missing'][:5])}")
 
     confirm = input("\n保存配置? [Y/n]: ").strip().lower()
     if confirm in ("", "y", "yes"):
