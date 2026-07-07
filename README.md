@@ -259,14 +259,14 @@ python -m src trade-track list
 
 | 项目 | 借鉴要点 |
 |------|---------|
-| [ai-berkshire](https://github.com/ai-berkshire/ai-berkshire) | 四大师方法论、7 步研究流程 |
-| [FinceptTerminal](https://github.com/FinceptTerminal/FinceptTerminal) | 宏观/公司研究数据模型 |
-| [OpenStock](https://github.com/OpenStock/OpenStock) | 跨源情绪聚合 |
+| [ai-berkshire](https://github.com/xbtlin/ai-berkshire) | 四大师方法论、多 Agent 并行投研框架 |
+| [FinceptTerminal](https://github.com/Fincept-Corporation/FinceptTerminal) | 宏观/公司研究数据模型 |
+| [OpenStock](https://github.com/Open-Dev-Society/OpenStock) | 跨源情绪聚合 |
 | [Backtrader](https://github.com/mementum/backtrader) | 回测引擎核心 |
-| [cyberagent](https://github.com/CyberK13/cyberagent) | 物理瓶颈分析链 |
-| [AlphaEvo](https://github.com/ZhuLinsen/AlphaEvo) | 策略自我进化 + 防过拟合 |
+| [cyberagent](https://pypi.org/project/cyberagent/) | 物理瓶颈分析链（`pip install cyberagent`） |
+| [AlphaEvo](https://github.com/ZhuLinsen/alphaevo) | 策略自我进化 + 防过拟合 |
 | [open-xquant](https://github.com/xingwudao/open-xquant) | 可复现回测审计流水线 |
-| [PanWatch](https://github.com/PanWatch/PanWatch) | 盯盘 + 多 Agent 调度 |
+| [PanWatch](https://github.com/TNT-Likely/PanWatch) | 盯盘 + 多 Agent 调度 |
 
 完整借鉴清单：[`docs/open-source-credits.md`](docs/open-source-credits.md)
 

@@ -8,7 +8,7 @@
 
 ### 1. ai-berkshire（9.4k★）
 
-| 项目 | https://github.com/ai-berkshire/ai-berkshire |
+| 项目 | https://github.com/xbtlin/ai-berkshire |
 |------|----------------------------------------------|
 | **借鉴内容** | 四大师方法论（巴菲特/芒格/段永平/李录互相挑战）、7步研究流程、三情景估值、金融严谨性工具（Decimal精确计算、市值验算、交叉验证）、多Agent并行研究模式 |
 | **解决的问题** | L1 分析师的基本面深度分析框架——从「看PE/ROE」升级为「看生意本质+护城河+逆向思考+文明趋势」 |
@@ -18,8 +18,8 @@
 
 ### 2. cyberagent（MIT）
 
-| 项目 | https://github.com/CyberK13/cyberagent |
-|------|----------------------------------------|
+| 项目 | https://pypi.org/project/cyberagent/ (`pip install cyberagent`) |
+|------|----------------------------------------------------------------|
 | **借鉴内容** | **物理瓶颈分析链**（资产定位→物理世界→人类发展→经济学→公司财务→行业龙头）、瓶颈分类（owner/adjacent/derivative/none）、两轴独立判断（瓶颈身份 ≠ 定价位置）、证据分级（Confirmed/Inferred/Weak/NeedsVerification）、Aschenbrenner SA瓶颈阶梯（电力>CoWoS/HBM>裸逻辑）、「诚实标晚了」纪律 |
 | **解决的问题** | 传统因子分析（PE/ROE）在科技/制造赛道失效——看不出真正的护城河。瓶颈分析补上了「供应链定位」这个缺失的分析维度 |
 | **融入位置** | `src/industry/bottleneck.py`、`src/industry/supply_chain.py`、L1分析师第3维度 |
@@ -37,7 +37,7 @@
 
 ### 4. AlphaEvo（ZhuLinsen系列）
 
-| 项目 | https://github.com/ZhuLinsen/AlphaEvo |
+| 项目 | https://github.com/ZhuLinsen/alphaevo |
 |------|---------------------------------------|
 | **借鉴内容** | 策略自我进化循环（backtest→reflect→mutate→save→repeat）、AntiFitMetrics（train/val/test分集+年一致性+参数敏感性+复杂度惩罚）、SelfCritic校验器、YAML策略DSL、DataAdapter接口隔离 |
 | **解决的问题** | 策略过拟合是量化策略头号杀手。AntiFitMetrics提供了系统性的抗过拟合评估框架 |
@@ -46,7 +46,7 @@
 
 ### 5. open-xquant（75★）
 
-| 项目 | https://github.com/open-xquant/open-xquant |
+| 项目 | https://github.com/xingwudao/open-xquant |
 |------|-------------------------------------------|
 | **借鉴内容** | 可复现审计流水线（spec→validate→compile→backtest→audit→robustness→report）、假回测拒绝机制（spec_audit + runtime_audit双重校验）、实验管理（oxq experiment add） |
 | **解决的问题** | 回测结果不可复现是量化领域的毒瘤。审计流水线确保每次回测可追溯、可复现 |
@@ -80,7 +80,7 @@
 
 ### 8. PanWatch（648★）
 
-| 项目 | https://github.com/PanWatch/PanWatch |
+| 项目 | https://github.com/TNT-Likely/PanWatch |
 |------|--------------------------------------|
 | **借鉴内容** | 持仓管理（多账户汇总+成本均价+盈亏百分比）、技术指标共振（MACD/RSI/KDJ同框）、AI评分选股（5Agent自动运行）、通知渠道（Apprise多通道）、APScheduler定时调度 |
 | **解决的问题** | Phase 3盯盘模块和通知系统的设计参考 |
@@ -89,7 +89,7 @@
 
 ### 9. FinceptTerminal（27.9k★）
 
-| 项目 | https://github.com/FinceptTerminal/FinceptTerminal |
+| 项目 | https://github.com/Fincept-Corporation/FinceptTerminal |
 |------|---------------------------------------------------|
 | **借鉴内容** | 宏观数据维度分类（收益率曲线/货币供应/信用条件/金融压力/消费者信心）、公司研究9维度框架（估值/盈利能力/增长/财务健康/动量/效率/股息/规模/波动） |
 | **解决的问题** | 因子体系的分类框架——怎么组织几十个因子 |
@@ -98,7 +98,7 @@
 
 ### 10. OpenStock（13.6k★）
 
-| 项目 | https://github.com/OpenStock/OpenStock |
+| 项目 | https://github.com/Open-Dev-Society/OpenStock |
 |------|--------------------------------------|
 | **借鉴内容** | 跨源情绪聚合（Reddit/X/News/Polymarket四源统配器+Buzz Score+看涨百分比）、价格提醒系统（ABOVE/BELOW条件+90天过期+5分钟cron检查） |
 | **解决的问题** | 情绪信号的多源聚合模式 |
