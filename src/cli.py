@@ -16,7 +16,7 @@
   python -m src.cli game-theory                   # 博弈论知识摘要
   python -m src.cli calibrate                     # 置信度校准报告
   python -m src.cli profile                       # 用户能力画像
-  python -m src.cli preference <view|edit|reset>  # 投资者偏好管理
+  python -m src.cli preference <view|setup|edit|reset>  # 投资者偏好管理
   python -m src.cli feedback <add|summary>        # 交易反馈
   python -m src.cli learn report                  # 生成学习报告
   python -m src.cli search-news <query>           # 金融资讯搜索
@@ -296,6 +296,8 @@ def cmd_preference(args: list[str]):
     if sub == "view":
         prefs = loader.load()
         print(loader.summary(prefs))
+    elif sub == "setup":
+        _cmd_preference_setup(loader)
     elif sub == "edit":
         path = os.path.abspath(loader.path)
         editor = os.environ.get("EDITOR", "nano")
@@ -306,7 +308,127 @@ def cmd_preference(args: list[str]):
     elif sub == "path":
         print(os.path.abspath(loader.path))
     else:
-        print(f"未知子命令: {sub}，可用: view | edit | reset | path")
+        print(f"未知子命令: {sub}，可用: view | setup | edit | reset | path")
+
+
+def _cmd_preference_setup(loader):
+    """交互式投资者画像设置向导。"""
+    from src.learner.preference.model import (
+        InvestorPreference, RiskProfile, InvestmentGoal,
+        TradingStyle, InvestorTier, PositionLimits,
+    )
+
+    prefs = loader.load()
+
+    print("\n🎯 投资者画像设置向导")
+    print("=" * 50)
+    print("花 2 分钟设置你的专属画像，分析引擎会根据你的实际情况")
+    print("调整 L2 评分权重、L3 仓位建议、L4 风控参数。\n")
+
+    # 1. 风险偏好
+    print("1️⃣  风险偏好 (risk_profile)")
+    print("   conservative = 保守型：追求稳定，少亏钱比多赚钱重要")
+    print("   balanced     = 均衡型：在风险与收益间取平衡 (推荐)")
+    print("   aggressive   = 进取型：愿意承受较大波动博取高收益")
+    choice = input(f"   选择 [{prefs.risk_profile.value}]: ").strip().lower()
+    if choice in ("conservative", "balanced", "aggressive"):
+        prefs.risk_profile = RiskProfile(choice)
+
+    # 2. 投资目标
+    print("\n2️⃣  投资目标 (investment_goal)")
+    print("   absolute_return = 绝对收益：跑赢存款/理财，正收益优先")
+    print("   relative_return = 相对收益：跑赢沪深300指数")
+    print("   cash_flow       = 现金流：追求稳定股息分红")
+    choice = input(f"   选择 [{prefs.investment_goal.value}]: ").strip().lower()
+    if choice in ("absolute_return", "relative_return", "cash_flow"):
+        prefs.investment_goal = InvestmentGoal(choice)
+
+    # 3. 投资者级别
+    print("\n3️⃣  投资者级别 (tier)")
+    print("   beginner     = 小白：全量军规保护，输出更详细易懂")
+    print("   intermediate = 进阶：部分军规可放宽，输出适中")
+    print("   pro          = 专业：仅保留核心风控规则")
+    choice = input(f"   选择 [{prefs.tier.value}]: ").strip().lower()
+    if choice in ("beginner", "intermediate", "pro"):
+        prefs.tier = InvestorTier(choice)
+
+    # 4. 投资本金
+    print("\n4️⃣  总投资本金 (万元)")
+    current = prefs.position_limits.total_capital / 10000
+    choice = input(f"   输入 [{current:.0f}]: ").strip()
+    if choice:
+        try:
+            prefs.position_limits.total_capital = float(choice) * 10000
+        except ValueError:
+            print("   ⚠️ 输入无效，保持原值")
+
+    # 5. 投资期限
+    print("\n5️⃣  投资期限")
+    print("   例如: 1-3年 / 3-5年 / 5年以上")
+    choice = input(f"   输入 [{prefs.investment_horizon}]: ").strip()
+    if choice:
+        prefs.investment_horizon = choice
+
+    # 6. 止损线
+    print("\n6️⃣  单笔最大亏损容忍 (%)")
+    current_pct = prefs.position_limits.single_stop_loss_pct * 100
+    choice = input(f"   输入 [{current_pct:.0f}]: ").strip()
+    if choice:
+        try:
+            prefs.position_limits.single_stop_loss_pct = float(choice) / 100
+        except ValueError:
+            print("   ⚠️ 输入无效，保持原值")
+
+    # 7. 能力圈
+    print("\n7️⃣  能力圈 — 你熟悉哪些行业？")
+    print("   当前已设置的行业:")
+    coc = prefs.circle_of_competence
+    current_industries = dict(coc.industries)
+    if current_industries:
+        for ind, fam in sorted(current_industries.items()):
+            print(f"     {ind}: {'⭐' * fam} ({fam}/5)")
+    else:
+        print("     (无)")
+
+    print("\n   常见行业参考: 消费、新能源、科技、医药、金融、制造、通信、半导体、白酒、汽车、互联网、军工、地产")
+    print("   输入格式: 行业名 熟悉度(1-5)，例如: 医药 4")
+    print("   输入空行结束。熟悉度建议: 5=从业者 4=深度研究 3=基本了解 2=略知 1=听说过")
+    new_industries = dict(current_industries)
+    while True:
+        line = input("   添加: ").strip()
+        if not line:
+            break
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                name = parts[0]
+                fam = int(parts[1])
+                if 1 <= fam <= 5:
+                    new_industries[name] = fam
+                else:
+                    print("   ⚠️ 熟悉度需在 1-5 之间")
+            except ValueError:
+                print("   ⚠️ 格式错误，例如: 医药 4")
+    coc.industries = new_industries
+
+    # 8. 保存
+    print(f"\n{'=' * 50}")
+    print("📋 配置预览:")
+    print(f"   风险偏好: {prefs.risk_profile.value}")
+    print(f"   投资目标: {prefs.investment_goal.value}")
+    print(f"   投资级别: {prefs.tier.value}")
+    print(f"   投资本金: {prefs.position_limits.total_capital:,.0f}")
+    print(f"   投资期限: {prefs.investment_horizon}")
+    print(f"   单笔止损: {prefs.position_limits.single_stop_loss_pct:.0%}")
+    print(f"   能力圈: {', '.join(f'{k}({v}/5)' for k, v in sorted(coc.industries.items()))}")
+
+    confirm = input("\n保存配置? [Y/n]: ").strip().lower()
+    if confirm in ("", "y", "yes"):
+        loader.save(prefs)
+        print(f"✅ 配置已保存到 {loader.path}")
+        print("   下次运行 analyze 时自动生效！")
+    else:
+        print("❌ 已取消，配置未保存")
 
 
 @_safe_cmd
@@ -1671,7 +1793,7 @@ def main():
         print("  calibrate               置信度校准")
         print("  learn report            学习报告")
         print("  profile                 用户能力画像")
-        print("  preference <view|edit>  投资者偏好管理")
+        print("  preference <view|setup|edit>  投资者偏好管理")
         print("  feedback <add|summary>  交易反馈")
         print()
         print("📢 社交:")

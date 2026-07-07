@@ -102,6 +102,21 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     )
     lines.append("  " + " | ".join(meta_parts))
 
+    # ⚠️ 默认配置提醒
+    if result.using_default_profile:
+        lines.append(f"\n  {'─' * 66}")
+        lines.append("  ⚠️  🎯 检测到你正在使用系统默认投资者画像！")
+        lines.append("  │")
+        lines.append("  │  当前是通用的 beginner/balanced 默认配置，")
+        lines.append("  │  分析结果未针对你的实际情况进行个性化。")
+        lines.append("  │")
+        lines.append("  │  📝 花 2 分钟设置你的专属画像，分析会更准确：")
+        lines.append("  │     python -m src.cli preference setup")
+        lines.append("  │")
+        lines.append("  │  设置内容包括：风险偏好、投资目标、能力圈（你熟悉的行业）、")
+        lines.append("  │  仓位约束、投资本金、止损线等。")
+        lines.append(f"  {'─' * 66}")
+
     # 门禁 + 阻断
     if not result.passed:
         lines.append(f"  🚫 阻断原因: {', '.join(result.blocked_by)}")

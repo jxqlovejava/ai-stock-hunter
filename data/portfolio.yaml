@@ -32,7 +32,10 @@ score_weights:
 enabled_rules: null
 
 # 能力圈: 行业 → 熟悉度 1-5
+# 5=从业者/深度跟踪 4=深入研究 3=基本了解 2=略知一二 1=听说过
+# 💡 运行 `python -m src.cli preference setup` 可交互式设置
 circle_of_competence:
   消费: 3
   新能源: 2
   科技: 2
+  # 常见行业参考: 医药、金融、制造、通信、半导体、白酒、汽车、互联网、军工、地产
