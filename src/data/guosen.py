@@ -12,12 +12,26 @@
 from __future__ import annotations
 
 import os
+import ssl
 from datetime import datetime, timedelta
 from typing import Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 
 from .base import DataProvider
+
+
+class _LegacySSLAdapter(HTTPAdapter):
+    """允许与使用旧版 SSL 的服务器（如国信 API）进行 TLS 重新协商。"""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        # 允许旧版不安全的 TLS 重新协商
+        ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 from .schema import Financials, Quote
 
 
@@ -35,6 +49,9 @@ class GuosenProvider(DataProvider):
             raise RuntimeError(
                 "GS_API_KEY 未配置。请设置环境变量 GS_API_KEY 或传入 api_key 参数。"
             )
+        # 创建带旧版 SSL 支持的 session（国信 API 服务器使用旧 TLS）
+        self._session = requests.Session()
+        self._session.mount("https://", _LegacySSLAdapter())
 
     @property
     def _params(self) -> dict:
@@ -49,7 +66,7 @@ class GuosenProvider(DataProvider):
         set_code = self._market_to_set_code(market)
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0"
         try:
-            r = requests.get(
+            r = self._session.get(
                 url,
                 params={
                     **self._params,
@@ -61,20 +78,22 @@ class GuosenProvider(DataProvider):
                 proxies={"http": None, "https": None},
             )
             d = r.json()
-            data = d.get("data", {})
+            # 单个查询返回 {"result":..., "object":{...}}
+            # 批量查询返回 {"result":..., "data":[...]} 或 {"result":..., "object":{...}}
+            data = d.get("object") or d.get("data", {})
             if not data or not isinstance(data, dict):
                 return None
             return Quote(
                 symbol=symbol,
                 name=data.get("name", ""),
-                price=float(data.get("now", 0)),
-                change_pct=float(data.get("priceChangePct", 0)),
-                volume=int(float(data.get("vol", 0)) * 100) if data.get("vol") else 0,
+                price=self._safe_float(data.get("now", 0)),
+                change_pct=self._safe_float(data.get("priceChangePct", 0)),
+                volume=self._parse_volume(data.get("vol", 0)),
                 turnover=self._parse_amount(data.get("amount")),
-                high=float(data.get("max", 0)) if data.get("max") else None,
-                low=float(data.get("min", 0)) if data.get("min") else None,
-                open=float(data.get("open", 0)) if data.get("open") else None,
-                prev_close=float(data.get("close", 0)) if data.get("close") else None,
+                high=self._safe_float(data.get("max")) if data.get("max") else None,
+                low=self._safe_float(data.get("min")) if data.get("min") else None,
+                open=self._safe_float(data.get("open")) if data.get("open") else None,
+                prev_close=self._safe_float(data.get("close")) if data.get("close") else None,
                 source=self.source_name,
             )
         except Exception:
@@ -87,7 +106,7 @@ class GuosenProvider(DataProvider):
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryCombHQ/1.0"
         set_codes = [str(self._market_to_set_code(m)) for m in markets]
         try:
-            r = requests.get(
+            r = self._session.get(
                 url,
                 params={
                     **self._params,
@@ -136,7 +155,7 @@ class GuosenProvider(DataProvider):
         """获取最近 N 期利润表数据。"""
         url = f"{self.BASE_URL}/gsnews/gsf10/financial/incomeStatement/1.0"
         try:
-            r = requests.get(
+            r = self._session.get(
                 url,
                 params={
                     **self._params,
@@ -196,7 +215,7 @@ class GuosenProvider(DataProvider):
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryPastHQInfo/1.0"
         set_code = self._market_to_set_code(market)
         try:
-            r = requests.get(
+            r = self._session.get(
                 url,
                 params={
                     **self._params,
@@ -222,7 +241,7 @@ class GuosenProvider(DataProvider):
         """查询宏观经济数据。返回 Markdown 文本。"""
         url = f"{self.BASE_URL}/gsnews/macro/queryMacro/1.0"
         try:
-            r = requests.get(
+            r = self._session.get(
                 url,
                 params={**self._params, "query": query},
                 timeout=30,
@@ -237,10 +256,48 @@ class GuosenProvider(DataProvider):
     # Health
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _safe_float(val) -> float:
+        """安全转换为 float，支持 "1.49万" 等中文格式。"""
+        if val is None or val == "":
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = str(val).replace(",", "").replace("%", "").strip()
+        # 中文单位转换
+        if "万" in s:
+            return float(s.replace("万", "")) * 10000
+        if "亿" in s:
+            return float(s.replace("亿", "")) * 100000000
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _parse_volume(val) -> int:
+        """解析成交量，支持 "1.49万手" / "14900" 等格式，返回股数。"""
+        if val is None or val == "":
+            return 0
+        if isinstance(val, (int, float)):
+            return int(val) if val > 1000 else int(val * 100)
+        s = str(val).replace(",", "").strip()
+        multiplier = 100  # 默认手→股
+        if "万" in s:
+            s = s.replace("万", "")
+            multiplier = 10000 * 100  # 万手→股
+        elif "亿" in s:
+            s = s.replace("亿", "")
+            multiplier = 100000000 * 100
+        try:
+            return int(float(s) * multiplier)
+        except ValueError:
+            return 0
+
     def health_check(self) -> bool:
         """测试 API 连通性。"""
         try:
-            r = requests.get(
+            r = self._session.get(
                 f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0",
                 params={**self._params, "code": "600519", "setCode": 1, "target": 0},
                 timeout=10,

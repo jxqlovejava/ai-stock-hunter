@@ -66,13 +66,15 @@ class DataAggregator:
 
     @property
     def guosen(self) -> GuosenProvider | None:
-        """懒加载国信适配器。无 API Key 时返回 None。"""
-        if self._guosen is None:
-            try:
-                self._guosen = GuosenProvider()
-            except RuntimeError:
-                pass
-        return self._guosen
+        """懒加载国信适配器。无 API Key 时返回 None。
+
+        每次访问重新检查，不永久缓存失败状态。
+        用户后续设置 GS_API_KEY 后自动恢复可用。
+        """
+        try:
+            return GuosenProvider()
+        except RuntimeError:
+            return None
 
     @property
     def akshare(self) -> AKShareProvider:
