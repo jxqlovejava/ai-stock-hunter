@@ -71,6 +71,8 @@ class OrchestratorResult:
     mental_model_info: Optional[dict] = None
     # Phase 6+: AI Berkshire 四视角辩论
     debate_result: Optional[dict] = None
+    # Phase 6+: 四视角详细观点 (含各大师独立评分/论点/担忧)
+    debate_perspectives: Optional[dict] = None
     # Phase 6+: Munger 思维模型匹配
     mental_models: list[dict] = field(default_factory=list)
     # Phase 6+: 强制结论
@@ -83,6 +85,8 @@ class OrchestratorResult:
     cross_validated: bool = False
     # CogAlpha: 多 Agent 质量审查报告
     quality_report: Optional[dict] = None
+    # 军规审查结果 (Phase 0)
+    doctrine_result: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -207,6 +211,14 @@ class Orchestrator:
             result.warnings = [r.name for r in doctrine_result.warnings]
             return result
         result.warnings = [r.name for r in doctrine_result.warnings]
+        # 保存完整军规结果供格式化器使用
+        result.doctrine_result = {
+            "passed": doctrine_result.passed,
+            "total_rules": len(doctrine_result.blocked_by) + len(doctrine_result.warnings) + len(doctrine_result.infos),
+            "blocked": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.blocked_by],
+            "warnings": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.warnings],
+            "infos": [{"id": r.id, "name": r.name, "severity": r.severity.value, "description": r.description} for r in doctrine_result.infos],
+        }
 
         # Step 2: L0 保安
         gate_ctx = {
@@ -391,6 +403,15 @@ class Orchestrator:
             "agreement_level": debate.agreement_level,
             "recommendation": debate.recommendation,
             "top_disagreement": debate.top_disagreement,
+            "top_agreement": debate.top_agreement,
+            "tension_summary": debate.tension_summary,
+        }
+        # 保存四个视角的详细观点
+        result.debate_perspectives = {
+            "buffett": _perspective_to_dict(debate.buffett),
+            "li_lu": _perspective_to_dict(debate.li_lu),
+            "munger": _perspective_to_dict(debate.munger),
+            "lynch": _perspective_to_dict(debate.lynch),
         }
         # 四视角辩论 — LLM 多角色推演，属于推测
         report.source_citations.append(make_citation(
@@ -491,21 +512,48 @@ class Orchestrator:
         # Phase 6+: 三情景估值
         try:
             from src.valuation.scenario import ScenarioValuation
+            pe_ttm_val = quote_dict.get("pe_ttm")
+            pb_val = quote_dict.get("pb")
+            roe_val = quote_dict.get("roe")
+            earnings_growth_val = self.data.get_earnings_growth(symbol, market)
             scenario = ScenarioValuation.from_fundamentals(
                 symbol=symbol, name=name,
                 current_price=quote.price if quote else quote_dict.get("price", 0),
-                pe_ttm=quote_dict.get("pe_ttm"),
-                pb=quote_dict.get("pb"),
-                roe=quote_dict.get("roe"),
-                earnings_growth=self.data.get_earnings_growth(symbol, market),
+                pe_ttm=pe_ttm_val,
+                pb=pb_val,
+                roe=roe_val,
+                earnings_growth=earnings_growth_val,
             )
+            # 附计算方法说明和输入参数
+            scenario_method = "PEG启发式 (合理PE≈盈利增速%)" if (pe_ttm_val and earnings_growth_val and pe_ttm_val > 0 and earnings_growth_val > 0) else (
+                "PB-ROE粗略估算 (合理PB≈ROE/10)" if (pb_val and roe_val and pb_val > 0 and roe_val > 0) else "回退: 当前价格=基准")
             result.scenario_valuation = {
                 "bull_target": scenario.bull_target,
                 "base_target": scenario.base_target,
                 "bear_target": scenario.bear_target,
                 "implied_upside": scenario.implied_upside,
                 "implied_downside": scenario.implied_downside,
+                "method": scenario_method,
+                "inputs": {
+                    "current_price": float(quote.price) if quote else float(quote_dict.get("price", 0)),
+                    "pe_ttm": pe_ttm_val,
+                    "pb": pb_val,
+                    "roe": roe_val,
+                    "earnings_growth": earnings_growth_val,
+                },
+                "bull_formula": "基准 × 1.20 (乐观溢价20%)",
+                "bear_formula": "基准 × 0.75 (悲观折价25%)",
+                # 注明这是推测性计算
+                "nature": "speculation",
+                "source_tier": "T3",
             }
+            # 三情景估值 citation
+            report.source_citations.append(make_citation(
+                provider="valuation_scenario", field="scenario_valuation",
+                data_type="analyst_report",
+                source_tier="T3", nature="speculation",
+                confidence=0.40,
+            ))
         except Exception as e:
             logger.debug("Scenario valuation failed for %s: %s", symbol, e)
 
@@ -1231,3 +1279,19 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Executive context unavailable for %s: %s", symbol, e)
         return ctx
+
+
+def _perspective_to_dict(ps) -> dict:
+    """将 PerspectiveScore 转为可序列化 dict。"""
+    return {
+        "perspective": ps.perspective.value if hasattr(ps.perspective, "value") else str(ps.perspective),
+        "score": ps.score,
+        "confidence": ps.confidence,
+        "verdict": ps.verdict,
+        "one_line_thesis": ps.one_line_thesis,
+        "key_concern": ps.key_concern,
+        "sub_scores": ps.sub_scores,
+        "evidence": ps.evidence[:5],
+        "unique_insight": ps.unique_insight,
+        "questions": ps.questions_to_ask[:3],
+    }
