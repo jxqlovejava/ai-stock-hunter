@@ -14,7 +14,7 @@ from .diagnosis import DiagnosisReport
 class Verdict:
     """综合裁决结果。"""
     symbol: str
-    score: int = 50                          # 0-100
+    score: float = 50.0                        # 0-100
     confidence: float = 0.5                  # 0.0-1.0
     recommendation: str = "HOLD"             # BUY / ADD / HOLD / REDUCE / SELL
     falsifiable: list[str] = field(default_factory=list)
@@ -210,7 +210,7 @@ class VerdictEngine:
 
         return Verdict(
             symbol=report.symbol,
-            score=int(score),
+            score=round(score, 1),
             confidence=round(confidence, 2),
             recommendation=rec,
             falsifiable=falsifiable,

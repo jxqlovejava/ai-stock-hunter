@@ -68,6 +68,8 @@ class Financials(BaseModel):
     total_assets: Optional[float] = Field(default=None, description="总资产（元）")
     total_liabilities: Optional[float] = Field(default=None, description="总负债（元）")
     operating_cash_flow: Optional[float] = Field(default=None, description="经营活动现金流（元）")
+    roe: Optional[float] = Field(default=None, description="净资产收益率 (%)")
+    eps: Optional[float] = Field(default=None, description="每股收益（元）")
     source: str = Field(..., description="数据来源")
     fetched_at: datetime = Field(default_factory=datetime.now)
     citation: Optional["SourceCitation"] = Field(default=None, description="数据溯源引用")

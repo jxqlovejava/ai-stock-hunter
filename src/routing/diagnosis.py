@@ -380,16 +380,17 @@ class DiagnosisEngine:
         return roe_score
 
     def _score_momentum(self, quote: dict, northbound_profile: Optional[object] = None) -> float:
-        """动量评分（增强版）：北向多维特征替代二元特征。"""
-        # Use multi-dimensional northbound profile if available
+        """动量评分：北向资金(市场级) + 个股涨跌幅(个股级) 混合。"""
+        nb_score = 50.0
         if northbound_profile is not None:
-            nb_score = getattr(northbound_profile, "score", None)
-            if nb_score is not None:
-                return float(nb_score)
+            nb_score = float(getattr(northbound_profile, "score", 50.0))
 
-        # Fallback to legacy binary northbound
-        nb = quote.get("northbound", 0)
-        return 50.0 + min(max(nb * 10, -30), 30)
+        # 个股自身动量：用当日涨跌幅作为短期动量代理
+        change_pct = quote.get("change_pct", 0) or 0.0
+        stock_momentum = 50.0 + min(max(change_pct * 5, -30), 30)
+
+        # 50% 市场北向 + 50% 个股涨跌 — 确保个股间有区分度
+        return nb_score * 0.5 + stock_momentum * 0.5
 
     @staticmethod
     def _get_revision_score(earnings_factor: object) -> float:

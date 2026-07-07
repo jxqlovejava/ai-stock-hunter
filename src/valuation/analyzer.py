@@ -112,7 +112,7 @@ class ValuationAnalyzer:
         citations: list[SourceCitation] = []
 
         # --- 1. PE 分位评分 ---
-        pe_score = self._score_pe_percentile(pe_percentile)
+        pe_score = self._score_pe_percentile(pe_percentile, pe_ttm)
         if pe_percentile is not None:
             citations.append(make_citation("tencent", "pe_percentile", "factor", nature="interpretation"))
 
@@ -191,14 +191,29 @@ class ValuationAnalyzer:
     # Sub-dimension scoring methods
     # ------------------------------------------------------------------
 
-    def _score_pe_percentile(self, pe_percentile: Optional[float]) -> float:
+    def _score_pe_percentile(self, pe_percentile: Optional[float], pe_ttm: Optional[float] = None) -> float:
         """PE 分位评分: 低分位=便宜=高分。
 
         pe_percentile 10 → 90分, 50 → 50分, 90 → 10分
+        无分位数据时用 PE_TTM 绝对值估算: <15=便宜(80), >50=昂贵(20)
         """
-        if pe_percentile is None:
-            return 50.0
-        return max(0.0, min(100.0, 100.0 - pe_percentile))
+        if pe_percentile is not None:
+            return max(0.0, min(100.0, 100.0 - pe_percentile))
+        # Fallback: 用 PE_TTM 绝对值粗略估算
+        if pe_ttm is not None and pe_ttm > 0:
+            if pe_ttm < 15:
+                return 80.0
+            elif pe_ttm < 25:
+                return 65.0
+            elif pe_ttm < 40:
+                return 50.0
+            elif pe_ttm < 60:
+                return 35.0
+            elif pe_ttm < 100:
+                return 20.0
+            else:
+                return 10.0
+        return 50.0
 
     def _score_industry_relative(
         self,

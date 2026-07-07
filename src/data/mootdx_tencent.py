@@ -173,18 +173,31 @@ class MootdxTencentProvider(DataProvider):
 
             # mootdx 返回 pandas DataFrame，字段名为拼音
             # 需要先提取标量再计算，避免 Series 布尔判断报错
+            revenue_val = self._safe_float(fin.get("zhuyingshouru", 0)) or 0.0
+            net_profit_val = self._safe_float(fin.get("jinglirun", 0)) or 0.0
+            total_assets_val = self._safe_float(fin.get("total_assets", fin.get("zongzichan", 0))) or 0.0
             liudong = self._safe_float(fin.get("liudongfuzhai", 0)) or 0.0
             changqi = self._safe_float(fin.get("changqifuzhai", 0)) or 0.0
+            total_liab = self._safe_float(fin.get("total_liabilities", liudong + changqi)) or 0.0
+
+            # 计算 ROE = 净利润 / (总资产 - 总负债) × 100%
+            equity = total_assets_val - total_liab
+            roe = round(net_profit_val / equity * 100, 2) if equity > 0 else None
+
+            # 计算 EPS = 净利润 / 总股本
+            total_shares = self._safe_float(fin.get("zongguben", 0)) or 0.0
+            eps = round(net_profit_val / total_shares, 4) if total_shares > 0 else None
+
             results.append(Financials(
                 symbol=symbol,
                 report_period=period,
-                revenue=self._safe_float(fin.get("zhuyingshouru", 0)),
-                net_profit=self._safe_float(fin.get("jinglirun", 0)),
-                total_assets=self._safe_float(fin.get("total_assets", fin.get("zongzichan", 0))),
-                total_liabilities=self._safe_float(
-                    fin.get("total_liabilities", liudong + changqi)
-                ),
+                revenue=revenue_val,
+                net_profit=net_profit_val,
+                total_assets=total_assets_val,
+                total_liabilities=total_liab,
                 operating_cash_flow=self._safe_float(fin.get("jingyingxianjinliu", None)),
+                roe=roe,
+                eps=eps,
                 source=self.source_name,
             ))
 
