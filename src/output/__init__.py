@@ -6,7 +6,7 @@ from .formatter import (
     format_analysis_result,
     format_nature_tag,
     format_citations_summary,
-    format_l1_score_panel,
+    format_diagnosis_panel,
     format_l2_verdict_detail,
 )
 

@@ -231,7 +231,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
 
         # 8 维度评分面板
         lines.append(f"\n  📊 八维评分")
-        lines.append(format_l1_score_panel(report))
+        lines.append(format_diagnosis_panel(report))
 
         # 多空双视角
         if report.bull_case:
@@ -525,7 +525,7 @@ def format_citations_summary(citations: list[SourceCitation]) -> str:
     return "\n".join(lines)
 
 
-def format_l1_score_panel(report: DiagnosisReport | None) -> str:
+def format_diagnosis_panel(report: DiagnosisReport | None) -> str:
     if report is None:
         return "    ⚠️ 不可用"
     lines = []
