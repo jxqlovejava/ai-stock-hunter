@@ -86,38 +86,42 @@ class L3Trader:
         action = self._score_to_action(score)
         symbol = verdict.symbol
 
+        # 入参 Decimal 化 — 所有算账在 Decimal 域内完成
+        macro_cap_d = D(macro_cap)
+        risk_mult_d = D(risk_multiplier)
+
         # Phase 5: 凯利公式仓位管理
         kelly_fraction = None
         if position_limits:
             kelly_fraction = position_limits.get("kelly_fraction")
 
         if self._kelly_sizer is not None:
-            target, sizing_method, kelly_f, sizing_source = self._kelly_sizing(
+            target_d, sizing_method, kelly_f, sizing_source = self._kelly_sizing(
                 symbol, score, macro_cap, position_limits, kelly_fraction,
             )
         else:
             # 无 Kelly sizer → 纯线性公式
-            target, sizing_method, kelly_f, sizing_source = self._linear_only(
+            target_d, sizing_method, kelly_f, sizing_source = self._linear_only(
                 score, macro_cap, position_limits,
             )
 
         # 风险偏好乘数
-        target = target * risk_multiplier
+        target_d *= risk_mult_d
 
         # 双创折扣
         if is_gem:
-            gem_discount = 0.8
+            gem_discount = D("0.8")
             if position_limits:
-                gem_discount = position_limits.get("gem_discount", 0.8)
-            target *= gem_discount
+                gem_discount = D(position_limits.get("gem_discount", 0.8))
+            target_d *= gem_discount
 
         # 用户偏好单票上限 (二次确认)
         if position_limits:
-            max_single = position_limits.get("single_stock_cap", 1.0)
-            target = min(target, max_single)
+            max_single = D(position_limits.get("single_stock_cap", 1.0))
+            target_d = min(target_d, max_single)
 
         # 宏观仓位上限
-        target = min(target, macro_cap)
+        target_d = min(target_d, macro_cap_d)
 
         # 核心仓/交易仓区分
         if is_core:
@@ -131,7 +135,7 @@ class L3Trader:
         return TradeSignal(
             symbol=symbol,
             action=action,
-            target_weight=round(float(D(target)), 4),
+            target_weight=round(float(target_d), 4),
             is_core=is_core,
             source_citations=verdict.source_citations,
             confidence=verdict.confidence,
@@ -171,7 +175,7 @@ class L3Trader:
             result.payoff_ratio, result.n_trades,
         )
         return (
-            result.target_weight,
+            D(result.target_weight),
             result.method,
             result.kelly_f,
             result.source_citation,
@@ -184,13 +188,14 @@ class L3Trader:
         position_limits: Optional[dict],
     ) -> tuple[float, str, float, str]:
         """纯线性公式（无 Kelly sizer 时使用）。"""
-        base = max(0, (score - 50) / 50 * macro_cap)
-        base_d = D(base)
+        score_d = D(score)
+        macro_cap_d = D(macro_cap)
+        base_d = max(D("0"), (score_d - D("50")) / D("50") * macro_cap_d)
         if position_limits:
             max_single = D(position_limits.get("single_stock_cap", 1.0))
             base_d = min(base_d, max_single)
         return (
-            float(base_d),
+            base_d,
             "linear_fallback",
             0.0,
             f"linear:base=({score}-50)/50×{macro_cap}={float(base_d):.1%}",

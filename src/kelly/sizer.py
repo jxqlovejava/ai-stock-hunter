@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .tracker import KellyParams, TradeTracker
+from src.utils.decimal_utils import D
 
 logger = logging.getLogger(__name__)
 
@@ -135,42 +136,43 @@ class KellyPositionSizer:
         target = min(target, L4 single_stock_cap)
         target = min(target, macro_cap)
         """
-        b = kp.payoff_ratio
-        p = kp.win_rate
-        q = 1.0 - p
+        b_d = D(kp.payoff_ratio)
+        p_d = D(kp.win_rate)
+        q_d = D("1") - p_d
+        fraction_d = D(fraction)
 
-        # 凯利公式
-        raw_kelly = max(0.0, (b * p - q) / b) if b > 0 else 0.0
+        # 凯利公式 — Decimal 精算
+        raw_kelly_d = max(D("0"), (b_d * p_d - q_d) / b_d) if b_d > D("0") else D("0")
 
         # 分数凯利
-        target = fraction * raw_kelly
+        target_d = fraction_d * raw_kelly_d
 
         # L4 硬约束: 单票上限
-        single_cap = 1.0
-        if position_limits:
-            single_cap = position_limits.get("single_stock_cap", 1.0)
-        target = min(target, single_cap)
+        single_cap = D(position_limits.get("single_stock_cap", 1.0)) if position_limits else D("1.0")
+        target_d = min(target_d, single_cap)
 
         # 宏观仓位上限
-        target = min(target, macro_cap)
+        target_d = min(target_d, D(macro_cap))
 
+        raw_kelly_f = float(raw_kelly_d)
         method = "kelly"
-        if raw_kelly <= 0:
+        if raw_kelly_d <= D("0"):
             method = "negative_expectation"
-            target = 0.0
+            target_d = D("0")
 
+        target_f = round(float(target_d), 4)
         return SizingResult(
             symbol=symbol,
-            target_weight=round(target, 4),
+            target_weight=target_f,
             method=method,
-            kelly_f=round(raw_kelly, 4),
+            kelly_f=round(raw_kelly_f, 4),
             kelly_fraction=round(fraction, 2),
             win_rate=kp.win_rate,
             payoff_ratio=kp.payoff_ratio,
             n_trades=kp.n_trades,
             source_citation=(
-                f"kelly_f*={raw_kelly:.1%}(b={b:.2f},p={p:.1%},n={kp.n_trades}),"
-                f"fraction={fraction:.0%}→{target:.1%}"
+                f"kelly_f*={raw_kelly_f:.1%}(b={kp.payoff_ratio:.2f},p={kp.win_rate:.1%},n={kp.n_trades}),"
+                f"fraction={fraction:.0%}→{target_f:.1%}"
             ),
         )
 
@@ -186,21 +188,24 @@ class KellyPositionSizer:
 
         base = (score - 50) / 50 * macro_cap
         """
-        base = max(0, (score - 50) / 50 * macro_cap)
+        score_d = D(score)
+        macro_cap_d = D(macro_cap)
+        base_d = max(D("0"), (score_d - D("50")) / D("50") * macro_cap_d)
 
         # L4 约束
         if position_limits:
-            base = min(base, position_limits.get("single_stock_cap", 1.0))
+            base_d = min(base_d, D(position_limits.get("single_stock_cap", 1.0)))
 
+        base_f = round(float(base_d), 4)
         return SizingResult(
             symbol=symbol,
-            target_weight=round(base, 4),
+            target_weight=base_f,
             method="linear_fallback",
             win_rate=kp.win_rate,
             payoff_ratio=kp.payoff_ratio,
             n_trades=kp.n_trades,
             source_citation=(
                 f"linear_fallback(n={kp.n_trades}<{TradeTracker.MIN_TRADES_FOR_KELLY}):"
-                f"base=({score}-50)/50×{macro_cap}={base:.1%}"
+                f"base=({score}-50)/50×{macro_cap}={base_f:.1%}"
             ),
         )

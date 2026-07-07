@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.utils.decimal_utils import D
+
 logger = logging.getLogger(__name__)
 
 # 默认交易记录存储路径
@@ -186,10 +188,10 @@ class TradeTracker:
         # 盈亏比 b = avg_win / avg_loss
         b = avg_win / avg_loss if avg_loss > 0 else 0.0
 
-        # 凯利公式 f* = (b × p - q) / b
+        # 凯利公式 f* = (b × p - q) / b — Decimal 精算
         q = 1.0 - p
         if b > 0 and n >= self.MIN_TRADES_FOR_KELLY:
-            kelly_f = max(0.0, (b * p - q) / b)
+            kelly_f = float(max(D("0"), (D(b) * D(p) - D(q)) / D(b)))
         else:
             kelly_f = 0.0  # 冷启动
 

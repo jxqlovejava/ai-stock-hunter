@@ -36,11 +36,11 @@ class L4RiskOfficer:
       - 流动性上限: 持仓 < 日均成交额 5%
     """
 
-    SINGLE_STOCK_CAP = 0.20
-    SINGLE_SECTOR_CAP = 0.40
-    MAX_DRAWDOWN = -0.15
-    SINGLE_STOP_LOSS = -0.02
-    BLACK_SWAN_THRESHOLD = -0.05
+    SINGLE_STOCK_CAP = Decimal("0.20")
+    SINGLE_SECTOR_CAP = Decimal("0.40")
+    MAX_DRAWDOWN = Decimal("-0.15")
+    SINGLE_STOP_LOSS = Decimal("-0.02")
+    BLACK_SWAN_THRESHOLD = Decimal("-0.05")
     # Phase 4: Alpha 衰减阈值
     ALPHA_DECAY_WARN_DAYS = 30          # Alpha 30 天未更新 → 警告
     ALPHA_CROWDED_WEIGHT_CUT = 0.5      # 拥挤时仓位减半
