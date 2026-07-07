@@ -128,16 +128,16 @@ class L4RiskOfficer:
         violations = []
         weight = D(signal.target_weight)
 
-        # 用户偏好覆盖
-        _single_stock_cap = D(self.SINGLE_STOCK_CAP)
-        _sector_cap = D(self.SINGLE_SECTOR_CAP)
-        _max_drawdown = D(self.MAX_DRAWDOWN)
-        _stop_loss = D(self.SINGLE_STOP_LOSS)
+        # 用户偏好覆盖（类常量已是 Decimal，position_limits 中的值需 D() 转换）
+        _single_stock_cap = self.SINGLE_STOCK_CAP
+        _sector_cap = self.SINGLE_SECTOR_CAP
+        _max_drawdown = self.MAX_DRAWDOWN
+        _stop_loss = self.SINGLE_STOP_LOSS
         if position_limits:
-            _single_stock_cap = D(position_limits.get("single_stock_cap", self.SINGLE_STOCK_CAP))
-            _sector_cap = D(position_limits.get("sector_cap", self.SINGLE_SECTOR_CAP))
-            _max_drawdown = D(position_limits.get("max_drawdown", self.MAX_DRAWDOWN))
-            _stop_loss = D(position_limits.get("stop_loss", self.SINGLE_STOP_LOSS))
+            _single_stock_cap = D(position_limits.get("single_stock_cap", float(_single_stock_cap)))
+            _sector_cap = D(position_limits.get("sector_cap", float(_sector_cap)))
+            _max_drawdown = D(position_limits.get("max_drawdown", float(_max_drawdown)))
+            _stop_loss = D(position_limits.get("stop_loss", float(_stop_loss)))
 
         # 单票上限
         if weight > _single_stock_cap:
@@ -152,7 +152,7 @@ class L4RiskOfficer:
 
         # 黑天鹅熔断
         market_drop = D((market or {}).get("hs300_change_pct", 0))
-        if market_drop <= D(self.BLACK_SWAN_THRESHOLD):
+        if market_drop <= self.BLACK_SWAN_THRESHOLD:
             violations.append("黑天鹅熔断: T+1 禁开新仓")
             if signal.action in ("OPEN", "ADD"):
                 weight = D("0")
