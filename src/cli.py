@@ -153,46 +153,20 @@ def cmd_analyze(symbol: str):
     if not _validate_symbol(symbol):
         return
     from src.routing.orchestrator import Orchestrator
+    from src.output.formatter import format_analysis_result
 
     print(f"📊 分析 {symbol}")
     orch = Orchestrator()
     result = orch.run(symbol, market=_infer_market(symbol))
+
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
+        if result.warnings:
+            print(f"⚠️  警告: {', '.join(result.warnings)}")
         return
-    if not result.passed:
-        print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
-        return
-    print(f"✅ 交叉验证: {'是' if result.cross_validated else '否'}")
-    if result.data_gaps:
-        print(f"📭 数据缺口: {', '.join(result.data_gaps)}")
-    if result.warnings:
-        print(f"⚠️  警告: {', '.join(result.warnings)}")
-    if result.game_theory_info:
-        gt = result.game_theory_info
-        print(f"🎲 博弈论: {gt.get('score', 0)}/100 | 主导: {gt.get('dominant_player', '')} | 席位: {gt.get('seat_signal', '')}")
-    if result.mental_model_info:
-        mm = result.mental_model_info
-        print(f"🧠 思维模型: {mm.get('fit_score', 0)}/100 | 能力圈: {mm.get('competence_match', '')}")
-    if result.debate_result:
-        dr = result.debate_result
-        print(f"🎭 四视角辩论: 平均分 {dr.get('avg_score', 0):.2f} | 分歧 {dr.get('score_range', 0):.2f} | {dr.get('agreement_level', '')}")
-    if result.mental_models:
-        print(f"🧩 Munger 模型: {', '.join(m.get('name_cn', '') for m in result.mental_models[:3])}")
-    if result.red_lines:
-        print(f"🚨 红线: {', '.join(result.red_lines)}")
-    if result.scenario_valuation:
-        sv = result.scenario_valuation
-        print(f"📐 三情景估值: 乐观 {sv.get('bull_target')} / 基准 {sv.get('base_target')} / 悲观 {sv.get('bear_target')}")
-    if result.enforced_verdict:
-        ev = result.enforced_verdict
-        print(f"⚖️ 强制结论: {ev.get('level')} | {ev.get('one_line_conclusion')}")
-    if result.verdict:
-        v = result.verdict
-        print(f"评分: {v.score}/100  置信度: {v.confidence:.0%}  建议: {v.recommendation}")
-    if result.risk:
-        r = result.risk
-        print(f"仓位: {r.adjusted_weight:.1%}  风控: {'✅' if r.passed else '⚠️ ' + ', '.join(r.violations)}")
+
+    # 使用详细输出格式化器
+    print(format_analysis_result(result))
 
 
 def cmd_macro():

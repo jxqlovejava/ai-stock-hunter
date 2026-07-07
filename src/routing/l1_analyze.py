@@ -148,7 +148,7 @@ class L1Analyzer:
         macro: dict | None,
         executive: dict | None = None,
     ) -> list[SourceCitation]:
-        """收集所有数据点的来源引用（T0-T3 分级）。"""
+        """收集所有数据点的来源引用（T0-T3 分级），含 fact/interpretation/speculation 分类。"""
         citations: list[SourceCitation] = []
         if quote:
             provider = quote.get("_source", "mootdx")
@@ -186,6 +186,37 @@ class L1Analyzer:
                 provider="miaoxiang-data-executive", field="executive",
                 data_type="executive", source_tier="T2", nature="fact",
             ))
+
+        # L1 评分维度 — 基于原始数据的分析解释
+        citations.append(make_citation(
+            provider="l1_analyzer", field="l1_multi_dimension_scores",
+            data_type="factor",
+            source_tier="T2", nature="interpretation",
+            confidence=0.75,
+        ))
+
+        # 多空观点 — 推测性前瞻分析
+        citations.append(make_citation(
+            provider="l1_analyzer", field="bull_case",
+            data_type="analyst_report",
+            source_tier="T3", nature="speculation",
+            confidence=0.40,
+        ))
+        citations.append(make_citation(
+            provider="l1_analyzer", field="bear_case",
+            data_type="analyst_report",
+            source_tier="T3", nature="speculation",
+            confidence=0.40,
+        ))
+
+        # 瓶颈分析 — 基于供应链模型的解释
+        citations.append(make_citation(
+            provider="l1_analyzer", field="bottleneck_analysis",
+            data_type="analyst_report",
+            source_tier="T3", nature="speculation",
+            confidence=0.45,
+        ))
+
         return citations
 
     @staticmethod

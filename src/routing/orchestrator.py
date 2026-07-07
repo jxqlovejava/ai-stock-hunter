@@ -362,6 +362,20 @@ class Orchestrator:
         report.game_theory_profile = gt_profile
         report.investor_mental_model = imm_fit
         report.source_citations.extend(gt_profile.source_citations + imm_fit.source_citations)
+        # 博弈论分析 — 基于模型的博弈推演，属于推测
+        report.source_citations.append(make_citation(
+            provider="game_theory", field="game_theory_profile",
+            data_type="analyst_report",
+            source_tier="T3", nature="speculation",
+            confidence=0.50,
+        ))
+        # 投资思维模型 — 基于投资者画像的匹配分析，属于解释
+        report.source_citations.append(make_citation(
+            provider="imm_analyzer", field="mental_model_fit",
+            data_type="analyst_report",
+            source_tier="T2", nature="interpretation",
+            confidence=0.70,
+        ))
         result.game_theory_info = gt_profile.to_dict()
         result.mental_model_info = imm_fit.to_dict()
 
@@ -378,6 +392,13 @@ class Orchestrator:
             "recommendation": debate.recommendation,
             "top_disagreement": debate.top_disagreement,
         }
+        # 四视角辩论 — LLM 多角色推演，属于推测
+        report.source_citations.append(make_citation(
+            provider="perspective_analyzer", field="four_perspective_debate",
+            data_type="analyst_report",
+            source_tier="T3", nature="speculation",
+            confidence=0.45,
+        ))
 
         # Phase 6+: Munger 思维模型匹配
         matched_models = self.mental_model_matcher.match_models(
@@ -385,6 +406,14 @@ class Orchestrator:
         )
         report.mental_models = matched_models
         result.mental_models = matched_models
+        # Munger 思维模型匹配 — 分析解释
+        if matched_models:
+            report.source_citations.append(make_citation(
+                provider="mental_model_matcher", field="munger_mental_models",
+                data_type="analyst_report",
+                source_tier="T2", nature="interpretation",
+                confidence=0.65,
+            ))
 
         # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
         quality_report = self.quality_checker.check(report)

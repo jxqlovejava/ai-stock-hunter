@@ -114,22 +114,22 @@ class ValuationAnalyzer:
         # --- 1. PE 分位评分 ---
         pe_score = self._score_pe_percentile(pe_percentile)
         if pe_percentile is not None:
-            citations.append(make_citation("tencent", "pe_percentile", "factor"))
+            citations.append(make_citation("tencent", "pe_percentile", "factor", nature="interpretation"))
 
         # --- 2. 行业相对估值 ---
         ind_score = self._score_industry_relative(pe_ttm, industry_pe_median)
         if industry_pe_median is not None:
-            citations.append(make_citation("akshare", "industry_pe", "industry_pe"))
+            citations.append(make_citation("akshare", "industry_pe", "industry_pe", nature="fact"))
 
         # --- 3. PB-ROE 匹配 ---
         pb_roe_score, pb_justified = self._score_pb_roe(pb, roe)
         if pb is not None and roe is not None:
-            citations.append(make_citation("tencent", "pb_roe", "fundamental"))
+            citations.append(make_citation("tencent", "pb_roe", "fundamental", nature="interpretation"))
 
         # --- 4. PEG ---
         peg_score, peg_ratio = self._score_peg(pe_ttm, earnings_growth)
         if pe_ttm is not None and earnings_growth is not None:
-            citations.append(make_citation("tencent", "peg", "fundamental"))
+            citations.append(make_citation("tencent", "peg", "fundamental", nature="interpretation"))
 
         # --- 5. 股息率 ---
         div_score = self._score_dividend_yield(dividend_yield)
