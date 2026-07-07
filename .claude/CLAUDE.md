@@ -20,7 +20,7 @@ CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Jud
 - **[DATA_GAP]**：数据源缺失/失败必须显式说明并下调对应维度权重
 - **分制统一**：评分 0-100，信心度 0.0-1.0，情绪 -1.0 到 +1.0
 - **仅 SignalWriter 可写**：所有分析 Agent 只读，仅信号输出 Agent 有写权限
-- **数据源优先级**：已核实缓存 > 国信 > mootdx > AKShare > 腾讯
+- **数据源优先级**：华泰(HT_APIKEY) > 国信(GS_API_KEY) > 腾讯(免费) > mootdx(TCP) > AKShare
 
 详见 `.claude/rules/guardrails.md` 与 `docs/data-provenance.md`。
 
@@ -35,7 +35,7 @@ CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Jud
 | 路由 | `routing/l3_trade.py` | 信号→仓位映射 |
 | 路由 | `routing/l4_risk.py` | 硬性风控约束 |
 | 军规 | `doctrine/` | 31 条军规（4 级严重度） |
-| 数据 | `data/aggregator.py` | 多源聚合器（mootdx/腾讯/国信/AKShare） |
+| 数据 | `data/aggregator.py` | 多源聚合器（华泰/国信/腾讯/mootdx/AKShare） |
 | 数据 | `data/factor_pipeline.py` | 因子计算管道（PE/ROE/北向） |
 | 数据 | `data/earnings_revision.py` | 盈利修正因子 |
 | 宏观 | `macro/monetary_credit.py` | 货币-信用双象限框架 |
@@ -72,19 +72,39 @@ CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Jud
 ## CLI
 
 ```bash
-python -m src.cli <command> [args]
+python -m src <command> [args]
 
-# 主要命令
+# 核心分析
 analyze <code>     # 全链路分析
+diagnose <code>    # 一键诊断（小白入口）
+alpha <code>       # Alpha Lens 三维评估
+alpha-scan         # 高 Alpha 股票扫描
 scan --preset <p>  # 全市场选股扫描
+
+# 市场监控
 macro              # 宏观快照
-backtest           # 运行回测
-diagnose <code>    # 诊断分析（军规 + 分析）
+sentiment          # 情绪信号检测
 game-theory        # 博弈论概览
-calibrate          # 信心度校准
+search-news <q>    # 金融资讯搜索
+screen <conds>     # 条件选股
+
+# 盯盘 & 预警
+sweep              # 自选股扫雷
+alert watch-add    # 加入自选股
+alert list         # 查看自选股
+
+# 交易 & 风控
+backtest           # 运行回测
+paper-trade        # 模拟交易管理
+trade-track        # 交易追踪（凯利）
+
+# 学习 & 进化
+evolution <sub>    # 策略进化（10 个子命令）
+calibrate          # 置信度校准
+learn report       # 学习报告
 profile            # 用户画像
+preference         # 投资者偏好管理
 feedback add       # 添加交易反馈
-evolve             # 策略进化
 ```
 
 ## 开发工作流
@@ -94,4 +114,9 @@ evolve             # 策略进化
 - **新增路由阶段**：在 `__init__.py` 导出 + `orchestrator.py` 的 `run()` 挂接
 - **Commit**：`<type>: <description>`（feat/fix/refactor/docs/test/chore）
 - **数据新鲜度**：行情 5min / 因子 1h / 基本面 24h / 主题 12h
-- **自动提交**：完整实现一个功能或 fix 解决问题后，自动调用 `/gcp` 命令提交并推送。无需等待用户确认，直接执行。
+- **自动提交**：完整实现一个功能或 fix 解决问题后，按以下流程自动提交并推送：
+  1. 运行 `/code-review` 审查代码
+  2. 发现的问题自动修复
+  3. 修复后重新验证（测试通过）
+  4. 调用 `/gcp` 提交并推送
+  无需等待用户确认，直接执行。
