@@ -161,10 +161,16 @@ class DataAggregator:
     def _walk_financials_chain(
         self, symbol: str, market: str = "SH", count: int = 4
     ) -> list[Financials]:
-        """按 a_share fallback 链获取财务报表，并附加 citation。"""
+        """按 a_share fallback 链获取财务报表。
+
+        主源返回数据后，尝试用后续源补充缺失字段 (ROE/EPS 等)。
+        """
         from src.data.loaders.registry import _ensure_registered
         _ensure_registered()
-        for name in FALLBACK_CHAINS.get("a_share", []):
+        primary: list[Financials] = []
+        primary_name = ""
+        chain = FALLBACK_CHAINS.get("a_share_financials", FALLBACK_CHAINS.get("a_share", []))
+        for name in chain:
             loader_cls = LOADER_REGISTRY.get(name)
             if loader_cls is None:
                 continue
@@ -175,17 +181,77 @@ class DataAggregator:
             if not loader.is_available():
                 continue
             fins = loader.get_financials(symbol, market, count)
-            if fins:
-                citation = make_citation(
-                    provider=loader.name,
-                    field="financials",
-                    data_type="financials",
-                )
-                for fin in fins:
-                    if fin.citation is None:
-                        fin.citation = citation
-                return fins
-        return []
+            if not fins:
+                continue
+            citation = make_citation(
+                provider=loader.name, field="financials", data_type="financials",
+            )
+            for fin in fins:
+                if fin.citation is None:
+                    fin.citation = citation
+            if not primary:
+                primary = fins
+                primary_name = name
+            else:
+                # 🌟 补充源: 用后续源填充主源缺失的字段
+                self._enrich_financials(primary, fins, primary_name, loader.name)
+        return primary
+
+    @staticmethod
+    def _enrich_financials(
+        primary: list[Financials],
+        supplement: list[Financials],
+        primary_src: str,
+        supp_src: str,
+    ):
+        """用补充源的字段填充/覆盖主源中缺失或可改进的字段。
+
+        akshare (同花顺) 的 ROE/EPS 等来自官方财报，优先于 mootdx 的手工计算值。
+        """
+        # 报告期格式可能不一致 (2026Q3 vs 2026-09-30)，按季度标准化后匹配
+        def _quarter_key(period: str) -> str:
+            """标准化报告期为 YYYYQN 格式。"""
+            p = str(period).strip()
+            if "Q" in p:
+                return p  # already YYYYQN
+            # date format: 2025-12-31 → 2025Q4
+            parts = p.split("-")
+            if len(parts) >= 2:
+                month = int(parts[1])
+                return f"{parts[0]}Q{(month - 1) // 3 + 1}"
+            return p
+
+        # 按标准化季度匹配
+        supp_by_period = {}
+        for f in supplement:
+            supp_by_period[_quarter_key(f.report_period)] = f
+
+        enriched_fields = []
+        # 取补充源的最新数据作为权威 ROE/EPS（不同源报告期格式可能不一致）
+        latest_supp = supplement[0] if supplement else None
+        for p in primary:
+            # 尝试精确匹配
+            key = _quarter_key(p.report_period)
+            s = supp_by_period.get(key) or latest_supp
+
+            # akshare 同花顺的 ROE 是官方数据，优先使用
+            if s and s.roe is not None:
+                if p.roe is None or supp_src in ("akshare", "huatai"):
+                    if p.roe is None or abs((p.roe or 0) - (s.roe or 0)) > 0.5:
+                        p.roe = s.roe
+                        enriched_fields.append("roe")
+            if p.eps is None and s and s.eps is not None:
+                p.eps = s.eps
+                enriched_fields.append("eps")
+            if p.operating_cash_flow is None and s and s.operating_cash_flow is not None:
+                p.operating_cash_flow = s.operating_cash_flow
+                enriched_fields.append("operating_cash_flow")
+
+        if enriched_fields:
+            logger.info(
+                "财务数据补充: %s → %s 补充了 %s",
+                supp_src, primary_src, ", ".join(dict.fromkeys(enriched_fields)),
+            )
 
     # ------------------------------------------------------------------
     # Quote

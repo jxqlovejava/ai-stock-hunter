@@ -21,6 +21,8 @@ LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 # 华泰(HT_APIKEY) > 国信(GS_API_KEY) > 腾讯(免费不封IP) > mootdx(TCP行情) > AKShare(爬虫降级)
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share": ["verified_cache", "huatai", "guosen", "tencent", "mootdx", "akshare"],
+    # 财务数据优先用同花顺(akshare) — 有直接ROE/ROA等官方数据
+    "a_share_financials": ["verified_cache", "huatai", "guosen", "akshare", "tencent", "mootdx"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }

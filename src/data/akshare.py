@@ -128,15 +128,17 @@ class AKShareProvider(DataProvider):
                 try:
                     period = str(r.get("报告期", ""))
                     bs = bs_data.get(period, {})
+                    # 计算 EPS = 净利润 / 总股本
+                    total_shares_val = self._safe_float(r.get("总股本") or bs.get("总股本"))
+                    np_val = self._safe_float(r.get("归母净利润") or r.get("净利润")) or 0.0
+                    eps = round(np_val / total_shares_val, 4) if (total_shares_val and total_shares_val > 0) else None
+
                     results.append(
                         Financials(
                             symbol=symbol,
                             report_period=period,
                             revenue=self._safe_float(r.get("营业总收入")),
-                            net_profit=self._safe_float(
-                                # 优先归母净利润，其次净利润
-                                r.get("归母净利润") or r.get("净利润")
-                            ),
+                            net_profit=np_val,
                             total_assets=self._safe_float(
                                 bs.get("资产总计") or r.get("资产总计")
                             ),
@@ -146,6 +148,8 @@ class AKShareProvider(DataProvider):
                             operating_cash_flow=self._safe_float(
                                 r.get("每股经营现金流")
                             ),
+                            roe=self._safe_float(r.get("净资产收益率")),  # 同花顺直接提供 ROE
+                            eps=eps,
                             source=self.source_name,
                         )
                     )
@@ -238,7 +242,6 @@ class AKShareProvider(DataProvider):
     def _valid(val) -> bool:
         return val is not None and str(val) not in ("-", "", "nan", "None")
 
-    @staticmethod
     @staticmethod
     def _safe_float(val) -> float | None:
         """安全转 float，支持中文单位（亿/万/%）。"""
