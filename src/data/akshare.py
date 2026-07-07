@@ -101,24 +101,50 @@ class AKShareProvider(DataProvider):
     def get_financials(
         self, symbol: str, market: str = "SH", count: int = 4
     ) -> list[Financials]:
-        """获取最近 N 期财务数据。"""
+        """获取最近 N 期财务数据。
+
+        使用同花顺财务摘要 (stock_financial_abstract_ths)，
+        字段: 报告期/净利润/营业总收入/净资产收益率/每股经营现金流 等。
+        资产负债表数据通过 stock_balance_sheet_by_report_ths 补充。
+        """
         try:
+            # 主表: 利润表 + 部分资产负债表指标
             df = ak.stock_financial_abstract_ths(symbol=symbol, indicator="按报告期")
             if df is None or df.empty:
                 return []
+            # 尝试补充资产负债表
+            bs_data = {}
+            try:
+                bs_df = ak.stock_balance_sheet_by_report_ths(symbol=symbol)
+                if bs_df is not None and not bs_df.empty:
+                    for _, row in bs_df.iterrows():
+                        period = str(row.get("报告期", ""))
+                        bs_data[period] = row
+            except Exception:
+                pass
+
             results = []
             for _, r in df.tail(count).iterrows():
                 try:
+                    period = str(r.get("报告期", ""))
+                    bs = bs_data.get(period, {})
                     results.append(
                         Financials(
                             symbol=symbol,
-                            report_period=str(r.get("报告期", "")),
+                            report_period=period,
                             revenue=self._safe_float(r.get("营业总收入")),
-                            net_profit=self._safe_float(r.get("归母净利润")),
-                            total_assets=self._safe_float(r.get("资产总计")),
-                            total_liabilities=self._safe_float(r.get("负债合计")),
+                            net_profit=self._safe_float(
+                                # 优先归母净利润，其次净利润
+                                r.get("归母净利润") or r.get("净利润")
+                            ),
+                            total_assets=self._safe_float(
+                                bs.get("资产总计") or r.get("资产总计")
+                            ),
+                            total_liabilities=self._safe_float(
+                                bs.get("负债合计") or r.get("负债合计")
+                            ),
                             operating_cash_flow=self._safe_float(
-                                r.get("经营活动现金流")
+                                r.get("每股经营现金流")
                             ),
                             source=self.source_name,
                         )
@@ -213,10 +239,26 @@ class AKShareProvider(DataProvider):
         return val is not None and str(val) not in ("-", "", "nan", "None")
 
     @staticmethod
+    @staticmethod
     def _safe_float(val) -> float | None:
+        """安全转 float，支持中文单位（亿/万/%）。"""
         if val is None:
             return None
-        try:
+        if isinstance(val, (int, float)):
+            if val != val:  # NaN
+                return None
             return float(val)
+        s = str(val).replace(",", "").replace("%", "").strip()
+        if not s or s in ("False", "None", "--", "nan", ""):
+            return None
+        multiplier = 1.0
+        if "亿" in s:
+            s = s.replace("亿", "")
+            multiplier = 100_000_000
+        elif "万" in s:
+            s = s.replace("万", "")
+            multiplier = 10_000
+        try:
+            return float(s) * multiplier
         except (ValueError, TypeError):
             return None

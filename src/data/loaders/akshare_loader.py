@@ -29,9 +29,11 @@ class AKShareLoader(DataLoader):
         return self._provider
 
     def is_available(self) -> bool:
+        """AKShare 通常可用（爬虫源，不做全市场扫描连通性测试以免过慢）。"""
         try:
-            return self._provider_instance().health_check()
-        except Exception:
+            import akshare
+            return True
+        except ImportError:
             return False
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:

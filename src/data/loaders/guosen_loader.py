@@ -24,18 +24,13 @@ class GuosenLoader(DataLoader):
 
     def __init__(self):
         self._provider: Optional[GuosenProvider] = None
-        self._available: Optional[bool] = None
 
     def _provider_instance(self) -> Optional[GuosenProvider]:
-        if self._available is False:
+        """每次重新尝试创建（不缓存失败状态）。"""
+        try:
+            return GuosenProvider()
+        except RuntimeError:
             return None
-        if self._provider is None:
-            try:
-                self._provider = GuosenProvider()
-                self._available = True
-            except Exception:
-                self._available = False
-        return self._provider
 
     def is_available(self) -> bool:
         prov = self._provider_instance()
