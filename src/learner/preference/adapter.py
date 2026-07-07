@@ -24,7 +24,7 @@ from .model import (
 )
 
 # ------------------------------------------------------------------
-# 权重预设: (risk_profile, investment_goal) → 覆盖默认 L2Judge.WEIGHTS
+# 权重预设: (risk_profile, investment_goal) → 覆盖默认 VerdictEngine.WEIGHTS
 # ------------------------------------------------------------------
 
 WEIGHT_PRESETS: dict[tuple[RiskProfile, InvestmentGoal], dict[str, float]] = {
@@ -44,7 +44,7 @@ WEIGHT_PRESETS: dict[tuple[RiskProfile, InvestmentGoal], dict[str, float]] = {
         "sector": 0.15, "sentiment": 0.05,
     },
 
-    # 平衡 + 绝对收益 → 系统默认 (与 L2Judge.WEIGHTS 一致)
+    # 平衡 + 绝对收益 → 系统默认 (与 VerdictEngine.WEIGHTS 一致)
     (RiskProfile.BALANCED, InvestmentGoal.ABSOLUTE_RETURN): {
         "fundamental": 0.40, "technical": 0.20, "macro": 0.15,
         "sector": 0.10, "sentiment": 0.15,
@@ -186,7 +186,7 @@ def resolve_rule_filter(prefs: InvestorPreference) -> set[str] | None:
 
 
 def resolve_position_limits(prefs: InvestorPreference) -> dict:
-    """解析仓位/风控约束，供 L4RiskOfficer 使用。"""
+    """解析仓位/风控约束，供 RiskControlEngine 使用。"""
     limits = prefs.position_limits
     return {
         "single_stock_cap": limits.max_single_pct,
@@ -263,7 +263,7 @@ def resolve_time_horizon(prefs: InvestorPreference) -> TimeHorizonConfig:
 
 
 def resolve_stop_loss(prefs: InvestorPreference) -> dict:
-    """解析止损参数，供 L4RiskOfficer 使用。
+    """解析止损参数，供 RiskControlEngine 使用。
 
     短线/波段模式返回 ATR+时间+移动止损；长线模式返回固定止损。
     """

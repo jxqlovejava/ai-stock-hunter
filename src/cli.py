@@ -103,7 +103,7 @@ def cmd_scan(args: list[str]):
     """全市场选股扫描。"""
     import argparse
     from src.data.aggregator import DataAggregator
-    from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS as _SCREENING_PRESETS
+    from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
 
     parser = argparse.ArgumentParser(description="全市场选股扫描")
     parser.add_argument(
@@ -130,7 +130,7 @@ def cmd_scan(args: list[str]):
         print("⚠️ 无可用股票数据")
         return
 
-    analyzer = L1Analyzer()
+    analyzer = DiagnosisEngine()
     results = analyzer.screen_by_preset(parsed.preset, stocks, limit=parsed.limit)
     if not results:
         print("⚠️ 无股票通过筛选")

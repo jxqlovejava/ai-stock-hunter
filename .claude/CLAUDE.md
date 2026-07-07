@@ -5,17 +5,17 @@
 ## 架构概览
 
 ```
-CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Judge → L3Trader → L4RiskOfficer
+CLI (src/cli.py) → Orchestrator → 军规 → 准入检查 → 多维诊断 → 综合裁决 → 仓位调度 → 风控执行
                                       ↑ Phase 3 注入: MacroRegime / Northbound / EarningsRevision / TopicLifecycle
 ```
 
 ## 核心原则
 
 - **DTO 优先**：跨层数据使用 `@dataclass`，不用裸 dict
-- **完整 Workflow**：单票分析必须跑全 军规 → L0 → 宏观/Alpha → L1 → 质量审查 → 博弈论 → 投资思维模型 → L2 → L3 → L4 → 投资者校验，禁止跳过阶段
+- **完整 Workflow**：单票分析必须跑全 军规 → 准入检查 → 宏观/Alpha → 多维诊断 → 质量审查 → 博弈论 → 投资思维模型 → 综合裁决 → 仓位调度 → 风控执行 → 投资者校验，禁止跳过阶段
 - **护栏内置**：每个分析输出携带 `source_citations` + `confidence` + `data_freshness`
 - **数据溯源三要素**：每个 citation 必须标注 `tier`（primary/secondary/tertiary）与 `nature`（fact/interpretation/speculation）
-- **质量加权**：L1/L2 必须按数据新鲜度、来源级别、事实/推测性质对评分和 confidence 进行加权或降权
+- **质量加权**：多维诊断/综合裁决阶段必须按数据新鲜度、来源级别、事实/推测性质对评分和 confidence 进行加权或降权
 - **[UNSOURCED]**：无法验证的声明必须标记
 - **[DATA_GAP]**：数据源缺失/失败必须显式说明并下调对应维度权重
 - **分制统一**：评分 0-100，信心度 0.0-1.0，情绪 -1.0 到 +1.0
@@ -29,11 +29,11 @@ CLI (src/cli.py) → Orchestrator → 军规 → L0Gate → L1Analyzer → L2Jud
 | 层 | 模块 | 职责 |
 |----|------|------|
 | 路由 | `routing/orchestrator.py` | 全链路编排 |
-| 路由 | `routing/l0_gate.py` | 硬性门禁（0% AI） |
-| 路由 | `routing/l1_analyze.py` | 多维分析（宏观/价值/质量/动量/情绪/瓶颈） |
-| 路由 | `routing/l2_judge.py` | 加权评分 + 裁决 |
-| 路由 | `routing/l3_trade.py` | 信号→仓位映射 |
-| 路由 | `routing/l4_risk.py` | 硬性风控约束 |
+| 路由 | `routing/admission.py` | 准入检查（原 L0 Gate） |
+| 路由 | `routing/diagnosis.py` | 多维诊断（原 L1 Analyze） |
+| 路由 | `routing/verdict.py` | 综合裁决（原 L2 Judge） |
+| 路由 | `routing/positioning.py` | 仓位调度（原 L3 Trade） |
+| 路由 | `routing/risk_control.py` | 风控执行（原 L4 Risk） |
 | 军规 | `doctrine/` | 31 条军规（4 级严重度） |
 | 数据 | `data/aggregator.py` | 多源聚合器（华泰/国信/腾讯/mootdx/AKShare） |
 | 数据 | `data/factor_pipeline.py` | 因子计算管道（PE/ROE/北向） |
