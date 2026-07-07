@@ -38,6 +38,7 @@ import os
 import re
 import sys
 import traceback
+from datetime import datetime
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -1364,6 +1365,289 @@ def _evolve_report(args: list[str]):
         print(f"   {t.timestamp[:19]}  {t.from_state.value} → {t.to_state.value}  [{t.triggered_by}] {t.reason[:60]}")
 
 
+# ------------------------------------------------------------------
+# 盯盘: 自选股扫雷 + 预警管理 + 恐慌套利
+# ------------------------------------------------------------------
+
+DEFAULT_WATCHLIST_PATH = "data/watchlist.json"
+
+
+def _load_watchlist(path: str = DEFAULT_WATCHLIST_PATH) -> list[dict]:
+    """加载自选股列表。"""
+    import json
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return data.get("stocks", [])
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        print(f"⚠️ 自选股文件读取失败: {e}")
+        return []
+
+
+def _save_watchlist(stocks: list[dict], path: str = DEFAULT_WATCHLIST_PATH):
+    """保存自选股列表。"""
+    import json
+    os.makedirs(os.path.dirname(path) or "data", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"stocks": stocks, "updated_at": datetime.now().isoformat()},
+                  f, ensure_ascii=False, indent=2)
+
+
+@_safe_cmd
+def cmd_sweep(args: list[str]):
+    """自选股扫雷 — 检查所有自选股的价格预警、止损、异常波动。"""
+    import argparse
+    from src.data.aggregator import DataAggregator
+    from src.output.alert import AlertManager
+    from src.sentiment.panic_arb import PanicArbEngine
+
+    parser = argparse.ArgumentParser(description="自选股扫雷")
+    parser.add_argument("--watchlist", type=str, default=DEFAULT_WATCHLIST_PATH,
+                        help="自选股文件路径 (JSON)")
+    parser.add_argument("--panic", action="store_true", help="同时检查恐慌套利信号")
+    parsed = parser.parse_args(args)
+
+    watchlist = _load_watchlist(parsed.watchlist)
+    if not watchlist:
+        print("📭 自选股列表为空")
+        print(f"   创建自选股: python -m src alert watch-add <symbol> [--name NAME] [--stop-price X]")
+        return
+
+    print(f"🔍 扫雷 {len(watchlist)} 只自选股...")
+    print("=" * 50)
+
+    # 获取行情
+    agg = DataAggregator()
+    symbols = [s["symbol"] for s in watchlist]
+    quotes: dict[str, float] = {}
+    context: dict[str, dict] = {}
+
+    for s in watchlist:
+        sym = s["symbol"]
+        try:
+            quote = agg.get_realtime_quote(sym)
+            if quote:
+                quotes[sym] = quote.price or 0
+                context[sym] = {
+                    "name": s.get("name", sym),
+                    "stop_price": s.get("stop_price"),
+                    "change_pct": getattr(quote, "change_pct", 0) or 0,
+                    "volume_ratio": getattr(quote, "volume_ratio", 1.0) or 1.0,
+                }
+            else:
+                context[sym] = {"name": s.get("name", sym), "error": "行情不可用"}
+        except Exception:
+            context[sym] = {"name": s.get("name", sym), "error": "获取失败"}
+
+    # 运行扫雷
+    mgr = AlertManager()
+    for s in watchlist:
+        sym = s["symbol"]
+        if s.get("stop_price"):
+            mgr.add_stop_loss_alert(sym, s.get("name", sym), s["stop_price"])
+        if s.get("alert_above"):
+            mgr.add_price_alert(sym, s.get("name", sym), above=s["alert_above"])
+        if s.get("alert_below"):
+            mgr.add_price_alert(sym, s.get("name", sym), below=s["alert_below"])
+
+    alerts = mgr.check(quotes)
+    sweep_alerts = mgr.scan_watchlist([s["symbol"] for s in watchlist], quotes, context)
+
+    # 输出
+    all_alerts = alerts + sweep_alerts
+    if not all_alerts:
+        print("✅ 无预警触发")
+    else:
+        critical = [a for a in all_alerts if a.severity == "CRITICAL"]
+        warnings = [a for a in all_alerts if a.severity == "WARNING"]
+
+        if critical:
+            print(f"\n🚨 严重预警 ({len(critical)}):")
+            for a in critical:
+                print(f"  🔴 {a.alert_type}: {a.message}")
+        if warnings:
+            print(f"\n⚠️ 警告 ({len(warnings)}):")
+            for a in warnings:
+                print(f"  🟡 {a.alert_type}: {a.message}")
+
+    # 概览
+    print(f"\n📊 自选股概览:")
+    print(f"{'代码':<8s} {'名称':<10s} {'最新价':>8s} {'涨跌幅':>8s} {'状态':<12s}")
+    print("-" * 52)
+    for s in watchlist:
+        sym = s["symbol"]
+        ctx = context.get(sym, {})
+        price = quotes.get(sym)
+        price_str = f"{price:.2f}" if price else "N/A"
+        chg = ctx.get("change_pct", 0)
+        chg_str = f"{chg:+.2f}%" if chg else "N/A"
+
+        # 状态
+        status = "正常"
+        if ctx.get("error"):
+            status = "⚠️ 数据缺失"
+        elif s.get("stop_price") and price and price <= s["stop_price"]:
+            status = "🚨 止损"
+        elif chg and chg < -5:
+            status = "⚠️ 大跌"
+        elif chg and chg > 5:
+            status = "📈 大涨"
+
+        print(f"{sym:<8s} {s.get('name', sym):<10s} {price_str:>8s} {chg_str:>8s} {status:<12s}")
+
+    # 恐慌套利
+    if parsed.panic:
+        print(f"\n🎯 恐慌套利检查:")
+        panic_engine = PanicArbEngine()
+        for s in watchlist:
+            sym = s["symbol"]
+            ctx = context.get(sym, {})
+            chg = ctx.get("change_pct", 0)
+            if chg < -3:
+                event = {
+                    "type": "sentiment",
+                    "description": f"{s.get('name', sym)} 单日跌 {chg:.1f}%",
+                    "actual_drop_pct": abs(chg),
+                    "eps_impact_pct": 0,
+                    "affected_stocks": [sym],
+                }
+                signal = panic_engine.analyze(event)
+                if signal.level.value != "NONE":
+                    print(f"  {sym} {s.get('name', sym)}: {signal.level.value} "
+                          f"| 超跌比 {signal.overreaction_ratio:.1f}x "
+                          f"| {signal.entry_timing}")
+
+
+@_safe_cmd
+def cmd_alert(args: list[str]):
+    """预警管理 — 添加/查看/清理价格和止损预警。"""
+    import argparse
+    from src.output.alert import AlertManager
+
+    parser = argparse.ArgumentParser(description="预警管理")
+    parser.add_argument("action", nargs="?",
+                        choices=["add-price", "add-stop", "watch-add", "watch-remove",
+                                 "list", "clear", "panic"],
+                        default="list", help="操作类型")
+    parsed, remaining = parser.parse_known_args(args)
+
+    mgr = AlertManager()
+
+    if parsed.action == "add-price":
+        p = argparse.ArgumentParser(description="添加价格预警")
+        p.add_argument("symbol", help="股票代码")
+        p.add_argument("--above", type=float, help="上破预警价")
+        p.add_argument("--below", type=float, help="下破预警价")
+        p.add_argument("--name", type=str, default="", help="股票名称")
+        try:
+            a = p.parse_args(remaining)
+        except SystemExit:
+            return
+        mgr.add_price_alert(a.symbol, a.name or a.symbol, above=a.above, below=a.below)
+        conditions = []
+        if a.above:
+            conditions.append(f"上破 {a.above}")
+        if a.below:
+            conditions.append(f"下破 {a.below}")
+        print(f"✅ 已添加: {a.symbol} {' + '.join(conditions)}")
+
+    elif parsed.action == "add-stop":
+        p = argparse.ArgumentParser(description="添加止损预警")
+        p.add_argument("symbol", help="股票代码")
+        p.add_argument("price", type=float, help="止损价格")
+        p.add_argument("--name", type=str, default="", help="股票名称")
+        try:
+            a = p.parse_args(remaining)
+        except SystemExit:
+            return
+        mgr.add_stop_loss_alert(a.symbol, a.name or a.symbol, a.price)
+        print(f"✅ 已添加: {a.symbol} 止损 {a.price}")
+
+    elif parsed.action == "watch-add":
+        p = argparse.ArgumentParser(description="加入自选股")
+        p.add_argument("symbol", help="股票代码")
+        p.add_argument("--name", type=str, default="", help="股票名称")
+        p.add_argument("--stop-price", type=float, help="止损价")
+        p.add_argument("--alert-above", type=float, help="上破预警")
+        p.add_argument("--alert-below", type=float, help="下破预警")
+        try:
+            a = p.parse_args(remaining)
+        except SystemExit:
+            return
+        watchlist = _load_watchlist()
+        existing = [s for s in watchlist if s["symbol"] == a.symbol]
+        entry = {"symbol": a.symbol, "name": a.name or a.symbol}
+        if a.stop_price:
+            entry["stop_price"] = a.stop_price
+        if a.alert_above:
+            entry["alert_above"] = a.alert_above
+        if a.alert_below:
+            entry["alert_below"] = a.alert_below
+        if existing:
+            existing[0].update(entry)
+        else:
+            watchlist.append(entry)
+        _save_watchlist(watchlist)
+        print(f"✅ 自选股已更新: {a.symbol} {a.name or ''} ({len(watchlist)} 只)")
+
+    elif parsed.action == "watch-remove":
+        if not remaining:
+            print("用法: alert watch-remove <symbol>")
+            return
+        symbol = remaining[0]
+        watchlist = _load_watchlist()
+        watchlist = [s for s in watchlist if s["symbol"] != symbol]
+        _save_watchlist(watchlist)
+        print(f"✅ 已移除: {symbol} ({len(watchlist)} 只)")
+
+    elif parsed.action == "list":
+        watchlist = _load_watchlist()
+        print(f"📋 自选股 ({len(watchlist)} 只):")
+        if not watchlist:
+            print("   (空) 使用 alert watch-add <symbol> 添加")
+        for s in watchlist:
+            extras = []
+            if s.get("stop_price"):
+                extras.append(f"止损 {s['stop_price']}")
+            if s.get("alert_above"):
+                extras.append(f"上破 {s['alert_above']}")
+            if s.get("alert_below"):
+                extras.append(f"下破 {s['alert_below']}")
+            extra_str = f"  [{', '.join(extras)}]" if extras else ""
+            print(f"  {s['symbol']} {s.get('name', '')}{extra_str}")
+
+    elif parsed.action == "clear":
+        mgr.clear_expired()
+        print("✅ 已清理过期预警")
+
+    elif parsed.action == "panic":
+        if not remaining:
+            print("用法: alert panic <symbol>")
+            return
+        from src.sentiment.panic_arb import PanicArbEngine
+        engine = PanicArbEngine()
+        event = {
+            "type": "sentiment",
+            "description": f"用户请求检查 {remaining[0]}",
+            "actual_drop_pct": 5.0,
+            "eps_impact_pct": 0,
+        }
+        signal = engine.analyze(event)
+        print(f"{'=' * 50}")
+        print(f"🎯 恐慌套利分析: {remaining[0]}")
+        print(f"   级别: {signal.level.value}")
+        print(f"   事件类型: {signal.event_type}")
+        print(f"   超跌比: {signal.overreaction_ratio:.1f}x")
+        print(f"   建议仓位: {signal.suggested_position_pct:.0%}")
+        print(f"   入场时机: {signal.entry_timing or '等待信号'}")
+        if signal.risks:
+            print(f"   风险:")
+            for r in signal.risks:
+                print(f"     ⚠️ {r}")
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -1401,6 +1685,12 @@ def main():
         print("  backtest-compare        多策略对比")
         print("  paper-trade <action>    模拟交易管理")
         print("  trade-track <add|list|kelly>  交易追踪")
+        print()
+        print("🔔 盯盘 & 预警:")
+        print("  sweep                   自选股扫雷")
+        print("  alert watch-add <code>  加入自选股")
+        print("  alert list              查看自选股")
+        print("  alert panic <code>      恐慌套利检查")
         print()
         print("🧬 学习 & 进化:")
         print("  evolution <sub>         策略进化（论文驱动）")
@@ -1452,6 +1742,9 @@ def main():
         "evolution": lambda: cmd_evolution(args),
         # Phase 5: 凯利公式交易追踪
         "trade-track": lambda: cmd_trade_track(args),
+        # 盯盘: 自选股扫雷 + 预警管理
+        "sweep": lambda: cmd_sweep(args),
+        "alert": lambda: cmd_alert(args),
     }
 
     handler = commands.get(cmd)
