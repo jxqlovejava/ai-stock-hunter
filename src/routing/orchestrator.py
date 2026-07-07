@@ -89,6 +89,8 @@ class OrchestratorResult:
     doctrine_result: Optional[dict] = None
     # 投资者画像状态
     using_default_profile: bool = False  # 是否使用系统默认画像（未自定义）
+    profile_completeness: int = 0         # 画像完整度 0-100
+    profile_missing: list[str] = field(default_factory=list)  # 画像缺失项
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -173,7 +175,7 @@ class Orchestrator:
         quote_dict["dispute"] = dispute
 
         # 加载投资者偏好
-        investor, result.using_default_profile = self._get_investor_prefs()
+        investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
         position_limits = None
         weights = None
         risk_mult = 1.0
@@ -707,7 +709,7 @@ class Orchestrator:
         portfolio = data.get("portfolio", {})
 
         # 投资者偏好
-        investor, result.using_default_profile = self._get_investor_prefs()
+        investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
         enabled_rules = None
         if investor is not None:
             try:
@@ -946,7 +948,7 @@ class Orchestrator:
         executive = gathered.get("executive")
 
         # ---- Phase 2: 并行分析器（无写操作） ----
-        investor, result.using_default_profile = self._get_investor_prefs()
+        investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {
                 pool.submit(self.gt_analyzer.analyze, symbol, name, quote.market_cap if quote else None, ""): "game_theory",
@@ -1156,18 +1158,17 @@ class Orchestrator:
 
     @staticmethod
     def _get_investor_prefs():
-        """加载投资者偏好画像，同时检测是否为默认配置。"""
+        """加载投资者偏好画像，同时返回完整度信息。"""
         try:
             from src.learner.preference.loader import InvestorPreferenceLoader
             loader = InvestorPreferenceLoader()
             prefs = loader.load()
-            # 检测是否为默认配置（能力圈为空或只有示例条目）
-            coc = prefs.circle_of_competence.industries
-            is_default = (not coc or len(coc) <= 3) and prefs.tier.value == "beginner"
-            return prefs, is_default
+            comp = prefs.completeness()
+            is_default = comp["is_default"]
+            return prefs, is_default, comp["score"], comp["missing"]
         except Exception as e:
             logger.debug("Investor preferences unavailable: %s", e)
-        return None, True
+        return None, True, 0, ["投资者画像未能加载"]
 
     @staticmethod
     def _get_sentiment(nb_profile: Optional[dict] = None) -> dict:

@@ -102,19 +102,29 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     )
     lines.append("  " + " | ".join(meta_parts))
 
-    # ⚠️ 默认配置提醒
-    if result.using_default_profile:
+    # ⚠️ 投资者画像提醒（渐进式）
+    completeness = getattr(result, "profile_completeness", 0)
+    missing = getattr(result, "profile_missing", [])
+
+    if result.using_default_profile or completeness < 50:
         lines.append(f"\n  {'─' * 66}")
-        lines.append("  ⚠️  🎯 检测到你正在使用系统默认投资者画像！")
+        lines.append(f"  ⚠️  🎯 投资者画像完整度: {completeness}%")
         lines.append("  │")
-        lines.append("  │  当前是通用的 beginner/balanced 默认配置，")
-        lines.append("  │  分析结果未针对你的实际情况进行个性化。")
+        if completeness == 0:
+            lines.append("  │  你还没有设置投资者画像！分析使用的是系统默认参数，")
+            lines.append("  │  未针对你的实际情况进行个性化。")
+        elif completeness < 30:
+            lines.append("  │  你的画像只设置了基础信息，关键风控参数还是默认值。")
+        else:
+            lines.append("  │  画像已经有一定基础，还可以继续完善以提升分析准确性。")
         lines.append("  │")
-        lines.append("  │  📝 花 2 分钟设置你的专属画像，分析会更准确：")
+        lines.append("  │  📝 花 2-3 分钟完成画像，分析会更准确：")
         lines.append("  │     python -m src.cli preference setup")
+        if missing:
+            lines.append(f"  │  📋 还缺少: {', '.join(missing[:5])}")
         lines.append("  │")
-        lines.append("  │  设置内容包括：风险偏好、投资目标、能力圈（你熟悉的行业）、")
-        lines.append("  │  仓位约束、投资本金、止损线等。")
+        lines.append("  │  设置内容：风险偏好、投资目标、能忍受的最大亏损、")
+        lines.append("  │  持有时间、能力圈、投资本金、止损线等。")
         lines.append(f"  {'─' * 66}")
 
     # 门禁 + 阻断
