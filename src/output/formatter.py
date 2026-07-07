@@ -434,19 +434,78 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append(SEP_HALF)
         lines.append(format_l2_verdict_detail(verdict))
 
-    # ── 9. 💰 仓位 & 风控 ─────────────────────────────────────────────
+    # ── 9. 💰 仓位管理 & 风控 ─────────────────────────────────────────
+    lines.append(f"\n{DOUBLE_LINE}")
+    lines.append("  💰 仓位管理 & 风控 (L3+L4)")
+    lines.append(DOUBLE_LINE)
+
+    # 仓位约束 (来自投资者画像)
+    pls = result.position_limits_summary
+    if pls:
+        lines.append(f"  📋 你的仓位约束 (来自投资者画像):")
+        lines.append(f"    总投资本金: {pls.get('total_capital', 0):,.0f}  "
+                     f"单票上限: {pls.get('max_single_pct', 0):.0%}  "
+                     f"行业上限: {pls.get('max_sector_pct', 0):.0%}")
+        lines.append(f"    总仓位上限: {pls.get('max_total_exposure', 0):.0%}  "
+                     f"最低现金: {pls.get('min_cash_pct', 0):.0%}  "
+                     f"凯利分数: {pls.get('kelly_fraction', 0):.0%}")
+        lines.append(f"    单笔止损: {pls.get('single_stop_loss_pct', 0):.0%}  "
+                     f"组合回撤熔断: {pls.get('portfolio_drawdown_pct', 0):.0%}")
+
     if result.signal and result.risk:
-        lines.append(f"\n{SEP_HALF}")
-        lines.append("  💰 最终仓位决策 (L3+L4)")
-        lines.append(SEP_HALF)
         s = result.signal
         action_emoji = {"OPEN": "🟢", "ADD": "🔵", "HOLD": "🟡", "REDUCE": "🟠", "CLOSE": "🔴"}.get(s.action, "⚪")
+
+        # 仓位计算详情
+        sd = result.sizing_detail
+        if sd:
+            method_labels = {
+                "kelly": "凯利公式 (样本≥5，统计显著)",
+                "linear_fallback": "线性回退 (样本不足，凯利参数不可靠)",
+                "negative_expectation": "负期望值 (不建议下注)",
+                "unknown": "未计算",
+            }
+            method_label = method_labels.get(sd.get("method", ""), sd.get("method", ""))
+
+            lines.append(f"\n  📐 仓位计算详情 [🧠解释]:")
+            lines.append(f"    方法: {method_label}")
+            lines.append(f"    宏观上限: {sd.get('macro_cap', 0):.0%} × 风险乘数: {sd.get('risk_multiplier', 1.0):.2f}")
+
+            kelly_f = sd.get("kelly_f", 0.0)
+            if kelly_f > 0:
+                lines.append(f"    凯利 f*: {kelly_f:.1%}  "
+                             f"(凯利认为的理论最优仓位)")
+                lines.append(f"    实际分数: {kelly_f * pls.get('kelly_fraction', 0.5):.1%} "
+                             f"(× 凯利分数 {pls.get('kelly_fraction', 0):.0%})")
+            elif sd.get("method") == "linear_fallback":
+                lines.append(f"    ⚠️ 凯利参数来源: {sd.get('params_source', '历史交易不足5笔')}")
+                lines.append(f"    回退到线性公式: base = (score - 50) / 50 × macro_cap")
+            elif sd.get("method") == "negative_expectation":
+                lines.append(f"    ⚠️ 凯利 f* ≤ 0，负期望值 — 不应下注")
+            if sd.get("params_source"):
+                lines.append(f"    📋 {sd.get('params_source')}")
+
+        lines.append(f"\n  🎯 最终决策:")
         lines.append(f"    信号: {action_emoji} {s.action}  目标仓位: {s.target_weight:.1%}")
-        lines.append(f"    调整后仓位: {result.risk.adjusted_weight:.1%}  "
-                     f"风控: {'✅ 通过' if result.risk.passed else '⚠️ 不通过'}")
+        lines.append(f"    风控调整后: {result.risk.adjusted_weight:.1%}  "
+                     f"({'✅ 通过' if result.risk.passed else '⚠️ 被拦截'})")
+
+        # 风控违规详情
         if result.risk.violations:
-            for v in result.risk.violations[:5]:
-                lines.append(f"    🚫 {v}")
+            lines.append(f"\n  🚫 风控违规/警告 ({len(result.risk.violations)}):")
+            for v in result.risk.violations[:10]:
+                # 根据 violation 类型添加解释
+                if "低流动性" in v:
+                    lines.append(f"     ⚠️  {v}")
+                    lines.append(f"        → 日成交额不足 5000 万，大单可能无法顺利成交")
+                elif "ALPHA" in v:
+                    lines.append(f"     ⚠️  {v}")
+                    lines.append(f"        → Alpha 信号衰减/失效，建议降低仓位或清仓")
+                elif "止损" in v or "回撤" in v:
+                    lines.append(f"     🚫 {v}")
+                    lines.append(f"        → 触发硬性风控约束，仓位被强制调整")
+                else:
+                    lines.append(f"     ⚠️  {v}")
 
     # 红线
     if result.red_lines:

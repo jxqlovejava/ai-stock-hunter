@@ -91,6 +91,9 @@ class OrchestratorResult:
     using_default_profile: bool = False  # 是否使用系统默认画像（未自定义）
     profile_completeness: int = 0         # 画像完整度 0-100
     profile_missing: list[str] = field(default_factory=list)  # 画像缺失项
+    # L3/L4 仓位管理详情
+    sizing_detail: Optional[dict] = None  # 仓位计算方法 + 凯利参数
+    position_limits_summary: Optional[dict] = None  # 仓位约束摘要
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -198,6 +201,18 @@ class Orchestrator:
                     "tier": investor.tier.value,
                     "weights_applied": weights,
                     "risk_multiplier": risk_mult,
+                }
+                # 保存仓位约束摘要
+                limits = investor.position_limits
+                result.position_limits_summary = {
+                    "total_capital": limits.total_capital,
+                    "max_single_pct": limits.max_single_pct,
+                    "max_sector_pct": limits.max_sector_pct,
+                    "max_total_exposure": limits.max_total_exposure,
+                    "min_cash_pct": limits.min_cash_pct,
+                    "single_stop_loss_pct": limits.single_stop_loss_pct,
+                    "portfolio_drawdown_pct": limits.portfolio_drawdown_pct,
+                    "kelly_fraction": getattr(limits, "kelly_fraction", 0.5),
                 }
             except Exception as e:
                 logger.debug("Failed to resolve investor preferences: %s", e)
@@ -572,6 +587,14 @@ class Orchestrator:
             extra=quote.dict() if quote else {},
         )
         result.signal = signal
+        # 保存仓位计算详情供格式化器使用
+        result.sizing_detail = {
+            "method": getattr(signal, "sizing_method", "unknown"),
+            "kelly_f": getattr(signal, "kelly_f", 0.0),
+            "params_source": getattr(signal, "kelly_params_source", ""),
+            "macro_cap": effective_macro_cap,
+            "risk_multiplier": risk_mult,
+        }
 
         # Phase 1: L3 护栏检查
         l3_violations = self.enforcer.enforce(
