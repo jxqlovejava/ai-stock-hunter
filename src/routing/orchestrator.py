@@ -191,6 +191,7 @@ class Orchestrator:
         mode: str = "daily",
         macro_event_desc: str = "",
         macro_event_category: str = "",
+        skip_t0: bool = False,
     ) -> OrchestratorResult:
         """执行全链路分析。
 
@@ -198,6 +199,7 @@ class Orchestrator:
             mode: "daily"=日常持仓监控(轻量), "full"=选股分析(含行业+公司深度研究)
             macro_event_desc: 当日重大宏观事件描述（如有），触发因果链分析
             macro_event_category: 事件类型 hint (monetary/geopolitical/trade_policy/...)
+            skip_t0: True=跳过 T+0 日内时机分析（Alpha/中长期机会搜索时建议禁用）
         """
         result = OrchestratorResult(
             symbol=symbol, name=name,
@@ -729,14 +731,15 @@ class Orchestrator:
 
         result.passed = True
 
-        # Phase 9: T+0 日内时机分析（并行，不阻塞主流程）
-        try:
-            t0 = self.run_t0(symbol, market, name)
-            if t0 is not None:
-                result.t0_result = t0
-                result.t0_available = True
-        except Exception as e:
-            logger.debug("T+0 analysis failed for %s: %s", symbol, e)
+        # Phase 9: T+0 日内时机分析（中长期 Alpha 搜索可跳过，不阻塞主流程）
+        if not skip_t0:
+            try:
+                t0 = self.run_t0(symbol, market, name)
+                if t0 is not None:
+                    result.t0_result = t0
+                    result.t0_available = True
+            except Exception as e:
+                logger.debug("T+0 analysis failed for %s: %s", symbol, e)
 
         return result
 

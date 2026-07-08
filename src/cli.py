@@ -154,6 +154,7 @@ def cmd_analyze(args: list[str]):
     parser = argparse.ArgumentParser(description="单只股票全链路分析")
     parser.add_argument("symbol", help="股票代码")
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
+    parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析（Alpha/中长期机会搜索时推荐）")
     parser.add_argument("--event", type=str, default="", help="当日重大宏观事件描述（如: 美联储加息50bp）")
     parser.add_argument("--event-category", type=str, default="", help="事件类型: monetary/geopolitical/trade_policy/tech_sanction/financial_crisis/commodity")
     parsed = parser.parse_args(args)
@@ -172,6 +173,7 @@ def cmd_analyze(args: list[str]):
         symbol, market=_infer_market(symbol), mode=mode,
         macro_event_desc=parsed.event,
         macro_event_category=parsed.event_category,
+        skip_t0=parsed.no_t0,
     )
 
     if not result.passed:
@@ -197,7 +199,7 @@ def cmd_macro():
             quadrant_name = regime.quadrant.value
             quadrant_info = QUADRANT_SECTOR_MAP.get(quadrant_name, {})
             output = MacroSystemizedOutput(
-                date=regime.date or "",
+                date=str(regime.updated_at.date()) if regime.updated_at else "",
                 regime=quadrant_name,
                 regime_confidence=getattr(regime, "confidence", 0.5),
                 overall_assessment=quadrant_info.get("description", ""),
@@ -271,6 +273,7 @@ def cmd_diagnose(args: list[str]):
     parser = argparse.ArgumentParser(description="一键诊断")
     parser.add_argument("symbol", help="股票代码")
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
+    parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析（Alpha/中长期机会搜索时推荐）")
     parsed = parser.parse_args(args)
 
     symbol = parsed.symbol
@@ -285,8 +288,12 @@ def cmd_diagnose(args: list[str]):
         print("✅ 军规通过 — 无硬阻断")
     else:
         print(f"⛔ 被拦截: {', '.join(r.name for r in result.blocked_by)}")
-    # 传递 --deep flag
-    deep_args = [symbol, "--deep"] if parsed.deep else [symbol]
+    # 传递 --deep / --no-t0 flag
+    deep_args = [symbol]
+    if parsed.deep:
+        deep_args.append("--deep")
+    if parsed.no_t0:
+        deep_args.append("--no-t0")
     cmd_analyze(deep_args)
 
 
