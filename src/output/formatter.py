@@ -210,7 +210,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
 
     # ── 📌 核心结论 ──────────────────────────────────────────────────
     lines.append(f"\n  📌 核心结论")
-    lines.append(f"  {HR}")
+    lines.append(f"  {HR_THICK}")
 
     enforced = result.enforced_verdict
     if verdict and enforced:
@@ -241,8 +241,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         rules = doctrine["rules"]
         bc = doctrine.get("blocked_count", 0)
         wc = doctrine.get("warn_count", 0)
-        lines.append(f"\n  Step 1  🏥 军规审查")
-        lines.append(f"  {HR}")
+        _section(lines, 1)
         ok = "✅" if doctrine.get("passed") else "⛔"
         lines.append(f"  {ok} {doctrine.get('total',31)}条规则: "
                      f"🔴阻断{bc}  🟠警告{wc}  ℹ️信息{doctrine.get('info_count',0)}")
@@ -272,8 +271,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     gs = result.gate_status or "UNKNOWN"
     ge = {"ACCEPTED": "✅", "REJECTED": "⛔", "FLAGGED": "⚠️"}.get(gs, "❓")
     gl = {"ACCEPTED": "通过", "REJECTED": "被拦截", "FLAGGED": "标记风险"}.get(gs, gs)
-    lines.append(f"\n  Step 2  🚪 准入检查 & 市场全景")
-    lines.append(f"  {HR}")
+    _section(lines, 2)
     lines.append(f"  {ge} {gl} — ST排除 | 次新60天 | 日成交≥5000万 | 涨跌停 | 停牌")
     if result.data_gaps:
         lines.append(f"  📭 {', '.join(result.data_gaps)}")
@@ -302,8 +300,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append(f"  🎯 恐慌套利: {sent['panic_arb_advice']}")
 
     # ── Step 3 多维诊断 ──────────────────────────────────────────────
-    lines.append(f"\n  Step 3  📊 多维诊断")
-    lines.append(f"  {HR}")
+    _section(lines, 3)
 
     if report:
         # 画像
@@ -359,7 +356,9 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         ba = report.bottleneck_analysis
         if ba:
             lines.append(f"\n  🏭 供应链瓶颈: {ba.core_business}")
-            lines.append(f"  定位:{ba.supply_chain_layer}  类型:{ba.bottleneck_type}  评分:{ba.bottleneck_score}/100")
+            layer_cn = str(ba.supply_chain_layer).replace("SupplyChainLayer.", "") if ba.supply_chain_layer else "?"
+            type_cn = str(ba.bottleneck_type).replace("BottleneckType.", "") if ba.bottleneck_type else "?"
+            lines.append(f"  定位:{layer_cn}  类型:{type_cn}  评分:{ba.bottleneck_score}/100")
 
         # 三情景
         sv = result.scenario_valuation
@@ -377,8 +376,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     # ── Step 4 四大师辩论 ────────────────────────────────────────────
     pp = result.debate_perspectives
     dr = result.debate_result
-    lines.append(f"\n  Step 4  🎭 四大师辩论")
-    lines.append(f"  {HR}")
+    _section(lines, 4)
 
     if pp and dr:
         lines.append(f"  均分 {dr.get('avg_score',0):.2f}/5  "
@@ -423,8 +421,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
 
     # ── Step 5 Munger 思维模型 ───────────────────────────────────────
     mm_models = result.mental_models
-    lines.append(f"\n  Step 5  🧠 Munger 思维模型")
-    lines.append(f"  {HR}")
+    _section(lines, 5)
 
     if mm_models:
         lines.append(f"  从232个模型中匹配{len(mm_models)}个:")
@@ -533,12 +530,11 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         overall = company.get("overall_score", 50)
         lines.append(f"  🏆 深度研究综合: {overall:.0f}/100")
 
-    # ── Step 5½ 辅助指标 ─────────────────────────────────────────────
+    # ── Step 6 辅助指标 ─────────────────────────────────────────────
     alpha = result.alpha_profile
     gt = result.game_theory_info
     if alpha or gt:
-        lines.append(f"\n  🔬 辅助指标")
-        lines.append(f"  {HR}")
+        _section(lines, 6)
     if alpha:
         lines.append(f"  📈 Alpha {alpha.alpha_score:.0f}/100  "
                      f"一手性{alpha.source.originality_score:.0f}/100  "
@@ -549,9 +545,8 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append(f"  🎲 博弈论 {gt.get('score',0)}/100  主导{gt.get('dominant_player','?')}  "
                      f"拥挤{gt.get('crowding_score',0)}  杠杆{gt.get('margin_score',0)}")
 
-    # ── Step 6 综合裁决 ──────────────────────────────────────────────
-    lines.append(f"\n  Step 6  ⚖️ 综合裁决")
-    lines.append(f"  {HR}")
+    # ── Step 7 综合裁决 ──────────────────────────────────────────────
+    _section(lines, 7)
 
     if verdict:
         lines.append(f"  评分 {verdict.score:.0f}/100  置信度 {verdict.confidence:.0%}  "
@@ -591,7 +586,8 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if verdict.falsifiable:
             lines.append(f"\n  🔬 可证伪条件 (建议失效触发点):")
             for f in verdict.falsifiable:
-                lines.append(f"    · {f}")
+                fc = _ensure_cn(f)
+                lines.append(f"    · {fc}")
 
         # 下一步行动建议
         next_steps_default = {
@@ -605,9 +601,8 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         rec = verdict.recommendation
         lines.append(f"\n  🎯 下一步: {next_steps_default.get(rec, '按正常策略执行')}")
 
-    # ── Step 7 仓位调度 ──────────────────────────────────────────────
-    lines.append(f"\n  Step 7  💰 仓位调度")
-    lines.append(f"  {HR}")
+    # ── Step 8 仓位调度 ──────────────────────────────────────────────
+    _section(lines, 8)
 
     pls = result.position_limits_summary
     if pls:
@@ -625,9 +620,8 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             if sd.get("params_source"):
                 lines.append(f"  📋 {sd['params_source']}")
 
-    # ── Step 8 风控执行 ──────────────────────────────────────────────
-    lines.append(f"\n  Step 8  🛡️ 风控执行")
-    lines.append(f"  {HR}")
+    # ── Step 9 风控执行 ──────────────────────────────────────────────
+    _section(lines, 9)
 
     if result.risk:
         r = result.risk
@@ -645,7 +639,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
                 else:
                     lines.append(f"     ⚠️ {v}")
 
-    # ── Step 9 数据溯源 ──────────────────────────────────────────────
+    # ── Step 10 数据溯源 ──────────────────────────────────────────────
     all_cit: list[SourceCitation] = []
     if report and report.source_citations:
         all_cit = report.source_citations
@@ -656,8 +650,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
                 all_cit.append(c)
 
     if all_cit:
-        lines.append(f"\n  📊 数据溯源")
-        lines.append(f"  {HR}")
+        _section(lines, 10)
         tc = Counter(c.source_tier for c in all_cit)
         nc = Counter(c.nature for c in all_cit)
         lines.append(f"  分级: " + "  ".join(f"{t}:{tc.get(t,0)}" for t in ["T0", "T1", "T2", "T3"]))
@@ -673,10 +666,9 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if nc.get("speculation", 0):
             lines.append(f"  ⚠️ 含{nc['speculation']}处推测数据，仅供参考不参与评分")
 
-    # ── Step 10 T+0 日内时机分析 ──────────────────────────────────
+    # ── Step 11 T+0 日内时机分析 ──────────────────────────────────
     t0 = getattr(result, "t0_result", None)
-    lines.append(f"\n  ⏱️  T+0 日内时机分析")
-    lines.append(f"  {HR}")
+    _section(lines, 11)
 
     if t0 and isinstance(t0, dict):
         has_data = t0.get("ma5", 0) > 0 or t0.get("vwap", 0) > 0
