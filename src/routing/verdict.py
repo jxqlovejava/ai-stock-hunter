@@ -239,6 +239,8 @@ class VerdictEngine:
           - alpha_score < 40:  乘数 0.7 (低 Alpha → 缩小)
           - 叙事 CROWDED:       乘数 0.5 (拥挤 → 强制降权)
           - 共识噪音源:          乘数 0.8
+          - 🍃 紫苏叶标的:      乘数 +0.1 (市场尚未充分发现)
+          - 🐟 金枪鱼+CROWDED: 乘数 ×0.85 (已被充分定价)
 
         Returns:
             (multiplier, rationale, consensus_challenge)
@@ -268,6 +270,18 @@ class VerdictEngine:
         # 共识-现实缺口大 → 加分（因为市场可能错了）
         if profile.consensus_gap.is_market_wrong:
             multiplier += 0.1
+
+        # 🆕 紫苏叶理论: 供应链深度 Alpha 调整
+        sc = profile.supply_chain
+        if sc.is_shiso_leaf:
+            # 紫苏叶标的：市场尚未充分发现 → 额外加分
+            multiplier += 0.1
+        if sc.is_tuna and profile.narrative.stage in (
+            NarrativeLifecycle.CONSENSUS,
+            NarrativeLifecycle.CROWDED,
+        ):
+            # 金枪鱼标的 + 拥挤叙事 → 已被充分定价，额外降权
+            multiplier *= 0.85
 
         multiplier = max(0.3, min(1.5, multiplier))
 

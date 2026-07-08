@@ -1553,7 +1553,12 @@ class Orchestrator:
     ) -> AlphaProfile:
         """Phase 4: 计算 Alpha Profile。
 
-        综合信息来源层级、共识-现实缺口、叙事生命周期三个维度，
+        综合四维:
+          1. 信息来源层级
+          2. 共识-现实缺口
+          3. 叙事生命周期
+          4. 供应链深度 Alpha（紫苏叶理论）🆕
+
         回答「我比别人多知道什么？」
         """
         # 从资讯上下文中提取来源信息
@@ -1580,12 +1585,30 @@ class Orchestrator:
             if market_narrative_parts else ""
         )
 
+        # 🆕 获取供应链深度数据（紫苏叶理论）
+        supply_chain_data: dict = {}
+        bottleneck_data: dict = {}
+        try:
+            from src.industry.supply_chain import SupplyChainDeepMapper
+            mapper = SupplyChainDeepMapper()
+            supply_chain_data = mapper.analyze(symbol)
+            logger.debug(
+                "Supply chain data for %s: layer=%s bottleneck=%s",
+                symbol,
+                supply_chain_data.get("layer", "unknown"),
+                supply_chain_data.get("bottleneck_type", "NONE"),
+            )
+        except Exception as e:
+            logger.debug("Supply chain data unavailable for %s: %s", symbol, e)
+
         return self.alpha_lens.analyze(
             symbol=symbol,
             news_sources=news_sources,
             market_narrative=market_narrative,
             narrative_intensity=narrative_intensity,
             sentiment_extreme=sentiment,
+            supply_chain_data=supply_chain_data if supply_chain_data else None,
+            bottleneck_data=bottleneck_data if bottleneck_data else None,
         )
 
     # ------------------------------------------------------------------

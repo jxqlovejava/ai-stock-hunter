@@ -923,6 +923,23 @@ def cmd_alpha(symbol: str):
         print(f"   仓位上限: {ap.narrative.position_cap_pct:.0f}%")
         print(f"   操作提示: {ap.narrative.action_hint}")
         print(f"   估值反映度: {ap.narrative.valuation_reflected:.0%}")
+        # 🆕 供应链深度 Alpha（紫苏叶理论）
+        sc = ap.supply_chain
+        print(f"\n{'─' * 40}")
+        tier_icon = {"shiso_leaf": "🍃", "tuna": "🐟", "commodity": "📦"}
+        tier_labels = {"shiso_leaf": "紫苏叶（上游隐蔽关键）", "tuna": "金枪鱼（终端显眼）", "commodity": "普通配料"}
+        print(f"🔗 供应链深度 Alpha: {tier_icon.get(sc.shiso_tier.value, '📦')} {tier_labels.get(sc.shiso_tier.value, sc.shiso_tier.value)}")
+        print(f"   所在层级: {sc.chain_layer or '未知'} (离终端 {sc.depth_from_end_demand} 层)")
+        print(f"   不可替代性: {sc.irreplaceability_score:.0f}/100")
+        print(f"   供应商集中度: {sc.supplier_concentration} 家 {'⚠️ 高度集中' if sc.supplier_concentration <= 3 else ''}")
+        print(f"   下游切换成本: {sc.switching_cost}")
+        print(f"   瓶颈类型: {sc.bottleneck_type} ({sc.bottleneck_score:.0f}/100)")
+        if sc.is_shiso_leaf:
+            print(f"   🍃 紫苏叶判定: 该标的是热门主题上游被忽视的关键环节")
+        elif sc.is_tuna:
+            print(f"   🐟 金枪鱼判定: 已被市场充分关注，Alpha 来自基本面超预期")
+        print(f"   深度评分: {sc.depth_score:.0f}/100")
+        print(f"   理由: {sc.rationale}")
         print(f"\n{'─' * 40}")
         print(f"💡 {ap.summary}")
     else:

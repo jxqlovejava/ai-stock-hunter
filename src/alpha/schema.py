@@ -246,7 +246,7 @@ class SupplyChainDepth:
     def is_shiso_leaf(self) -> bool:
         """是否为紫苏叶标的。"""
         return (
-            self.shiro_tier == ShisoLeafTier.SHISO_LEAF
+            self.shiso_tier == ShisoLeafTier.SHISO_LEAF
             or (
                 self.depth_from_end_demand >= 2
                 and self.irreplaceability_score >= 60
@@ -258,7 +258,7 @@ class SupplyChainDepth:
     def is_tuna(self) -> bool:
         """是否为金枪鱼标的（终端显眼，已被充分定价）。"""
         return (
-            self.shiro_tier == ShisoLeafTier.TUNA
+            self.shiso_tier == ShisoLeafTier.TUNA
             or self.depth_from_end_demand <= 1
         )
 
