@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""T+0 日内分析模块 — 日线+分钟线双维度交易时机决策。"""
+"""分析模块 — T+0 日内决策 + 回调入场检测。"""
 
 from .t0_decision import T0DecisionEngine, T0Result
 
