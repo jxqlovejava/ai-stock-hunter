@@ -147,7 +147,12 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if mm:
             fi = "✅" if mm.get("fit_score", 0) >= 60 else ("⚠️" if mm.get("fit_score", 0) >= 40 else "❌")
             comp = mm.get("competence_match", "")
-            cl = {"in_circle": "✅ 能力圈内", "edge": "⚠️ 边缘", "out_of_circle": "❌ 能力圈外"}.get(comp, comp)
+            cl = {
+                "in_circle": "✅ 能力圈内",
+                "edge": "⚠️ 边缘",
+                "out_of_circle": "❌ 能力圈外",
+                "not_configured": "⚪ 能力圈未设",
+            }.get(comp, comp)
             lines.append(f"  👤 匹配度 {fi} {mm.get('fit_score',0)}/100  {cl}")
             for b in mm.get("bias_flags", [])[:2]:
                 lines.append(f"     ⚠️ {b}")

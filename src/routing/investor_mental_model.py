@@ -88,14 +88,19 @@ class InvestorMentalModelAnalyzer:
             investor = InvestorPreference()
             warnings.append("未加载投资者偏好，使用默认配置")
 
-        # 1. 能力圈
-        competence_mult = resolve_competence_penalty(investor, sector) if sector else 0.85
+        # 1. 能力圈（默认不降权，仅投资者主动配置了能力圈且标的在圈外时才降权）
+        competence_mult = resolve_competence_penalty(investor, sector) if sector else 1.0
         fit.competence_multiplier = competence_mult
         if sector:
             familiarity = investor.circle_of_competence.industries.get(sector)
             if familiarity is None:
-                fit.competence_match = "out_of_circle"
-                warnings.append(f"{sector} 不在能力圈，建议降低仓位或深入研究")
+                if investor.circle_of_competence.industries:
+                    # 投资者已配置能力圈且该行业不在圈内 → 真正的能力圈外
+                    fit.competence_match = "out_of_circle"
+                    warnings.append(f"{sector} 不在已配置的能力圈内，建议降低仓位或深入研究")
+                else:
+                    # 投资者未配置能力圈 → 不判定，不惩罚
+                    fit.competence_match = "not_configured"
             elif familiarity >= 3:
                 fit.competence_match = "in_circle"
             else:
@@ -111,8 +116,7 @@ class InvestorMentalModelAnalyzer:
                 )
             )
         else:
-            fit.competence_match = "out_of_circle"
-            warnings.append("未获取标的行业，按能力圈外处理")
+            fit.competence_match = "not_configured"
 
         # 2. 风险偏好匹配
         fit.risk_profile_match, risk_warning = self._match_risk_profile(
