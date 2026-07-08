@@ -6,6 +6,7 @@ from .diagnosis import DiagnosisEngine, DiagnosisReport
 from .verdict import VerdictEngine, Verdict
 from .positioning import PositioningEngine, TradeSignal
 from .risk_control import RiskControlEngine, RiskCheck
+from .risk_state import RiskState  # Phase 8: 风控状态机
 from .orchestrator import Orchestrator
 from .signal import (
     Direction,
@@ -42,6 +43,7 @@ __all__ = [
     "VerdictEngine", "Verdict",
     "PositioningEngine", "TradeSignal",
     "RiskControlEngine", "RiskCheck",
+    "RiskState",  # Phase 8: 风控状态机
     # -- Signal + PortfolioTarget (LEAN Insight pattern) --
     "Direction",
     "Signal",

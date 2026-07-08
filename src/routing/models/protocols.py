@@ -75,13 +75,19 @@ class PortfolioTarget:
 
 @dataclass(frozen=True)
 class Order:
-    """Output of ``ExecutionModel`` — a concrete order ready to send to the broker."""
+    """Output of ``ExecutionModel`` — a concrete order ready to send to the broker.
+
+    Phase 8: 新增 ``reduce_only`` 字段 (借鉴 RiskGuard)。
+    设为 True 时表示该订单仅用于减仓/平仓——所有风控规则（熔断/仓位上限/隔离期）
+    必须放行。如果熔断触发后平仓单也被拦下，风险反而无法收敛，那是灾难而非保护。
+    """
 
     symbol: str
     quantity: int                # positive = buy, negative = sell
     order_type: str = "MARKET"   # MARKET / LIMIT
     side: OrderSide = OrderSide.BUY
     limit_price: float | None = None
+    reduce_only: bool = False    # Phase 8: 减仓单永远放行
     tags: dict = field(default_factory=dict)  # broker-specific metadata
 
 

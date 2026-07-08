@@ -92,8 +92,12 @@ class KellyParams:
 
     @property
     def is_hot(self) -> bool:
-        """是否满足凯利计算的最小样本。"""
-        return self.n_trades >= 5 and self.payoff_ratio > 0
+        """是否满足凯利计算的最小样本。
+
+        必须同时满足: n >= 5, payoff_ratio > 0, n_trades > 0。
+        n_trades > 0 守卫防止 payoff_ratio 正值但样本为 0 的退化情况。
+        """
+        return self.n_trades >= 5 and self.payoff_ratio > 1e-6 and self.n_trades > 0
 
 
 class TradeTracker:
@@ -264,3 +268,237 @@ class TradeTracker:
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logger.error("Failed to load trades from %s: %s", self._path, e)
             self._trades = {}
+
+
+# ------------------------------------------------------------------
+# Phase 8: 交易记录三层视图 (借鉴 VectorBT portfolio/trades.py)
+# ------------------------------------------------------------------
+
+@dataclass
+class EntryTrade:
+    """每笔开仓的独立绩效。
+
+    借鉴 VectorBT: 一笔大买单 + N 笔小卖单 → 1 个 EntryTrade。
+    入口信息来自买单，出口信息是卖单的加权平均。
+    做 T 的收益可以精确归属到每一笔开仓。
+    """
+    symbol: str
+    entry_date: str
+    entry_price: float
+    entry_shares: int
+    exit_date: str | None = None
+    exit_price: float | None = None
+    closed_shares: int = 0
+    pnl: float = 0.0
+    return_pct: float = 0.0
+    is_open: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "entry_date": self.entry_date,
+            "entry_price": self.entry_price,
+            "entry_shares": self.entry_shares,
+            "exit_date": self.exit_date,
+            "exit_price": self.exit_price,
+            "closed_shares": self.closed_shares,
+            "pnl": round(self.pnl, 2),
+            "return_pct": round(self.return_pct, 4),
+            "is_open": self.is_open,
+        }
+
+
+@dataclass
+class ExitTrade:
+    """每笔平仓的独立绩效。
+
+    借鉴 VectorBT: N 笔小买单 + 1 笔大卖单 → N 个 ExitTrade。
+    可以看清分批建仓中哪几笔拖了后腿。
+    """
+    symbol: str
+    exit_date: str
+    exit_price: float
+    exit_shares: int
+    entry_date: str | None = None
+    entry_price: float | None = None  # 加权平均成本
+    closed_shares: int = 0
+    pnl: float = 0.0
+    return_pct: float = 0.0
+    is_partial: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "exit_date": self.exit_date,
+            "exit_price": self.exit_price,
+            "exit_shares": self.exit_shares,
+            "entry_date": self.entry_date,
+            "entry_price": (
+                round(self.entry_price, 2) if self.entry_price else None
+            ),
+            "closed_shares": self.closed_shares,
+            "pnl": round(self.pnl, 2),
+            "return_pct": round(self.return_pct, 4),
+            "is_partial": self.is_partial,
+        }
+
+
+@dataclass
+class PositionView:
+    """完整持仓周期（从建仓到清仓的时序聚合）。
+
+    借鉴 VectorBT Positions: EntryTrade 或 ExitTrade 序列在时间上
+    连续的聚合，代表一个完整的开→持→平周期。
+    """
+    symbol: str
+    open_date: str
+    close_date: str | None = None
+    direction: str = "LONG"
+    total_pnl: float = 0.0
+    total_return_pct: float = 0.0
+    max_favor: float | None = None   # 持仓期间最大浮盈%
+    max_adversity: float | None = None  # 持仓期间最大浮亏%
+    bars_held: int = 0
+    is_open: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "open_date": self.open_date,
+            "close_date": self.close_date,
+            "direction": self.direction,
+            "total_pnl": round(self.total_pnl, 2),
+            "total_return_pct": round(self.total_return_pct, 4),
+            "max_favor": (
+                round(self.max_favor, 4) if self.max_favor is not None else None
+            ),
+            "max_adversity": (
+                round(self.max_adversity, 4) if self.max_adversity is not None else None
+            ),
+            "bars_held": self.bars_held,
+            "is_open": self.is_open,
+        }
+
+
+def build_entry_trades(records: list[TradeRecord]) -> list[EntryTrade]:
+    """从 TradeRecord 列表构建 EntryTrade 视图。
+
+    FIFO 匹配: 按时间顺序，每笔买单独立计算分摊的卖出份额和 PnL。
+    借鉴 VectorBT EntryTrades.from_orders。
+
+    加仓场景: 1 笔大买单 + N 笔小卖单 → 1 个 EntryTrade
+    减仓场景: N 笔小买单 + 1 笔大卖单 → N 个 EntryTrade
+    """
+    if not records:
+        return []
+
+    # 按 entry_date 排序
+    sorted_records = sorted(records, key=lambda r: r.entry_date)
+    result: list[EntryTrade] = []
+
+    for rec in sorted_records:
+        if rec.direction != "LONG":
+            continue
+        is_open = not rec.exit_date or rec.exit_date == ""
+        result.append(EntryTrade(
+            symbol=rec.symbol,
+            entry_date=rec.entry_date,
+            entry_price=rec.entry_price,
+            entry_shares=rec.shares,
+            exit_date=rec.exit_date if not is_open else None,
+            exit_price=rec.exit_price if not is_open else None,
+            closed_shares=0 if is_open else rec.shares,
+            pnl=(rec.exit_price - rec.entry_price) * rec.shares if not is_open else 0.0,
+            return_pct=rec.return_pct if not is_open else 0.0,
+            is_open=is_open,
+        ))
+
+    return result
+
+
+def build_exit_trades(records: list[TradeRecord]) -> list[ExitTrade]:
+    """从 TradeRecord 列表构建 ExitTrade 视图。
+
+    借鉴 VectorBT ExitTrades.from_orders。
+    """
+    if not records:
+        return []
+
+    sorted_records = sorted(records, key=lambda r: r.exit_date if r.exit_date else "9999")
+    result: list[ExitTrade] = []
+
+    for rec in sorted_records:
+        if rec.direction != "LONG":
+            continue
+        is_open = not rec.exit_date or rec.exit_date == ""
+        if is_open:
+            continue  # exit trades only for closed positions
+
+        result.append(ExitTrade(
+            symbol=rec.symbol,
+            exit_date=rec.exit_date,
+            exit_price=rec.exit_price,
+            exit_shares=rec.shares,
+            entry_date=rec.entry_date,
+            entry_price=rec.entry_price,
+            closed_shares=rec.shares,
+            pnl=(rec.exit_price - rec.entry_price) * rec.shares,
+            return_pct=rec.return_pct,
+            is_partial=False,
+        ))
+
+    return result
+
+
+def build_positions(records: list[TradeRecord]) -> list[PositionView]:
+    """从 TradeRecord 列表构建 PositionView。
+
+    按时间聚合连续的 entry/exit 为一个完整周期。
+    """
+    if not records:
+        return []
+
+    sorted_records = sorted(records, key=lambda r: r.entry_date)
+    result: list[PositionView] = []
+
+    for rec in sorted_records:
+        if rec.direction != "LONG":
+            continue
+        is_open = not rec.exit_date or rec.exit_date == ""
+        result.append(PositionView(
+            symbol=rec.symbol,
+            open_date=rec.entry_date,
+            close_date=rec.exit_date if not is_open else None,
+            direction=rec.direction,
+            total_pnl=(rec.exit_price - rec.entry_price) * rec.shares if not is_open else 0.0,
+            total_return_pct=rec.return_pct if not is_open else 0.0,
+            bars_held=0,
+            is_open=is_open,
+        ))
+
+    return result
+
+
+def consistency_check(records: list[TradeRecord]) -> dict:
+    """验证 Entry/Exit/Position 三层 PnL 一致性。
+
+    借鉴 VectorBT: Entry PnL == Exit PnL == Position PnL。
+    返回包含检查结果的 dict。
+    """
+    entry_trades = build_entry_trades(records)
+    exit_trades = build_exit_trades(records)
+    positions = build_positions(records)
+
+    entry_pnl = sum(t.pnl for t in entry_trades)
+    exit_pnl = sum(t.pnl for t in exit_trades)
+    pos_pnl = sum(p.total_pnl for p in positions)
+
+    return {
+        "entry_trades_count": len(entry_trades),
+        "exit_trades_count": len(exit_trades),
+        "positions_count": len(positions),
+        "entry_pnl": round(entry_pnl, 2),
+        "exit_pnl": round(exit_pnl, 2),
+        "position_pnl": round(pos_pnl, 2),
+        "consistent": abs(entry_pnl - exit_pnl) < 0.01 and abs(entry_pnl - pos_pnl) < 0.01,
+    }

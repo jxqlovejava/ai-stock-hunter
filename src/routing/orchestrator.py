@@ -28,6 +28,7 @@ from .diagnosis import DiagnosisReport, DiagnosisEngine
 from .verdict import VerdictEngine, Verdict
 from .positioning import PositioningEngine, TradeSignal
 from .risk_control import RiskControlEngine, RiskCheck
+from .risk_state import RiskState  # Phase 8: 风控状态机
 from .guardrails import GuardrailEnforcer, GuardrailViolation
 from .game_theory_analyzer import GameTheoryAnalyzer, GameTheoryProfile
 from .investor_mental_model import InvestorMentalModelAnalyzer, InvestorMentalModelFit
@@ -132,7 +133,9 @@ class Orchestrator:
             self.trade_tracker, default_kelly_fraction=0.5,
         )
         self.positioning = PositioningEngine(kelly_sizer=self.kelly_sizer)
-        self.risk_ctrl = RiskControlEngine()
+        # Phase 8: 风控状态机 (HWM 追踪 / 自动熔断 / NaN 防御)
+        self._risk_state = RiskState.initial()
+        self.risk_ctrl = RiskControlEngine(state=self._risk_state)
         self.enforcer = GuardrailEnforcer()  # Phase 1: 护栏执行器
         self.alpha_lens = AlphaLens()        # Phase 4: Alpha Lens 引擎
         self.quality_checker = MultiAgentQualityChecker()  # CogAlpha: 多 Agent 质量审查
@@ -727,6 +730,11 @@ class Orchestrator:
             enriched_portfolio["mental_model_bias_flags"] = imm_fit.bias_flags
             enriched_portfolio["mental_model_warnings"] = imm_fit.warnings
 
+        # Phase 8: 观测权益更新 HWM / 自动熔断
+        eq = (enriched_portfolio or {}).get("total_equity", 0)
+        if eq > 0:
+            self.risk_ctrl.update_equity(float(eq))
+
         risk = self.risk_ctrl.check(signal, enriched_portfolio, position_limits=position_limits)
         result.risk = risk
 
@@ -1240,6 +1248,9 @@ class Orchestrator:
         )
 
         # 风控 (with investor preference limits)
+        eq2 = (portfolio or {}).get("total_equity", 0)
+        if eq2 > 0:
+            self.risk_ctrl.update_equity(float(eq2))
         risk = self.risk_ctrl.check(signal, portfolio, position_limits=position_limits)
         l4_violations = self.enforcer.enforce(
             stage="risk_control",
@@ -1547,6 +1558,9 @@ class Orchestrator:
 
         signal = self.positioning.generate_signal(verdict, macro_cap=0.80, name=name, extra=quote_dict)
         result.signal = signal
+        eq3 = (portfolio or {}).get("total_equity", 0)
+        if eq3 > 0:
+            self.risk_ctrl.update_equity(float(eq3))
         risk = self.risk_ctrl.check(signal, portfolio or {})
         result.risk = risk
         result.passed = True

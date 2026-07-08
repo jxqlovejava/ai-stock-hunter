@@ -394,3 +394,14 @@ def resolve_trading_style_weights(prefs: InvestorPreference) -> dict[str, float]
 
     # 长线/混合：不做额外调整，依赖原有 risk_profile 预设
     return resolve_weights(prefs)
+
+
+def resolve_risk_config(prefs: InvestorPreference) -> "RiskConfig":  # noqa: F821
+    """从投资者偏好映射到不可变风控配置。
+
+    借鉴 RiskGuard presets.py: 根据 RiskProfile 选择三档预设，
+    再用 PositionLimits 覆盖差异项。返回 frozen RiskConfig 实例。
+    """
+    from src.routing.risk_config import RiskConfig
+
+    return RiskConfig.from_preferences(prefs)

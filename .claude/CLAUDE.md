@@ -200,55 +200,231 @@ feedback add       # 添加交易反馈
 
 ## 参考项目
 
-设计决策、架构模式、算法实现时，优先查阅以下两个本地参考项目。
+设计决策、风控机制、回测逻辑时，优先查阅以下两个本地参考项目。重点借鉴其**业务逻辑设计**而非技术架构。
 
-### 🛡️ RiskGuard — 风控层 (`~/Documents/workspace/riskguard`)
+### 🛡️ RiskGuard — 风控机制参考 (`~/Documents/workspace/riskguard`)
 
-券商无关的开源交易风控层，定位"量化五层积木（数据→研究→回测→风控→执行）中风控层缺失的标准件"。
+#### 一、五条风控规则的业务逻辑
 
-| 模块 | 路径 | 本项目映射 |
-|------|------|-----------|
-| 风控引擎 | `src/riskguard/engine.py` — `RiskEngine` | → `routing/risk_control.py` (L4 Risk) |
-| 规则系统 | `src/riskguard/rules/` — 5 条规则 | → `doctrine/` 31 条军规 |
-| 仓位算法 | `src/riskguard/sizing/` — Kelly / 波动率目标 / 固定比例 | → `routing/positioning.py` (L3 Trade) |
-| 配置预设 | `src/riskguard/presets.py` — 保守/均衡/激进 | → 投资者偏好 |
-| 审计追踪 | `src/riskguard/audit/` — JSONL + SQLite 哈希链防篡改 | → 信号日志 |
-| 实时监控 | `src/riskguard/monitor/daemon.py` | → 盯盘预警 |
-| 券商抽象 | `src/riskguard/brokers/` — Paper / Alpaca | → 模拟交易 |
-| 回测叠加 | `src/riskguard/backtest/overlay.py` | → `backtest/` |
+**1. 单笔仓位上限 (`MaxPositionLimit`)** — `rules/position_limit.py`
 
-**核心设计模式（可借鉴）**：
-- 全量不可变 dataclass（`frozen=True, slots=True`），状态变更靠 `replace()` 返回新对象
-- `RiskConfig` 构造时校验所有参数区间，非法即抛 `ConfigError`
-- 引擎是唯一持有可变引用的"服务对象"，内部状态用 `threading.RLock` 保护
-- `check()` 与 `submit()` 在同一把锁内完成，消除"检查时没熔断、提交时已熔断"的竞态窗口
-- 拿不到价格直接拒单（fail-closed），绝不用猜测价放行
-- 减仓单永远放行（熔断后不拦截平仓）
-- 8 个 example 脚本可直接运行
+核心判断链：
+```
+订单方向 → 成交后持仓投影 → 判断是否"放大风险" → 计算是否越界 → 越界则缩单或拒单
+```
 
-### 📊 VectorBT — 回测层 (`~/Documents/workspace/vectorbt`)
+关键业务点：
+- **加仓/减仓判定不是简单的 `abs(projected) > abs(current)`**。项目内部工具 `_projection.py:project()` 定义了"放大敞口"的两种情形：(a) 同向加仓（成交后 |持仓| 变大）；(b) **反手**（持仓符号翻转，多变空或空变多）。反手即使新仓 |幅度| 不大于旧仓，也是不折不扣的新增方向性风险——早期版本只用绝对值比较导致反手绕过所有仓位规则，已被修复。这个 bug 在我们自己的仓位调度中也必须防范。
+- **减仓 / reduce_only 单永远放行**，不依赖 equity 是否有效。权益归零（爆仓）时手动平仓的 reduce_only 单也必须能通过闸门。
+- 权益 ≤ 0 时，风险放大类订单直接拒单（不能开新仓）。
+- `on_position_breach` 控制越界行为：`resize`（缩到上限内继续）vs `reject`（直接拒单）。
 
-矩阵化回测框架，"thinks in matrices, backtests at scale"。用 NumPy 数组打包数千组参数配置，Numba + Rust 加速热路径。
+**2. 回撤熔断 (`DrawdownCircuitBreaker`)** — `rules/drawdown.py`
 
-| 模块 | 路径 | 本项目映射 |
-|------|------|-----------|
-| 组合回测 | `vectorbt/portfolio/base.py` | → `backtest/` |
-| 订单/交易 | `vectorbt/portfolio/orders.py` / `trades.py` | → 交易追踪 |
-| Numba 加速 | `vectorbt/portfolio/nb.py` | → 性能关键路径 |
-| 回撤分析 | `vectorbt/generic/drawdowns.py` | → 风控回撤计算 |
-| 指标工厂 | `vectorbt/indicators/factory.py` | → `data/factor_pipeline.py` |
-| 数据层 | `vectorbt/data/` — 多源 + 更新器 | → `data/aggregator.py` |
-| 绘图/统计 | `vectorbt/generic/plotting.py` / `stats_builder.py` | → 可视化输出 |
+核心判断链：
+```
+每次观测权益 → 更新 high-water mark → 计算 drawdown = 1 - equity/HWM → 触及阈值 → 熔断置位 → 新开仓全部拒单
+```
 
-**核心设计模式（可借鉴）**：
-- `array_wrapper.py` — 把 NumPy/Pandas 包装成统一接口
-- `column_grouper.py` — 多列批量操作（网格搜索多参数组合）
-- `combine_fns.py` — 可组合的 reduce/transform 函数
-- `accessors.py` — 通过 pandas accessor 扩展 DataFrame（`pd.DataFrame.vbt.xxx`）
-- `dispatch.py` — 根据输入类型自动分发到不同实现
-- 指标工厂模式：声明式配置 → 自动生成 TA-Lib / Pandas TA / 自定义实现
-- Rust 扩展（`rust/` 目录）用于最热路径加速
-- 完整的示例 notebooks（BTC DMAC / MACD Volume / Pairs Trading / Portfolio Optimization / Walk-Forward）
+关键业务点：
+- 熔断状态由引擎在 `_observe_locked()` 中**自动置位**，不是在规则 evaluate 中判断——规则只读 `state.breaker_tripped` 做裁决。
+- 熔断后**永远放行减仓/平仓单**（`reduce_only or not increasing`）。如果熔断反而拦下平仓，风险无法收敛，那是灾难而非保护。
+- 熔断是**幂等**的：已触发则 `trip()` 原样返回。
+- 人工复盘后 `reset_breaker()` 把 high-water mark 重置到当前权益，避免立刻二次触发。
+- **权益观测的 NaN 防御**：`state.py:observe_equity()` 中，`math.isfinite(equity)` 为 False 时直接返回原状态不变。绝不能让 NaN 污染 `last_equity`——那会让 drawdown 恒算成 NaN、回撤熔断从此永不触发（fail-open）。
+
+**3. 新策略隔离观察 (`StrategyQuarantine`)** — `rules/quarantine.py`
+
+核心逻辑：
+```
+策略首次交易 → 自动登记入役时间 → 隔离期（默认90天）内适用更严格仓位上限（默认1%）→ 活过隔离期后恢复正常上限
+```
+
+关键业务点：
+- 策略入役时间可自动登记（`auto_register_strategies=True`）或显式登记（`register_strategy()`）。
+- 已存在策略不覆盖入役时间（保留最早）。
+- 隔离期内同样遵循"减仓永远放行"原则。
+- 这对应我们系统中"新策略先用小资金验证"的需求——不是人工判断，而是系统强制。
+
+**4. 组合层敞口上限 (`GrossExposureLimit` / `NetExposureLimit`)** — `rules/exposure.py`
+
+核心业务点：
+- `GrossExposureLimit`：全组合总名义敞口（多空绝对值之和）≤ `max_gross_exposure_pct × equity`。防止"一堆各自合规的小仓位累加成过度杠杆"。默认 1.0（不加杠杆）。
+- `NetExposureLimit`：全组合净敞口（多头市值 − 空头市值）≤ `±max_net_exposure_pct × equity`。管的是方向性风险。多空对冲组合可能 gross 很大但 net 接近 0。`max_net_exposure_pct=None` 时此规则是空操作。
+- NetExposureLimit 有个关键判断：**使 |净敞口| 变小的单永远放行**（`abs(projected_net) <= abs(current_net)`）。这不同于简单地检查 reduce_only——一个多单在净空头组合里可能是减仓方向。
+
+#### 二、仓位算法的业务逻辑 (`sizing/`)
+
+**Sizer 与 Rule 两层严格分离**：Sizer 只负责"下多大注"，Rule 负责"能不能下、要不要缩、该不该全停"。AI 可以做研究、写代码、挑毛病，但**每一笔真实指令都必须先过写死的风控规则**。
+
+三种仓位法的业务含义：
+
+| Sizer | 公式 | 适用场景 | 本项目可用处 |
+|-------|------|---------|------------|
+| `KellySizer` | `f* = (b×p − q)/b`，乘以 `kelly_fraction`（0.25~0.5） | 有明确胜率/盈亏比估计的策略 | L3 仓位调度 `routing/positioning.py` |
+| `VolatilityTargetSizer` | `weight = target_vol / realized_vol` | 多标的组合，按风险预算（非资金）分配 | 多票推荐时的仓位差异化 |
+| `FixedFractionalSizer` | `weight = max_position_pct`（固定比例） | 最朴素、最难被自己骗 | 默认仓位法 |
+
+关键业务细节：
+- Kelly 判据 `f* ≤ 0`（无正期望）→ **返回 0，不下注**。`size()` 方法中 `quantity ≤ 0` 返回 `None`，"不下注就是最好的下注"。
+- 波动率目标法有 `_MIN_VOL = 1e-6` 防止除零导致爆炸性权重。
+- 所有 sizer 输出的权重被 `max_sizing_leverage` 夹住，再被下游仓位上限规则二次约束。
+
+#### 三、风控状态机的业务逻辑 (`state.py`)
+
+```
+权益观测 → 更新 HWM → 计算 drawdown → 达到阈值 → 熔断（幂等）
+                                                    ↓
+                                          新开仓/加仓 REJECT
+                                          减仓/平仓 APPROVE
+                                                    ↓
+                                          人工复盘 → reset → HWM 归位到当前权益
+```
+
+关键业务点：
+- 状态全不可变（`frozen=True`），每次变更返回新对象。历史状态永远可追溯、可回放。
+- `strategy_age_days()`：从入役时间戳计算天数，用于隔离观察期判断。
+- `observe_equity()` 的 NaN 防御是防卫性编程的典范——feed 抖动、除零、坏 tick 产生的 NaN 会直接**忽略**而非污染状态。
+
+#### 四、引擎裁决聚合逻辑 (`engine.py:_aggregate()`)
+
+```
+所有规则 eval → 聚合：
+  任一 REJECT → 整体 REJECT
+  多个 RESIZE → 取最保守（最小）的缩量
+  全部 APPROVE → 放行
+```
+
+关键业务点：
+- 审计写入与风控裁决严格解耦：`_safe_audit()` 中 try/except 包裹所有审计操作，**磁盘满/IO异常绝不能让风控裁决带崩**。
+- `update_equity()` 可在下单流程之外周期性调用（供监控守护进程），每个 bar 至少观测一次权益。
+
+#### 五、回测叠加层的业务逻辑 (`backtest/overlay.py`)
+
+核心翻译：**策略的"目标持仓" → 风控批准的"下一步订单"**
+
+```
+策略 say "想满仓做多"(target_weight=+1.0)
+  → overlay 算出 delta = target_qty - current_qty
+  → 构造差额 Order（朝零收敛的标 reduce_only）
+  → 过风控引擎 check()
+  → 返回批准/缩量/拒单后的订单
+```
+
+关键业务点：
+- **坏 tick 防御**：`price ≤ 0 or equity ≤ 0` → 直接返回无动作，**不触碰引擎、不改统计**。坏 tick 绝不能被当成"清仓"意图去下平仓单。
+- 目标已在位（`abs(delta) < EPS`）→ 只推进熔断状态，不下单。
+- `reduce_only` 判定：朝零收敛（同向减小或清仓）→ reduce_only=True，任何时候都放行。
+- 累计回测统计：orders / resized / rejected / breaker_trips / halted_bars。
+
+#### 六、可直接借鉴到本项目的业务机制清单
+
+| # | 机制 | 来源文件 | 应用到本项目 |
+|---|------|---------|------------|
+| 1 | **反手检测逻辑** (多头→空头 / 空头→多头 = 放大风险) | `_projection.py:project()` | `routing/risk_control.py` 仓位变更判断 |
+| 2 | **减仓单永不拦截** (熔断/上限/隔离 一律放行平仓) | 5 条规则共同的 `reduce_only or not increasing` | L4 风控 + 31 条军规 |
+| 3 | **高水位回撤熔断** (HWM → drawdown → 自动熔断 → 人工复位) | `state.py` + `drawdown.py` | L4 风控执行 |
+| 4 | **新策略隔离观察** (入役登记 → 90天小仓位 → 自动放行) | `quarantine.py` | `learner/` 策略进化验证 |
+| 5 | **组合层双重敞口** (gross 管杠杆 + net 管方向) | `exposure.py` | `routing/positioning.py` 组合约束 |
+| 6 | **Kelly/VolTarget 仓位算法** (公式算注码，不让情绪决定) | `sizing/kelly.py` `sizing/volatility.py` | L3 仓位调度 |
+| 7 | **权益 NaN 防御** (坏读数直接忽略，绝不污染状态) | `state.py:observe_equity()` | 所有涉及权益计算的模块 |
+| 8 | **审计与风控解耦** (审计失败不得阻断风控裁决) | `engine.py:_safe_audit()` | 信号日志写入 |
+| 9 | **目标→差额订单翻译** (策略说目标权重，overlay 算差额) | `backtest/overlay.py` | `backtest/` 回测框架 |
+| 10 | **三档配置预设** (保守5%/均衡10%/激进20%，每项单调不减) | `presets.py` | 投资者偏好 `preference` |
+
+### 📊 VectorBT — 回测机制参考 (`~/Documents/workspace/vectorbt`)
+
+#### 一、三种仿真模式的分层设计 (`portfolio/base.py`)
+
+VectorBT 提供三层抽象，从简单到灵活递增：
+
+| 模式 | 入口 | 业务含义 | 本项目可借鉴 |
+|------|------|---------|------------|
+| `from_orders` | 直接给 size + price 数组 | "已知每笔订单的量和价，算结果" | 交易追踪回放 |
+| `from_signals` | entries/exits 信号数组 | "知道何时进出，自动生成订单、防重复开仓" | 信号→回测的标准路径 |
+| `from_order_func` | 任意 Numba JIT 回调 | "每个 bar 跑自定义逻辑，可查当前持仓 PnL" | 复杂策略的事件驱动回测 |
+
+关键业务点：
+- `from_signals` 默认**不允许在已有持仓时再次入场**（`accumulate=False`），防止信号重复触发。设 `accumulate=True` 可逐步加仓/减仓。
+- `from_order_func` 的 flexible 模式允许**每 bar 多笔订单**，对应真实场景中的拆单执行。
+- 三种模式共享同一套订单记录、交易分析、统计输出——**分析层与仿真层解耦**。
+
+#### 二、交易记录的三层模型 (`portfolio/trades.py`)
+
+```
+订单 (Orders)
+   ↓ 重构视角
+Entry Trades（每笔买入 + 分摊卖出的份额）
+Exit Trades（每笔卖出 + 分摊买入的成本）
+Positions（时间序列上连续的 entry/exit 聚合）
+```
+
+关键业务点：
+- **Entry Trades PnL == Exit Trades PnL == Positions PnL**。不同视角看同一组数据，总和一致。这保证了无论从哪个角度分析策略都不会出现"账对不上"的情况。
+- 加仓场景：1 笔大买单 + 100 笔小卖单 → 1 个 Entry Trade（入口信息来自买单，出口信息是卖单的加权平均）。**做 T 的收益可以精确归属到每一笔开仓**。
+- 减仓场景：100 笔小买单 + 1 笔大卖单 → 100 个 Entry Trade（每笔独立评估）。可以看清**分批建仓中哪几笔拖了后腿**。
+- **Open trades 始终包含在结果中**——如果需要只看已平仓交易，必须显式 `.closed` 过滤。否则会把未平仓浮盈/浮亏混入统计。
+- 这对应我们系统中**交易追踪 (`trade-track`) 的需求**——每笔开仓的盈亏归属、做 T 效果评估、分批建仓的绩效分解。
+
+#### 三、回撤分析的完整生命周期 (`generic/drawdowns.py`)
+
+每个回撤记录包含五个时间点：
+```
+Peak（高点） → Start（开始下跌） → Valley（最低点） → End（恢复/至今） → Status（Recovered/Active）
+```
+
+关键业务点：
+- **Active vs Recovered 分离**：默认指标（max_dd, avg_dd, max_dd_duration, avg_dd_duration）**不包含活跃回撤**。`incl_active=True` 才纳入。这避免了"还没恢复就计入最大回撤"的偏差。
+- 指标包括：Coverage（回撤占比）、Recovery Return（恢复期收益）、Recovery Duration（恢复耗时）、Duration Ratio（恢复耗时/下跌耗时）。
+- 这对应我们 `backtest/` 和 L4 风控的回撤计算——当前只算了一个简单的峰值回撤百分比，远不够诊断策略质量。
+
+#### 四、信号处理的关键枚举配置 (`portfolio/enums.py`)
+
+| 枚举 | 选项 | 业务含义 |
+|------|------|---------|
+| `Direction` | longonly / shortonly / both | 限制策略方向，做多策略不会因信号误触而开空仓 |
+| `AccumulationMode` | Disabled / Both / AddOnly / RemoveOnly | 仓位累积模式：禁用/双向/只加/只减 |
+| `CallSeqType` | Default / Reversed / Random / Auto | 同 bar 多标的的成交顺序（影响资金分配） |
+| `ConflictMode` | 多种 | 同一 bar 出现 entry+exit 信号时如何处理 |
+| `StopExitMode` | 多种 | 止损/止盈触发后的平仓方式 |
+| `SizeType` | 多种 | 下单量的含义：股数/金额/权重/目标百分比 |
+
+关键业务点：
+- `Auto` 调用顺序：按订单金额动态排序，大单优先成交——这对资金有限的场景很重要。
+- `AccumulationMode.AddOnly`：允许加仓但不允许减仓（适合定投策略）；`RemoveOnly`：只允许减仓（适合退出策略）。
+- 这些枚举对应我们回测系统中需要支持的配置项——当前 `backtest/` 模块缺少这些维度。
+
+#### 五、统计构建器的声明式指标 (`generic/stats_builder.py`)
+
+每个指标声明为一个配置条目：
+```python
+"max_drawdown": dict(
+    title="Max Drawdown [%]",
+    calc_func=lambda self: ...,
+    tags=["drawdown", "risk"],
+    apply_to_timedelta=False,
+)
+```
+
+关键业务点：
+- `group_by=True` 可以跨列/跨标的聚合——例如把所有持仓作为一个组合来统计（而非逐标的）。
+- `tags` 机制允许按类别筛选指标（例如只输出 risk 类指标）。
+- 这对应我们每个分析阶段输出的数据——可以用声明式指标替代硬编码的 print/日志，使输出可配置、可组合。
+
+#### 六、可直接借鉴到本项目的业务机制清单
+
+| # | 机制 | 来源文件 | 应用到本项目 |
+|---|------|---------|------------|
+| 1 | **三层仿真模式** (orders/signals/order_func 逐级灵活) | `portfolio/base.py` | `backtest/` 回测引擎设计 |
+| 2 | **Entry/Exit/Position 三层交易视角** (PnL 总和一致) | `portfolio/trades.py` | `trade-track` 交易追踪 |
+| 3 | **回撤五阶段生命周期** (Peak→Start→Valley→End→Status) | `generic/drawdowns.py` | L4 风控回撤计算 |
+| 4 | **Active/Recovered 分离统计** (未恢复回撤不污染指标) | `generic/drawdowns.py` | `backtest/` 绩效报告 |
+| 5 | **Direction/Accumulation 限制** (策略方向约束 + 仓位累积模式) | `portfolio/enums.py` | 回测配置参数 |
+| 6 | **Auto 调用顺序** (大单优先，按金额动态排序) | `portfolio/enums.py:CallSeqType` | 多标的资金分配 |
+| 7 | **声明式指标配置** (指标=calc_func+tags+group_by) | `generic/stats_builder.py` | 分析输出标准化 |
+| 8 | **信号自动防重复** (已有持仓不再入场，除非 accumulate=True) | `portfolio/base.py:from_signals` | `backtest/` 信号处理 |
+| 9 | **分批建仓绩效分解** (每笔 entry 独立计算 PnL + Return) | `portfolio/trades.py` | 交易追踪 `trade-track` |
+| 10 | **Stop Loss / Take Profit 内置** | `portfolio/base.py:from_signals` | `backtest/` + L4 风控 |
 
 ## 开发工作流
 

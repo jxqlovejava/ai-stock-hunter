@@ -209,3 +209,99 @@ class KellyPositionSizer:
                 f"base=({score}-50)/50×{macro_cap}={base_f:.1%}"
             ),
         )
+
+
+# ------------------------------------------------------------------
+# Phase 8: 波动率目标仓位法 (借鉴 RiskGuard sizing/volatility.py)
+# ------------------------------------------------------------------
+
+_MIN_VOL = 1e-6  # 防止除零/给出爆炸性权重
+
+
+class VolatilityTargetSizer:
+    """波动率目标仓位法。
+
+    思路: 给每个头寸分配相同的"风险预算"而非相同的"资金"。
+    目标权重 = 目标年化波动率 / 标的实现年化波动率。
+    波动越大的标的仓位越小，波动越小的越大，从而让组合整体波动趋近目标。
+
+    借鉴 RiskGuard ``VolatilityTargetSizer`` 设计。
+    """
+
+    name: str = "volatility_target"
+
+    def __init__(
+        self,
+        target_vol: float = 0.15,
+        lookback: int = 60,
+    ):
+        """初始化。
+
+        Args:
+            target_vol: 目标年化波动率 (默认 15%)
+            lookback: 计算实现波动率的回溯天数 (默认 60)
+        """
+        if not (0.0 < target_vol <= 1.0):
+            raise ValueError(f"target_vol must be in (0, 1], got {target_vol}")
+        if lookback < 5:
+            raise ValueError(f"lookback must be >= 5, got {lookback}")
+        self.target_vol = target_vol
+        self.lookback = lookback
+
+    def target_weight(
+        self,
+        symbol: str,
+        returns: list[float],
+        macro_cap: float = 0.80,
+        max_single: float = 0.20,
+    ) -> SizingResult:
+        """按 目标波动率 / 实现波动率 分配权重。
+
+        Args:
+            symbol: 标的代码
+            returns: 日收益率序列 (至少 5 个数据点)
+            macro_cap: 宏观仓位上限
+            max_single: 单票上限
+
+        Returns:
+            SizingResult，volatility 相关参数通过 kelly_f 字段透传
+        """
+        if len(returns) < 5:
+            return SizingResult(
+                symbol=symbol,
+                target_weight=0.0,
+                method="vol_target_cold",
+                source_citation=f"vol_target: need >=5 returns, got {len(returns)}",
+            )
+
+        # 日波动率
+        import math
+        n = min(len(returns), self.lookback)
+        recent = returns[-n:]
+        mean_ret = sum(recent) / n
+        variance = sum((r - mean_ret) ** 2 for r in recent) / (n - 1) if n > 1 else 0.0
+        daily_vol = math.sqrt(max(variance, 0.0))
+
+        # 年化波动率 (sqrt(252) ≈ 15.875)
+        annual_vol = daily_vol * math.sqrt(252)
+
+        # 目标权重 = target_vol / max(annual_vol, _MIN_VOL)
+        # _MIN_VOL 防御: 零波动率会导致爆炸性权重
+        weight = self.target_vol / max(annual_vol, _MIN_VOL)
+
+        # 夹到 [0, max_single] 再夹 macro_cap
+        weight = min(weight, max_single)
+        weight = min(weight, macro_cap)
+        weight = max(0.0, round(weight, 4))
+
+        return SizingResult(
+            symbol=symbol,
+            target_weight=weight,
+            method="vol_target",
+            kelly_f=annual_vol,  # 复用字段透传年化波动率
+            kelly_fraction=self.target_vol,
+            source_citation=(
+                f"vol_target(annual_vol={annual_vol:.1%},"
+                f"target={self.target_vol:.0%})→{weight:.1%}"
+            ),
+        )
