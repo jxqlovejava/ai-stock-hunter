@@ -71,6 +71,7 @@ class DiagnosisReport:
     pullback_score: float = 50.0             # 回调质量分 0-100
     pullback_state: Optional[object] = None  # PullbackState (lazy import)
     pullback_authentic: bool = True          # 回调是否通过反操纵验证
+    dimension_synthesis: str = ""            # 多维诊断综述
 
 
 class DiagnosisEngine:
@@ -257,6 +258,7 @@ class DiagnosisEngine:
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
         report.confidence = self._calc_confidence(report, quote, financials)
         report.data_freshness = datetime.now()
+        report.dimension_synthesis = self._synthesize_dimensions(report)
         return report
 
     @staticmethod
@@ -671,10 +673,158 @@ class DiagnosisEngine:
         return {"score": max(0.0, min(100.0, score)), "risks": risks}
 
     def _bull_case(self, name: str, quote: dict | None, fin: list | None) -> str:
-        return f"{name}: 估值合理 + ROE稳定 + 北向资金关注"
+        """基于实际数据生成股票特定的看多理由。"""
+        parts = []
+        pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
+        pb = (quote or {}).get("pb") or 0
+        change_pct = (quote or {}).get("change_pct", 0) or 0.0
+        if fin:
+            latest = fin[0] if fin else {}
+            roe = latest.get("roe")
+            rev_growth = latest.get("revenue_growth_pct")
+            profit_growth = latest.get("net_profit_growth_pct")
+            if roe is not None and roe > 15:
+                parts.append(f"ROE={roe:.1f}%盈利能力突出")
+            elif roe is not None and roe > 8:
+                parts.append(f"ROE={roe:.1f}%盈利能力稳健")
+            if rev_growth is not None and rev_growth > 20:
+                parts.append(f"营收增速{rev_growth:+.1f}%高成长")
+            if profit_growth is not None and profit_growth > 20:
+                parts.append(f"利润增速{profit_growth:+.1f}%")
+        if pe > 0 and pe < 15:
+            parts.insert(0, f"PE={pe:.1f}x估值偏低")
+        elif pe > 0 and pe < 30:
+            parts.insert(0, f"PE={pe:.1f}x估值合理")
+        if change_pct > 0:
+            parts.append(f"当日涨{change_pct:+.1f}%技术面偏强")
+        return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著亮点"
 
     def _bear_case(self, name: str, quote: dict | None, fin: list | None) -> str:
-        return f"{name}: 宏观不确定性 + 行业竞争加剧 + 流动性风险"
+        """基于实际数据生成股票特定的看空理由。"""
+        parts = []
+        pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
+        pb = (quote or {}).get("pb") or 0
+        change_pct = (quote or {}).get("change_pct", 0) or 0.0
+        if fin:
+            latest = fin[0] if fin else {}
+            roe = latest.get("roe")
+            rev_growth = latest.get("revenue_growth_pct")
+            debt_ratio = latest.get("debt_ratio") or latest.get("asset_liability_ratio")
+            if roe is not None and roe < 5:
+                parts.append(f"ROE={roe:.1f}%盈利能力薄弱")
+            if rev_growth is not None and rev_growth < 0:
+                parts.append(f"营收增速{rev_growth:+.1f}%下滑")
+            if debt_ratio is not None and debt_ratio > 70:
+                parts.append(f"资产负债率{debt_ratio:.0f}%偏高")
+        if pe > 60:
+            parts.insert(0, f"PE={pe:.1f}x估值偏高")
+        elif pe < 0:
+            parts.insert(0, "PE为负，当前处于亏损状态")
+        if change_pct < -3:
+            parts.append(f"当日跌{change_pct:+.1f}%技术面偏弱")
+        return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著风险"
+
+    @staticmethod
+    def _synthesize_dimensions(report: DiagnosisReport) -> str:
+        """生成多维诊断综述——解释维度间交互、主导维度、矛盾点。
+
+        分析 8 个维度的得分模式，识别：
+        - 主导信号（得分 ≥70 或 ≤30）及其含义
+        - 矛盾对（分差 >40 的两维度）及其市场含义
+        - 整体叙事方向 + 关注点
+        """
+        dims = [
+            ("宏观环境", report.macro_score), ("价值因子", report.value_score),
+            ("质量因子", report.quality_score), ("动量因子", report.momentum_score),
+            ("盈利修正", report.earnings_revision_score), ("估值综合", report.valuation_score),
+            ("周期适配", report.cycle_score), ("高管因子", report.executive_score),
+        ]
+        strong_bull = [(n, s) for n, s in dims if s >= 70]
+        strong_bear = [(n, s) for n, s in dims if s <= 30]
+        avg = sum(s for _, s in dims) / len(dims)
+
+        lines = []
+
+        # ── 1. 多头亮点 ──
+        if strong_bull:
+            names = "、".join(f"{n}({s:.0f})" for n, s in strong_bull[:3])
+            bull_detail = []
+            for n, s in strong_bull[:3]:
+                if n == "盈利修正":
+                    bull_detail.append("分析师持续上调盈利预期，基本面改善趋势确认")
+                elif n == "周期适配":
+                    bull_detail.append("当前经济周期对该行业友好，历史胜率偏高")
+                elif n == "宏观环境":
+                    bull_detail.append("宏观流动性宽松，风险偏好环境有利")
+                elif n == "质量因子":
+                    bull_detail.append("盈利能力与现金流质量过硬，下行保护充分")
+                elif n == "动量因子":
+                    bull_detail.append("价格趋势向上，资金持续流入")
+            detail_text = "；".join(bull_detail) if bull_detail else ""
+            lines.append(f"多头亮点: {names}")
+            if detail_text:
+                lines.append(f"  ↳ {detail_text}")
+
+        # ── 2. 空头拖累 ──
+        if strong_bear:
+            names = "、".join(f"{n}({s:.0f})" for n, s in strong_bear[:3])
+            bear_detail = []
+            for n, s in strong_bear[:3]:
+                if n == "动量因子":
+                    bear_detail.append("价格趋势疲弱，资金持续流出或观望，短期难有起色")
+                elif n == "质量因子":
+                    bear_detail.append("盈利质量或现金流存在隐患，需警惕纸面利润")
+                elif n == "宏观环境":
+                    bear_detail.append("宏观环境收紧，系统性风险上升")
+                elif n == "高管因子":
+                    bear_detail.append("管理层变动或背景不明，治理风险需关注")
+                elif n == "价值因子":
+                    bear_detail.append("估值虽低但可能隐含基本面恶化，警惕价值陷阱")
+            detail_text = "；".join(bear_detail) if bear_detail else ""
+            lines.append(f"空头拖累: {names}")
+            if detail_text:
+                lines.append(f"  ↳ {detail_text}")
+
+        # ── 3. 矛盾检测 ──
+        contradictions = []
+        for i in range(len(dims)):
+            for j in range(i + 1, len(dims)):
+                diff = abs(dims[i][1] - dims[j][1])
+                if diff > 40:
+                    contradictions.append((dims[i][0], dims[j][0], diff))
+        if contradictions:
+            ct = contradictions[:2]
+            ct_text = "、".join(f"{a}↔{b}(差{d:.0f}分)" for a, b, d in ct)
+            ct_meaning = []
+            for a, b, d in ct:
+                if ("盈利修正" in (a, b) and "动量" in (a, b)):
+                    ct_meaning.append("基本面改善但价格未跟进——可能是信息滞后（买入机会）或市场已预判风险（价值陷阱）")
+                elif ("质量" in (a, b) and "盈利修正" in (a, b)):
+                    ct_meaning.append("盈利上调但质量分偏低——关注是否来自一次性收益而非主业改善")
+                elif ("周期适配" in (a, b) and "动量" in (a, b)):
+                    ct_meaning.append("周期有利但价格不动——可能是板块轮动前的蓄力或市场结构性回避")
+            ct_detail = "；".join(ct_meaning) if ct_meaning else "分差过大说明市场定价存在分歧，需要更多信息来验证方向"
+            lines.append(f"维度矛盾: {ct_text}")
+            lines.append(f"  ↳ {ct_detail}")
+
+        # ── 4. 整体判断 + 关注点 ──
+        if avg >= 65:
+            overall = "整体偏多，多数维度发出积极信号"
+            focus = "关注动量能否跟上基本面改善，若动量持续低迷则需重新评估"
+        elif avg >= 50:
+            overall = "整体中性，多空信号交织，需更多催化剂判断方向"
+            focus = "关注矛盾维度的演化方向——任一矛盾解决都可能触发方向性行情"
+        elif avg >= 35:
+            overall = "整体偏空，多数维度承压，但仍有局部亮点可关注"
+            focus = "关注亮点维度能否扩散至其他维度，若出现共振改善则是入场信号"
+        else:
+            overall = "整体显著偏空，多维度发出警戒信号"
+            focus = "除非出现基本面拐点（盈利修正转正、宏观改善），否则不宜逆势抄底"
+
+        lines.append(overall)
+        lines.append(f"🔍 关注点: {focus}")
+
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Phase 2: 选股筛选预设

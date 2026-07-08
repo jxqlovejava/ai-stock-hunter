@@ -53,6 +53,18 @@ class MentalModelMatcher:
         if not self._models:
             return []
 
+        # 从 report 提取关键分数，用于生成股票特定分析
+        _scores = {}
+        if report is not None:
+            for attr in ("macro_score", "value_score", "quality_score", "momentum_score",
+                         "earnings_revision_score", "valuation_score", "cycle_score",
+                         "executive_score", "manipulation_risk_score"):
+                v = getattr(report, attr, None)
+                if v is not None:
+                    _scores[attr] = float(v)
+            # 情绪
+            _scores["sentiment"] = getattr(report, "sentiment_signal", "NEUTRAL") or "NEUTRAL"
+
         candidates: list[_MatchedModel] = []
         portfolio = self._portfolio(report)
         sentiment = self._sentiment(report)
@@ -88,7 +100,7 @@ class MentalModelMatcher:
                     relevance=relevance,
                 ))
 
-        # 按相关度降序，返回前 15（含完整描述）
+        # 按相关度降序，返回前 15（含完整描述 + 股票特定应用）
         candidates.sort(key=lambda x: x.relevance, reverse=True)
         top = candidates[:15]
         result = []
@@ -99,6 +111,8 @@ class MentalModelMatcher:
                 if raw.get("slug") == m.slug:
                     desc = raw.get("description", "")
                     break
+            # 生成股票特定应用分析
+            app = self._stock_application(m.slug, _scores)
             result.append({
                 "slug": m.slug,
                 "name_cn": m.name_cn,
@@ -106,8 +120,102 @@ class MentalModelMatcher:
                 "reason_for_match": m.reason_for_match,
                 "description": desc,
                 "relevance": m.relevance,
+                "application_to_stock": app,
             })
         return result
+
+    @staticmethod
+    def _stock_application(slug: str, scores: dict) -> str:
+        """基于股票实际分数，生成该思维模型对当前股票的具体应用洞察。"""
+        momentum = scores.get("momentum_score", 50)
+        quality = scores.get("quality_score", 50)
+        earnings = scores.get("earnings_revision_score", 50)
+        macro = scores.get("macro_score", 50)
+        cycle = scores.get("cycle_score", 50)
+        value = scores.get("value_score", 50)
+        executive = scores.get("executive_score", 50)
+        manip_risk = scores.get("manipulation_risk_score", 0)
+        sentiment = scores.get("sentiment", "NEUTRAL")
+
+        # 损失厌恶相关模型
+        if slug in ("loss-aversion", "deprival-superreaction", "sunk-cost"):
+            if momentum < 35:
+                return (
+                    f"当前动量因子仅{momentum:.0f}分，持仓可能已浮亏。"
+                    "切忌因厌恶损失而拒绝止损——承认错误是投资中最被低估的能力"
+                )
+            return "警惕持有浮亏仓位时产生的'回本就卖'心理——这往往导致卖在最低点"
+
+        # 社会认同 / 从众
+        if slug in ("social-proof", "herding", "authority-misinfluence"):
+            if sentiment in ("GREED", "EXTREME"):
+                return f"当前市场情绪{sentiment}，从众风险极高——多数人在极端情绪中的判断往往错误"
+            return "反思: 你的持仓决策是基于独立研究还是市场热度？"
+
+        # 确认偏误
+        if slug in ("confirmation-bias", "narrative-fallacy"):
+            if earnings > 70 and momentum < 35:
+                return (
+                    f"盈利修正{earnings:.0f}分但动量仅{momentum:.0f}分——"
+                    "你可能在选择性接受看多信息而忽略价格发出的警告信号"
+                )
+            return "主动寻找与你持仓逻辑相反的证据，列出3个可能推翻你判断的风险因素"
+
+        # 激励机制
+        if slug in ("incentives", "agency-problem"):
+            if executive < 40:
+                return (
+                    f"高管因子{executive:.0f}分偏低——管理层激励可能与股东利益不一致，"
+                    "关注高管薪酬结构是否与长期价值创造挂钩"
+                )
+            return "关注高管薪酬是否与股东回报绑定，而非仅与规模/收入挂钩"
+
+        # 网络效应 / 竞争优势
+        if slug in ("network-effect", "competitive-advantage", "moat"):
+            if quality < 40:
+                return (
+                    f"质量因子{quality:.0f}分偏弱——护城河可能不如想象中坚固，"
+                    "竞争格局恶化是长期持有最大的敌人"
+                )
+            return "定期审视护城河的宽度变化——没有永远的竞争优势"
+
+        # 供需
+        if slug in ("supply-demand", "scarcity"):
+            if cycle > 70:
+                return f"周期适配{cycle:.0f}分——当前处于供需有利阶段，但需警惕产能过剩拐点"
+            return "分析该行业供给端新增产能节奏，供给过剩是周期股最大的风险"
+
+        # 边际分析
+        if slug in ("marginal-analysis", "diminishing-returns"):
+            return f"增量视角: 关注ROE趋势而非绝对水平——边际改善比静态数字更有信息量"
+
+        # 机会成本
+        if slug in ("opportunity-cost", "capital-allocation"):
+            return "空仓视角自检: 如果现在持有现金，还会买这支股票吗？如果不会，为什么不卖？"
+
+        # 逆向思维
+        if slug in ("inversion", "avoid-stupidity"):
+            if earnings > 80:
+                return (
+                    "逆向自问: 这个投资最可能的失败原因是什么？"
+                    "即使盈利修正很强，也要想清楚什么情况下会亏钱"
+                )
+            return "先想清楚'为什么这个投资会失败'，再思考'为什么它会成功'"
+
+        # 奥卡姆剃刀
+        if slug in ("occams-razor", "simplicity"):
+            return "如果一个投资需要复杂的故事才能自圆其说，那可能不是一个好投资"
+
+        # 操纵/欺诈相关
+        if slug in ("falsification", "accounting-red-flags") and manip_risk > 30:
+            return f"操纵风险{manip_risk:.0f}分——建议用否证思维复核近期交易量和分时图"
+
+        # 心理学/废话倾向
+        if slug in ("twaddle-tendency",):
+            return "警惕公司IR和管理层在电话会中的空洞话术——看他们做了什么而非说了什么"
+
+        # 通用
+        return f"结合当前评分（动量{momentum:.0f}/质量{quality:.0f}/盈利{earnings:.0f}）审视该模型的启示"
 
     @staticmethod
     def _score_model(

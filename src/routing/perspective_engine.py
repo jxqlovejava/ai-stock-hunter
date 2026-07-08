@@ -57,6 +57,10 @@ class PerspectiveScore:
     sub_scores: dict[str, float] = field(default_factory=dict)
     evidence: list[str] = field(default_factory=list)
 
+    # 股票专属分析
+    framework_application: str = ""     # 框架如何具体应用到这支股票
+    specific_factors: list[str] = field(default_factory=list)  # 该股票的具体分析因素
+
 
 @dataclass
 class DebateResult:
@@ -506,21 +510,44 @@ class PerspectiveAnalyzer:
     @classmethod
     def _synthesize_tension(cls, r: DebateResult) -> str:
         if r.agreement_level == "consensus":
-            return "四个视角高度一致 — 风险在于'所有人都看到的机会可能已被定价'"
+            return "四大师视角高度一致 — 风险在于'所有人都看到的机会可能已被定价'，需警惕拥挤"
         elif r.agreement_level == "divided":
-            return f"存在 {r.score_range:.1f} 分分歧 — 需要你决定押注哪个视角, 并为自己的判断负责"
+            scores = [("巴菲特", r.buffett.score), ("李录", r.li_lu.score),
+                      ("芒格", r.munger.score), ("林奇", r.lynch.score)]
+            high = max(scores, key=lambda x: x[1])
+            low = min(scores, key=lambda x: x[1])
+            return (f"四大师存在 {r.score_range:.1f} 分分歧 — {high[0]}看多({high[1]:.1f})"
+                    f"而{low[0]}看空({low[1]:.1f})。需理解双方的核心逻辑后独立判断")
         else:
-            return f"严重分歧 ({r.score_range:.1f} 分) — 高不确定性, 小仓位试探或等待确定性提升"
+            scores = [("巴菲特", r.buffett.score), ("李录", r.li_lu.score),
+                      ("芒格", r.munger.score), ("林奇", r.lynch.score)]
+            high = max(scores, key=lambda x: x[1])
+            low = min(scores, key=lambda x: x[1])
+            return (f"四大师严重对立 ({r.score_range:.1f} 分) — {high[0]}与{low[0]}"
+                    f"的判断截然相反。高不确定性意味着任何方向都可能出现，"
+                    f"保守做法是等待分歧收敛或仅用小仓位试探")
 
     @classmethod
     def _synthesize_recommendation(cls, r: DebateResult) -> str:
         if r.agreement_level == "consensus" and r.avg_score >= 3.5:
-            return "四大师一致看多 — 罕见强共识, 但注意拥挤风险(当所有人都看到时, 机会可能已消退)"
+            return "四大师一致看多 — 罕见强共识信号，但注意拥挤风险（当所有人都看到时，机会可能已消退）"
         if r.agreement_level == "consensus" and r.avg_score <= 1.5:
-            return "四大师一致看空 — 强烈建议回避, 不管故事听起来多好"
+            return "四大师一致看空 — 强烈建议回避，不论故事听起来多好"
         scores = [(r.buffett, "巴菲特"), (r.li_lu, "李录"), (r.munger, "芒格"), (r.lynch, "林奇")]
         highest = max(scores, key=lambda x: x[0].score)
         lowest = min(scores, key=lambda x: x[0].score)
+        # 引用具体洞察而非仅说名字
+        high_insight = highest[0].one_line_thesis or ""
+        low_concern = lowest[0].key_concern or ""
+        detail = ""
+        if high_insight:
+            detail += f"{highest[1]}的核心逻辑: {high_insight[:120]}"
+        if low_concern:
+            if detail:
+                detail += "；"
+            detail += f"但{lowest[1]}提醒: {low_concern[:120]}"
+        if detail:
+            return detail
         return (
             f"{highest[1]}最乐观({highest[0].score:.1f}), "
             f"{lowest[1]}最悲观({lowest[0].score:.1f})。"

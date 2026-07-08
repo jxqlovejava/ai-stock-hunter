@@ -18,7 +18,8 @@ class Verdict:
     confidence: float = 0.5                  # 0.0-1.0
     recommendation: str = "HOLD"             # BUY / ADD / HOLD / REDUCE / SELL
     falsifiable: list[str] = field(default_factory=list)
-    risks: list[str] = field(default_factory=list)
+    risks: list[dict] = field(default_factory=list)     # [{text, severity, source}]
+    dimension_contributions: dict[str, float] = field(default_factory=dict)
     topic_adjustments: dict = field(default_factory=dict)  # Phase 3: topic lifecycle adjustments
     source_citations: list = field(default_factory=list)  # Phase 1: 继承自诊断阶段的引用
     # Phase 4: Alpha Lens 输出
@@ -116,6 +117,18 @@ class VerdictEngine:
             + executive_score * weights.get("executive", 0.05)
         )
 
+        # 评分构成分解 (用于 Step 6 展示)
+        dim_contributions = {
+            "基本面": round(fundamental * weights["fundamental"], 1),
+            "估值": round(valuation * weights.get("valuation", 0.15), 1),
+            "技术面": round(technical * weights["technical"], 1),
+            "宏观": round(macro * weights["macro"], 1),
+            "周期": round(cycle * weights.get("cycle", 0.10), 1),
+            "行业": round(adjusted_sector * weights["sector"], 1),
+            "情绪": round(sentiment * weights["sentiment"], 1),
+            "高管": round(executive_score * weights.get("executive", 0.05), 1),
+        }
+
         # Phase 4: Alpha Lens 乘数 — Alpha 放大/缩小总评分
         score = max(0, min(100, raw_score * alpha_mult))
 
@@ -142,14 +155,15 @@ class VerdictEngine:
 
         # Phase 11: 操纵风险折扣 — 高操纵风险直接降分降置信度
         manip_risk = getattr(report, "manipulation_risk_score", 0.0) or 0.0
+        risks: list[dict] = []
         if manip_risk > 60:
             manip_mult = 0.7  # 高操纵风险，评分打 7 折
             confidence = max(0.3, confidence - 0.15)
-            risks.append(f"操纵风险 {manip_risk:.0f}/100 — 评分已打折")
+            risks.append({"text": f"操纵风险 {manip_risk:.0f}/100 — 评分已打折", "severity": "high", "source": f"manipulation_risk={manip_risk:.0f}"})
         elif manip_risk > 30:
             manip_mult = 0.85
             confidence = max(0.35, confidence - 0.07)
-            risks.append(f"操纵风险 {manip_risk:.0f}/100 — 保持警惕")
+            risks.append({"text": f"操纵风险 {manip_risk:.0f}/100 — 保持警惕", "severity": "medium", "source": f"manipulation_risk={manip_risk:.0f}"})
         else:
             manip_mult = 1.0
         score = max(0, min(100, score * manip_mult))
@@ -165,20 +179,13 @@ class VerdictEngine:
                 # 操纵陷阱: 强制降级，技术面权重归零
                 score = min(score, 50.0)
                 confidence = max(0.25, confidence - 0.20)
-                risks.append(
-                    "🔴 回调入场被反操纵门拦截 — 检测到操纵陷阱，禁止入场"
-                )
+                risks.append({"text": "回调入场被反操纵门拦截 — 检测到操纵陷阱，禁止入场", "severity": "critical", "source": "pullback_trap"})
             elif status_val == "PULLBACK_SETUP" and pullback_authentic:
                 # 真回调到位: 技术面加分
                 score += 5.0
-                risks.append(
-                    f"🟢 回调入场信号确认 — "
-                    f"回调质量分 {pullback_score_pb:.0f}/100"
-                )
+                risks.append({"text": f"回调入场信号确认 — 回调质量分 {pullback_score_pb:.0f}/100", "severity": "low", "source": f"pullback_score={pullback_score_pb:.0f}"})
             elif status_val == "PULLBACK_ACTIVE":
-                risks.append(
-                    f"🟡 回调进行中 — 距支撑位尚有一段距离，建议等待"
-                )
+                risks.append({"text": "回调进行中 — 距支撑位尚有一段距离，建议等待", "severity": "medium", "source": "pullback_active"})
 
         # 置信度 = 信息完整度的函数
         confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
@@ -214,49 +221,51 @@ class VerdictEngine:
         else:
             rec = "SELL"
 
-        # 可证伪条件
+        # 可证伪条件 — 引用实际当前值
+        cycle_val = report.cycle_phase or "未知"
         falsifiable = [
-            "如果宏观 PMI < 48，建议失效",
-            "如果标的 PE 超过历史 70% 分位，建议失效",
-            f"如果经济周期为 CONTRACTION 或 TROUGH (当前: {report.cycle_phase})，建议效力减半",
+            f"如果宏观 PMI < 48 (当前社融增速: 待查)，建议失效",
+            f"如果标的 PE 超过历史 70% 分位，建议失效",
+            f"如果经济周期从 {cycle_val} 进入收缩期或谷底期，建议效力减半",
         ]
         if gt_profile:
             falsifiable.append(f"如果主导玩家变更为 {gt_profile.dominant_player} 的对立方且持续 3 日，建议失效")
 
-        # 风险提示
-        risks = []
+        # 风险提示 (结构化: {text, severity, source})
         if report.macro_score < 40:
-            risks.append("宏观环境偏空")
+            risks.append({"text": "宏观环境偏空", "severity": "high", "source": f"macro_score={report.macro_score:.0f}"})
         if report.cycle_score < 30:
-            risks.append(f"经济周期偏空 ({report.cycle_phase})，注意系统性风险")
+            risks.append({"text": f"经济周期偏空 ({report.cycle_phase})，注意系统性风险", "severity": "high", "source": f"cycle_score={report.cycle_score:.0f}"})
         if report.valuation_score > 80:
-            risks.append("估值极低 — 可能存在基本面隐忧或价值陷阱")
+            risks.append({"text": "估值极低 — 可能存在基本面隐忧或价值陷阱", "severity": "medium", "source": f"valuation_score={report.valuation_score:.0f}"})
         if report.valuation_score < 20:
-            risks.append("估值过高 — 泡沫风险显著")
+            risks.append({"text": "估值过高 — 泡沫风险显著", "severity": "high", "source": f"valuation_score={report.valuation_score:.0f}"})
         if report.sentiment_signal == "PANIC":
-            risks.append("市场恐慌中，注意流动性")
+            risks.append({"text": "市场恐慌中，注意流动性", "severity": "high", "source": "sentiment=PANIC"})
         # Phase 3: 主题拥挤风险
         if topic_info.get("crowded_topics"):
-            risks.append(f"主题拥挤: {', '.join(topic_info['crowded_topics'])}")
+            risks.append({"text": f"主题拥挤: {', '.join(topic_info['crowded_topics'])}", "severity": "medium", "source": "topic_crowded"})
         if topic_info.get("fading_topics"):
-            risks.append(f"主题消退: {', '.join(topic_info['fading_topics'])}")
+            risks.append({"text": f"主题消退: {', '.join(topic_info['fading_topics'])}", "severity": "medium", "source": "topic_fading"})
         # V4: 高管风险
-        if report.executive_risks:
-            risks.extend(report.executive_risks)
+        for er in report.executive_risks:
+            risks.append({"text": er, "severity": "medium", "source": "executive"})
         # Phase 6: 博弈论 + 投资思维模型风险
-        risks.extend(gt_risks)
-        risks.extend(mm_bias_flags)
-        risks.extend(mm_warnings)
+        for gr in gt_risks:
+            risks.append({"text": gr, "severity": "medium", "source": "game_theory"})
+        for bf in mm_bias_flags:
+            risks.append({"text": bf, "severity": "low", "source": "mental_model_bias"})
+        for mw in mm_warnings:
+            risks.append({"text": mw, "severity": "medium", "source": "mental_model"})
 
         # ── 反追高：MA 偏离与短期飙升风险 ──
-        if report.ma_deviation_pct > 50.0:
-            risks.append(
-                f"价格偏离 MA60 {report.ma_deviation_pct:.0f}% — 技术超买显著"
-            )
-        if report.surge_risk:
-            risks.append(
-                f"短期飙升 {report.surge_5day_pct:.0f}%/5日 — 追涨风险，评分上限 HOLD"
-            )
+        ma_dev = getattr(report, "ma_deviation_pct", 0) or 0
+        if ma_dev > 50.0:
+            risks.append({"text": f"价格偏离 MA60 {ma_dev:.0f}% — 技术超买显著", "severity": "high", "source": f"ma_deviation={ma_dev:.0f}%"})
+        surge_risk = getattr(report, "surge_risk", False)
+        if surge_risk:
+            surge_pct = getattr(report, "surge_5day_pct", 0) or 0
+            risks.append({"text": f"短期飙升 {surge_pct:.0f}%/5日 — 追涨风险，评分上限 HOLD", "severity": "critical", "source": f"surge_5day={surge_pct:.0f}%"})
             score = min(score, 55.0)  # 追涨熔断：强制 HOLD 上限
             rec = "HOLD" if rec in ("BUY", "ADD") else rec
 
@@ -267,6 +276,7 @@ class VerdictEngine:
             recommendation=rec,
             falsifiable=falsifiable,
             risks=risks,
+            dimension_contributions=dim_contributions,
             topic_adjustments=topic_info,
             source_citations=report.source_citations,  # Phase 1: 继承诊断阶段的引用
             alpha_rationale=alpha_rationale,            # Phase 4: Alpha 判定理由
