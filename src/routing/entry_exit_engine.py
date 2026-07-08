@@ -421,11 +421,6 @@ class EntryExitEngine:
         if close.shape[0] < 5:
             return None
 
-        latest = close.iloc[-1]
-        high = latest.get("high", 0) if isinstance(latest, pd.Series) else latest
-        close_p = latest.get("close", 0) if isinstance(latest, pd.Series) else latest
-        open_p = latest.get("open", 0) if isinstance(latest, pd.Series) else latest
-
         if isinstance(close, pd.DataFrame) and "high" in close.columns:
             high_val = float(close["high"].iloc[-1])
             close_val = float(close["close"].iloc[-1])
