@@ -1,11 +1,11 @@
 ---
-name: l3-trade
-description: 交易信号生成 — 评分→动作→仓位→双创折扣→核心/交易仓区分。触发词：交易信号、生成信号、仓位、L3、trade。
+name: positioning
+description: 仓位调度 — 评分→动作→仓位→双创折扣→核心/交易仓区分。触发词：交易信号、生成信号、仓位、调度、positioning。
 ---
 
-# L3 交易员 (Signal Generator)
+# 仓位调度 (Position Sizing)
 
-将 L2 裁决映射为可执行交易信号和仓位。
+将综合裁决映射为可执行交易信号和仓位。
 
 ## 信号映射
 
@@ -30,24 +30,24 @@ base = max(0, (score - 50) / 50 × macro_cap)
 ## 输出
 
 ```python
-TradeSignal(
+PositionSignal(
     symbol="600519",
     action="ADD",
     target_weight=0.12,        # 12% 仓位
     is_core=False,
-    limit=0.20,                 # L4 施加的上限
-    source_citations=[...],     # 继承自 L1→L2 的引用链
-    confidence=0.82,            # 继承自 L2 的信心度
+    limit=0.20,                 # 风控施加的上限
+    source_citations=[...],     # 继承自诊断→裁决的引用链
+    confidence=0.82,            # 继承自裁决的信心度
 )
 ```
 
 ## 护栏
 
-- **不直接生成买卖建议** (需 L4 风控审批)
+- **不直接生成买卖建议** (需风控审批)
 - **动作映射公开透明**
 - **仓位公式参数可审计**
 
 ## 引用
 
-- Python 实现: `src/routing/l3_trade.py`
-- 依赖 Skill: `l2-judge`, `l4-risk`
+- Python 实现: `src/routing/positioning.py`
+- 依赖 Skill: `verdict`, `risk-control`

@@ -1,6 +1,6 @@
 ---
 name: stock-hunter
-description: AI Stock Hunter — A 股智能投资决策系统。触发词：分析股票、选股、回测、大盘、情绪、诊断。提供全链路分析（军规→L0→L1→L2→L3→L4），支持一键诊断、条件选股、情绪检测、策略回测。
+description: AI Stock Hunter — A 股智能投资决策系统。触发词：分析股票、选股、回测、大盘、情绪、诊断。提供全链路分析（军规→准入→诊断→裁决→调度→风控），支持一键诊断、条件选股、情绪检测、策略回测。
 user-invocable: true
 ---
 
@@ -11,7 +11,7 @@ user-invocable: true
 ## 能力概览
 
 ### 1. 分析 (analyze)
-对单只股票执行全链路分析：军规门禁 → L0 保安 → L1 分析师 → L2 法官 → L3 交易员 → L4 风控官。**全链路每个阶段必须标注数据来源（T0-T3/nature/freshness），详见 `guardrails.md`。**
+对单只股票执行全链路分析：军规 → 准入检查 → 多维诊断 → 综合裁决 → 仓位调度 → 风控执行。**全链路每个阶段必须标注数据来源（T0-T3/nature/freshness），详见 `guardrails.md`。**
 
 ```
 /stock-hunter analyze 600519

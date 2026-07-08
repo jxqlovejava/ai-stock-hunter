@@ -1,11 +1,11 @@
 ---
-name: l1-analyze
-description: 多维股票分析 — 宏观/价值/质量/动量/盈利修正/瓶颈/情绪 7 维度扫描。触发词：分析股票、多维扫描、L1、估值分析、基本面。
+name: diagnosis
+description: 多维诊断 — 宏观/价值/质量/动量/盈利修正/瓶颈/情绪 7 维度扫描。触发词：分析股票、多维扫描、诊断、估值分析、基本面。
 ---
 
-# L1 多维分析师 (Multi-Dimensional Analyzer)
+# 多维诊断 (Multi-Dimensional Diagnosis)
 
-对单只股票执行 7 维度量化+AI 分析，生成结构化分析报告。
+对单只股票执行 7 维度量化+AI 分析，生成结构化诊断报告。
 
 ## 分析维度
 
@@ -53,7 +53,7 @@ description: 多维股票分析 — 宏观/价值/质量/动量/盈利修正/瓶
 ## 输出
 
 ```python
-AnalysisReport(
+DiagnosisReport(
     symbol="600519",
     name="贵州茅台",
     macro_score=55.0,
@@ -63,8 +63,8 @@ AnalysisReport(
     earnings_revision_score=60.0,
     bottleneck_analysis=BottleneckAnalysis(...),
     sentiment_signal="NORMAL",
-    source_citations=[...],  # Phase 1: 数据溯源
-    confidence=0.85,          # Phase 1: 综合信心度
+    source_citations=[...],  # 数据溯源
+    confidence=0.85,          # 综合信心度
 )
 ```
 
@@ -72,16 +72,16 @@ AnalysisReport(
 
 - **每个维度标注数据来源** (source_citations)，包含 `tier` + `nature` + `freshness`
 - **时效性校验**：各维度使用的数据必须通过时效性检查；新闻/事件类数据 > 12h 标记 `[STALE]`
-- **confidence < 0.6 的结果标注低置信度**，阻止进入 L3
+- **confidence < 0.6 的结果标注低置信度**，阻止进入仓位调度
 - **[UNSOURCED] 标记无法溯源的数据点**
 - **[DATA_GAP] 声明**：单源/缺失/间接转述数据显式标注
 - **多空双视角**: bull_case 和 bear_case 必须同时提供
 
 ## 引用
 
-- Python 实现: `src/routing/l1_analyze.py`
+- Python 实现: `src/routing/diagnosis.py`
 - 瓶颈分析: `src/industry/bottleneck.py`
 - 供应链: `src/industry/supply_chain.py`
 - 因子数据: `src/data/factor_pipeline.py`
 - 盈利修正: `src/data/earnings_revision.py`
-- 依赖 Skill: `l0-gate`, `l2-judge`, `macro-monitor`, `game-theory`
+- 依赖 Skill: `admission`, `verdict`, `macro-monitor`, `game-theory`

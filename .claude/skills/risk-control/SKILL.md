@@ -1,9 +1,9 @@
 ---
-name: l4-risk
-description: 风控约束 — 硬性规则（不可覆盖）。单票 20%、行业 40%、止损 -2%、回撤熔断 -15%、黑天鹅熔断。触发词：风控、risk、L4、仓位检查。
+name: risk-control
+description: 风控执行 — 硬性规则（不可覆盖）。单票 20%、行业 40%、止损 -2%、回撤熔断 -15%、黑天鹅熔断。触发词：风控、risk、仓位检查、熔断。
 ---
 
-# L4 风控官 (Risk Officer)
+# 风控执行 (Risk Control)
 
 硬性风控约束，不可被任何上游信号覆盖。
 
@@ -33,18 +33,18 @@ RiskCheck(
 
 ## 工作流
 
-1. 接收 `TradeSignal` + `portfolio` + `market` 上下文
+1. 接收 `PositionSignal` + `portfolio` + `market` 上下文
 2. 逐条检查硬约束
 3. 按优先级裁剪仓位 (回撤熔断 > 黑天鹅 > 单票上限 > 行业上限 > 双创折扣)
 4. 返回 `RiskCheck`
 
 ## 护栏
 
-- **不可覆盖**: L4 约束 = 硬性，无例外
+- **不可覆盖**: 风控约束 = 硬性，无例外
 - **先裁后报**: 先裁剪仓位，再报告违规
 - **全或无**: 回撤/黑天鹅/系统熔断触发时新仓为 0
 
 ## 引用
 
-- Python 实现: `src/routing/l4_risk.py`
-- 依赖 Skill: `l3-trade`
+- Python 实现: `src/routing/risk_control.py`
+- 依赖 Skill: `positioning`

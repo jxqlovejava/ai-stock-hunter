@@ -1,11 +1,11 @@
 ---
-name: l0-gate
-description: 安全门禁 — 硬性规则过滤，0% AI。检查 ST/*ST、新股、涨跌停、停牌、流动性。触发词：门禁、安全检查、gate、L0、可交易性。
+name: admission
+description: 准入检查 — 硬性规则过滤，0% AI。检查 ST/*ST、新股、涨跌停、停牌、流动性。触发词：准入、门禁、安全检查、可交易性、ST。
 ---
 
-# L0 安全门禁 (Security Gate)
+# 准入检查 (Admission Check)
 
-纯规则引擎，0% AI 参与。在进入 L1 分析前过滤掉不可交易的标的。
+纯规则引擎，0% AI 参与。在进入多维诊断前过滤掉不可交易的标的。
 
 ## 规则
 
@@ -54,10 +54,10 @@ SecurityPass(
 ## 护栏
 
 - **0% AI**: 该阶段不使用任何 AI/LLM
-- **先于 L1**: L0 拒绝的标的绝不进入后续分析
+- **先于诊断**: 准入拒绝的标的绝不进入后续分析
 - **可审计**: 每条拒绝原因可追溯到具体规则
 
 ## 引用
 
-- Python 实现: `src/routing/l0_gate.py`
-- 依赖 Skill: `l1-analyze`
+- Python 实现: `src/routing/admission.py`
+- 依赖 Skill: `diagnosis`

@@ -1,19 +1,19 @@
 ---
-name: l2-judge
-description: 加权评分与裁决 — 融合基本面/动量/宏观/行业/情绪 5 维权重，主题生命周期调整，置信度校准。触发词：评分、裁决、judge、L2、判断。
+name: verdict
+description: 综合裁决 — 融合基本面/动量/宏观/行业/情绪 5 维权重，主题生命周期调整，置信度校准。触发词：评分、裁决、judge、判断、综合。
 ---
 
-# L2 法官 (Weighted Judge)
+# 综合裁决 (Comprehensive Verdict)
 
-融合 L1 的 7 维度评分，进行加权综合裁决。核心机制：主题生命周期调整 + 可证伪条件 + 置信度校准。
+融合诊断的 7 维度评分，进行加权综合裁决。核心机制：主题生命周期调整 + 可证伪条件 + 置信度校准。
 
 ## 评分权重
 
 | 维度 | 权重 | 来源 |
 |------|------|------|
-| 基本面 (价值+质量) | 40% | L1 value_score + quality_score |
-| 技术面 (动量) | 20% | L1 momentum_score |
-| 宏观 | 15% | L1 macro_score |
+| 基本面 (价值+质量) | 40% | diagnosis value_score + quality_score |
+| 技术面 (动量) | 20% | diagnosis momentum_score |
+| 宏观 | 15% | diagnosis macro_score |
 | 行业景气 | 10% | sector_score |
 | 情绪 | 15% | sentiment 映射 (PANIC→30, NORMAL→50, GREED→40, EXTREME→90) |
 
@@ -53,14 +53,14 @@ confidence = 0.5 + 0.3 × (min(fundamental, macro, sector) / 50)
 
 ## 护栏
 
-- **confidence < 0.6 → 阻止进入 L3** (MIN_CONFIDENCE)
-- **数据质量加权**：按 L1 各维度 source_citation 的质量分对维度评分降权（T3 → ×0.70，非 fresh → ×0.70，speculation → 不进入评分）
+- **confidence < 0.6 → 阻止进入仓位调度** (MIN_CONFIDENCE)
+- **数据质量加权**：按诊断各维度 source_citation 的质量分对维度评分降权（T3 → ×0.70，非 fresh → ×0.70，speculation → 不进入评分）
 - **主题拥挤时降权 20%**
 - **主题消退时中性化行业评分**
 - **最终 confidence 必须反映最差维度的数据质量**
 
 ## 引用
 
-- Python 实现: `src/routing/l2_judge.py`
+- Python 实现: `src/routing/verdict.py`
 - 主题管理: `src/information/topic_manager.py`
-- 依赖 Skill: `l1-analyze`, `l3-trade`, `topic-manager`
+- 依赖 Skill: `diagnosis`, `positioning`, `topic-manager`

@@ -92,4 +92,4 @@ SectorOverview(
 
 - Python 实现: `src/industry/bottleneck.py`, `src/industry/supply_chain.py`
 - 数据源: 申万行业分类, AKShare (行业 PE/PB), 东财板块
-- 依赖 Skill: `l1-analyze`, `game-theory`, `topic-manager`
+- 依赖 Skill: `diagnosis`, `game-theory`, `topic-manager`
