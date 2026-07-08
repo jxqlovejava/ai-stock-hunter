@@ -17,6 +17,7 @@ class PlayerType(str, Enum):
     QUANT = "quant"
     NORTHBOUND = "northbound"
     RETAIL = "retail"
+    MANIPULATOR = "manipulator"
 
 
 @dataclass
@@ -103,5 +104,20 @@ PLAYER_PROFILES: list[PlayerProfile] = [
             "处置效应——盈利早卖、亏损死扛",
         ],
         data_sources=["开户数", "银证转账", "融资余额变化"],
+    ),
+    PlayerProfile(
+        type=PlayerType.MANIPULATOR,
+        name="庄家 (市场操纵者)",
+        avg_capital_scale="亿-十亿级",
+        holding_period="周-月级",
+        signature_patterns=[
+            "利用拖拉机账户分散持仓规避监管",
+            "对倒交易制造虚假量价信号吸引跟风盘",
+            "利用信息优势提前布局，借利好出货",
+            "尾盘/集合竞价操纵收盘价影响技术指标",
+            "目标标的: 流通市值 < 30 亿的小盘冷门股",
+            "分时图出现钓鱼线/一字断魂刀等经典出货形态",
+        ],
+        data_sources=["分时量价异常检测", "龙虎榜联动席位分析", "大宗交易折溢价异常", "股东户数骤变"],
     ),
 ]

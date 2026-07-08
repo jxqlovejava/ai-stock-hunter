@@ -10,7 +10,7 @@ from .fund_positioning import FundCrowdingSignal, FundPositioningAnalyzer
 from .margin import MarginAnalyzer, MarginProfile
 from .northbound import NorthboundAnalyzer, NorthboundProfile
 from .players import PLAYER_PROFILES, PlayerProfile, PlayerType
-from .playbooks import TOP_3_PLAYBOOKS, Playbook, get_playbook_evidence_summary
+from .playbooks import TOP_PLAYBOOKS, Playbook, get_playbook_evidence_summary
 from .playbook_validator import (
     EvidenceGrade,
     PlaybookValidation,
@@ -31,6 +31,7 @@ from .rules import (
     RuleCategory,
 )
 from .seats import SeatActivity, SeatInfo, SeatTracker
+from .manipulation import ManipulationDetector, ManipulationResult, ManipulationSignal
 
 
 def get_game_theory_summary() -> str:
@@ -40,7 +41,7 @@ def get_game_theory_summary() -> str:
         "",
         f"## 规则库: {len(A_SHARE_RULES)} 条核心规则",
         f"## 核心玩家: {len(PLAYER_PROFILES)} 类",
-        f"## 操盘手法: {len(TOP_3_PLAYBOOKS)} 种",
+        f"## 操盘手法: {len(TOP_PLAYBOOKS)} 种",
         f"## 价格冲击: {len(PRICE_IMPACT_PROFILES)} 类",
         f"## 跨市场对比: {len(MARKET_COMPARISONS)} 维度",
         f"## 资金流因果: {len(TOP_3_RULES)} 条",
@@ -78,7 +79,7 @@ __all__ = [
     "NorthboundAnalyzer", "NorthboundProfile",
     "SeatActivity", "SeatInfo", "SeatTracker",
     # Playbooks
-    "TOP_3_PLAYBOOKS", "Playbook", "get_playbook_evidence_summary",
+    "TOP_PLAYBOOKS", "Playbook", "get_playbook_evidence_summary",
     # Playbook Validator (Phase 2)
     "PlaybookValidator", "PlaybookValidation", "SeatWinRate",
     "ValidationReport", "EvidenceGrade",
@@ -87,6 +88,8 @@ __all__ = [
     "PRICE_IMPACT_PROFILES", "PriceImpact",
     # Comparative
     "MARKET_COMPARISONS", "compare_markets", "asymmetry_report",
+    # Manipulation Detection (Phase 10)
+    "ManipulationDetector", "ManipulationResult", "ManipulationSignal",
     # Summary
     "get_game_theory_summary",
 ]

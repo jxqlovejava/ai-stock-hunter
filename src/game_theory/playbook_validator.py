@@ -152,13 +152,9 @@ class PlaybookValidator:
     # ------------------------------------------------------------------
 
     def validate_all(self) -> ValidationReport:
-        """验证全部 3 个 playbook 假设。"""
-        from .playbooks import TOP_3_PLAYBOOKS
-        results = [
-            self.validate_playbook(TOP_3_PLAYBOOKS[0]),  # 涨停板接力
-            self.validate_playbook(TOP_3_PLAYBOOKS[1]),  # 机构抱团
-            self.validate_playbook(TOP_3_PLAYBOOKS[2]),  # 国家队托底
-        ]
+        """验证全部 playbook 假设。"""
+        from .playbooks import TOP_PLAYBOOKS
+        results = [self.validate_playbook(pb) for pb in TOP_PLAYBOOKS]
         seat_rankings = self.calc_all_seats_win_rates()
         return ValidationReport(
             playbook_results=results,
