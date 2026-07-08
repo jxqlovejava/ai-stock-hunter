@@ -81,4 +81,4 @@ python -m src.cli backtest-compare
 
 - Python 实现: `src/backtest/engine.py`, `src/backtest/strategy_registry.py`
 - 数据: `src/data/factor_pipeline.py`, `data/kline_cache/`
-- 依赖 Skill: `l1-analyze`, `l4-risk`
+- 依赖 Skill: `diagnosis`, `risk-control`

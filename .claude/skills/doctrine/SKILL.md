@@ -62,4 +62,4 @@ DoctrineResult(
 ## 引用
 
 - Python 实现: `src/doctrine/rules.py`, `src/doctrine/checker.py`
-- 依赖 Skill: `l0-gate`
+- 依赖 Skill: `admission`

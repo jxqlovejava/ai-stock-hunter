@@ -68,4 +68,4 @@ topic_adjustments = {
 
 - Python 实现: `src/information/topic_manager.py`, `src/information/schema.py`
 - 数据源: 同花顺 reason tag, 东财行业研报
-- 依赖 Skill: `l2-judge`, `game-theory`
+- 依赖 Skill: `verdict`, `game-theory`

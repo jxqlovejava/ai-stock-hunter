@@ -70,4 +70,4 @@ PolicySignal(
 
 - Python 实现: `src/policy/tracker.py`, `src/policy/nlp.py`
 - 数据源: 华泰证券 market_insight API, 国信证券
-- 依赖 Skill: `macro-monitor`, `l1-analyze`
+- 依赖 Skill: `macro-monitor`, `diagnosis`

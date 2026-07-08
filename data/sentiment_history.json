@@ -1,0 +1,32 @@
+[
+  {
+    "timestamp": "2026-07-08T17:50:05.168886",
+    "score": 35,
+    "level": "PANIC",
+    "confidence": 0.75,
+    "percentile": 50.0,
+    "panic_count": 3,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-08T17:52:01.106751",
+    "score": 40,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 50.0,
+    "panic_count": 2,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-08T17:53:24.510690",
+    "score": 40,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 50.0,
+    "panic_count": 2,
+    "greed_count": 1,
+    "extreme_count": 0
+  }
+]

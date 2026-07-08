@@ -64,4 +64,4 @@ DominanceProfile(
 
 - Python 实现: `src/game_theory/dominance.py`, `src/game_theory/seats.py`, `src/game_theory/northbound.py`, `src/game_theory/fund_positioning.py`
 - 数据源: 东财 datacenter (龙虎榜), 同花顺 hsgtApi (北向), AKShare (公募)
-- 依赖 Skill: `l1-analyze`, `sentiment-analysis`
+- 依赖 Skill: `diagnosis`, `sentiment-analysis`

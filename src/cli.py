@@ -239,9 +239,21 @@ def cmd_sentiment():
 
 
 def cmd_backtest():
-    """运行 MVP1 回测。"""
-    print("📊 回测")
-    print("(Phase 3: 待接入完整因子数据管道)")
+    """运行 MVP1 回测 — 沪深300成分股 + PE分位/ROE因子 + Backtrader引擎。"""
+    from src.backtest.runner import run_backtest
+
+    print("📊 运行回测 (沪深300, 2019-2024)")
+    print("=" * 60)
+    try:
+        result = run_backtest()
+        print(f"\n✅ 回测完成")
+        print(f"   年化收益: {result.annual_return:.1%}")
+        print(f"   夏普比率: {result.sharpe_ratio:.2f}")
+        print(f"   最大回撤: {result.max_drawdown:.1%}")
+        print(f"   胜率: {result.win_rate:.1%}")
+    except Exception as e:
+        print(f"❌ 回测失败: {e}")
+        print("   (可能需要完整数据源配置)")
 
 
 @_safe_cmd
@@ -531,6 +543,70 @@ def cmd_game_theory():
     """博弈论知识摘要。"""
     from src.game_theory import get_game_theory_summary
     print(get_game_theory_summary())
+
+
+@_safe_cmd
+def cmd_topic(args: list[str]):
+    """主题生命周期管理 — 查看/搜索当前市场热点主题。
+
+    用法: python -m src topic [search|list] [query]
+    """
+    from src.information.topic_manager import TopicManager
+
+    sub = args[0] if args else "list"
+
+    print("🔥 主题生命周期管理")
+    print("=" * 60)
+
+    try:
+        tm = TopicManager()
+        if sub == "search" and len(args) > 1:
+            query = " ".join(args[1:])
+            print(f"搜索主题: {query}")
+            results = tm.search(query)
+            for r in results[:10]:
+                print(f"  • {r}")
+        else:
+            topics = tm.list_all() if hasattr(tm, "list_all") else []
+            if topics:
+                for t in topics[:15]:
+                    print(f"  • {t}")
+            else:
+                print("  (主题数据暂不可用，需数据源配置)")
+    except Exception as e:
+        print(f"  ⚠️ 主题管理暂不可用: {e}")
+
+
+@_safe_cmd
+def cmd_policy(args: list[str]):
+    """政策跟踪 — 查看/搜索近期行业政策信号。
+
+    用法: python -m src policy [search|list] [query]
+    """
+    from src.policy.tracker import PolicyTracker
+
+    sub = args[0] if args else "list"
+
+    print("📰 政策跟踪")
+    print("=" * 60)
+
+    try:
+        tracker = PolicyTracker()
+        if sub == "search" and len(args) > 1:
+            query = " ".join(args[1:])
+            print(f"搜索政策: {query}")
+            signals = tracker.search(query)
+            for s in signals[:10]:
+                print(f"  • {s}")
+        else:
+            signals = tracker.recent() if hasattr(tracker, "recent") else []
+            if signals:
+                for s in signals[:15]:
+                    print(f"  • {s}")
+            else:
+                print("  (政策数据暂不可用，需数据源配置)")
+    except Exception as e:
+        print(f"  ⚠️ 政策跟踪暂不可用: {e}")
 
 
 @_safe_cmd
@@ -3407,6 +3483,8 @@ def main():
         "game-theory": cmd_game_theory,
         "patterns": lambda: cmd_patterns(args),
         "indicators": lambda: cmd_indicators(args),
+        "topic": lambda: cmd_topic(args),
+        "policy": lambda: cmd_policy(args),
         "manipulation": lambda: cmd_manipulation(args),
         "calibrate": cmd_calibrate,
         "profile": cmd_profile,
