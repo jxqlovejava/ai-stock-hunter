@@ -343,6 +343,7 @@ def _cmd_preference_setup(loader):
     """交互式投资者画像设置向导 — 10 步完整画像。"""
     from datetime import datetime
     from src.learner.preference.model import (
+        BoardAccess,
         InvestorPreference, RiskProfile, InvestmentGoal,
         TradingStyle, InvestorTier, HoldingPeriod, PositionLimits,
     )
@@ -399,6 +400,42 @@ def _cmd_preference_setup(loader):
     choice = input(f"   选择 [{prefs.holding_period.value}]: ").strip().lower()
     if choice in ("short", "medium", "long", "ultra"):
         prefs.holding_period = HoldingPeriod(choice)
+
+    # ── 可交易板块 ──
+    print("\n── 可交易板块 ──")
+
+    step += 1
+    print(f"\n{step}️⃣  可交易的 A 股板块 — 你的账户能交易哪些板块？")
+    print("   不同板块有不同的开通门槛：")
+    print("   main_sh = 上海主板 (60xxxx)  — 无门槛，所有人都能买")
+    print("   main_sz = 深圳主板 (00xxxx)  — 无门槛，所有人都能买")
+    print("   gem     = 创业板   (30xxxx)  — 需 2 年经验 + 10 万资产")
+    print("   star    = 科创板   (68xxxx)  — 需 2 年经验 + 50 万资产")
+    print("   bse     = 北交所   (8xxxxx)  — 需 2 年经验 + 50 万资产")
+    current_boards = [b.value for b in prefs.accessible_boards]
+    print(f"\n   当前可交易板块: {', '.join(current_boards)}")
+    print("\n   常见配置:")
+    print("   ① 仅主板（无法交易科创/创业板）→ 输入: main_sh,main_sz")
+    print("   ② 主板+创业板（有 10 万+2 年经验）→ 输入: main_sh,main_sz,gem")
+    print("   ③ 全部板块 → 输入: all")
+    board_input = input(f"   输入 [{','.join(current_boards)}]: ").strip().lower()
+    if board_input:
+        if board_input == "all":
+            prefs.accessible_boards = [
+                BoardAccess.MAIN_SH, BoardAccess.MAIN_SZ,
+                BoardAccess.GEM, BoardAccess.STAR, BoardAccess.BSE,
+            ]
+        else:
+            boards = []
+            for b in board_input.split(","):
+                b = b.strip()
+                try:
+                    boards.append(BoardAccess(b))
+                except ValueError:
+                    pass
+            if boards:
+                prefs.accessible_boards = boards
+        print(f"   ✅ 已设置: {', '.join(b.value for b in prefs.accessible_boards)}")
 
     # ── 风控参数 ──
     print("\n── 风控参数 ──")
@@ -504,6 +541,7 @@ def _cmd_preference_setup(loader):
     print(f"   总投资期限: {prefs.investment_horizon}")
     print(f"   最大总亏损: {prefs.position_limits.max_total_loss_pct:.0%}")
     print(f"   单笔止损: {prefs.position_limits.single_stop_loss_pct:.0%}")
+    print(f"   可交易板块: {', '.join(b.value for b in prefs.accessible_boards)}")
     print(f"   能力圈: {', '.join(f'{k}({v}/5)' for k, v in sorted(coc.industries.items()))}")
     print(f"\n   📊 画像完整度: {comp['score']}%")
     if comp["missing"]:

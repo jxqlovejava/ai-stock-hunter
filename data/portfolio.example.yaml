@@ -17,6 +17,19 @@ tier: beginner                 # beginner | intermediate | pro
 benchmark: 沪深300
 investment_horizon: 3-5年
 
+# ── 可交易板块 ──
+# 根据你的账户权限选择，系统会自动过滤掉你无法交易的板块
+# 常见配置:
+#   仅主板: [main_sh, main_sz]
+#   主板+创业板: [main_sh, main_sz, gem]
+#   全部板块: [main_sh, main_sz, gem, star, bse]
+accessible_boards:
+  - main_sh     # 上海主板 (60xxxx)
+  - main_sz     # 深圳主板 (00xxxx)
+  - gem         # 创业板 (30xxxx) — 需 10万+2年经验
+  - star        # 科创板 (68xxxx) — 需 50万+2年经验
+  - bse         # 北交所 (8xxxxx) — 需 50万+2年经验
+
 # ── 仓位约束 ──
 position_limits:
   total_capital: 500000        # 总投资本金 (元)

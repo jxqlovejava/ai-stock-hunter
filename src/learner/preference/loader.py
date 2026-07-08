@@ -103,9 +103,11 @@ class InvestorPreferenceLoader:
   风险偏好: {prefs.risk_profile.value}
   投资目标: {prefs.investment_goal.value}
   交易风格: {prefs.trading_style.value}
+  持有时间: {prefs.holding_period.value}
   投资者层级: {prefs.tier.value}
   投资周期: {prefs.investment_horizon}
   业绩基准: {prefs.benchmark}
+  可交易板块: {', '.join(b.value for b in prefs.accessible_boards)}
 
 ## 仓位约束
   总投资本金: {limits.total_capital:,.0f}

@@ -41,6 +41,58 @@ class HoldingPeriod(str, Enum):
     ULTRA_LONG = "ultra"   # 超长线 (3年以上)
 
 
+class BoardAccess(str, Enum):
+    """可交易的板块。
+
+    A 股市场分为不同板块，各板块有不同的开通门槛：
+      - 主板（沪深）: 无额外门槛，所有投资者均可交易
+      - 创业板 (30xxxx): 需 2 年交易经验 + 10 万资产
+      - 科创板 (68xxxx): 需 2 年交易经验 + 50 万资产
+      - 北交所 (8xxxxx): 需 2 年交易经验 + 50 万资产
+    """
+    MAIN_SH = "main_sh"    # 上海主板 (60xxxx)
+    MAIN_SZ = "main_sz"    # 深圳主板 (00xxxx / 002xxx / 003xxx)
+    GEM = "gem"            # 创业板 (30xxxx)
+    STAR = "star"          # 科创板 (68xxxx)
+    BSE = "bse"            # 北交所 (8xxxxx / 4xxxxx)
+
+
+def get_board_from_symbol(symbol: str) -> BoardAccess | None:
+    """根据股票代码推断所属板块。
+
+    Args:
+        symbol: 6 位股票代码字符串
+
+    Returns:
+        BoardAccess 枚举值，无法识别时返回 None
+
+    >>> get_board_from_symbol("600519")
+    <BoardAccess.MAIN_SH: 'main_sh'>
+    >>> get_board_from_symbol("000001")
+    <BoardAccess.MAIN_SZ: 'main_sz'>
+    >>> get_board_from_symbol("300750")
+    <BoardAccess.GEM: 'gem'>
+    >>> get_board_from_symbol("688981")
+    <BoardAccess.STAR: 'star'>
+    >>> get_board_from_symbol("838402")
+    <BoardAccess.BSE: 'bse'>
+    """
+    if not symbol or len(symbol) < 6:
+        return None
+    code = symbol.strip().upper()
+    if code.startswith("60"):
+        return BoardAccess.MAIN_SH
+    if code.startswith("00") or code.startswith("002") or code.startswith("003"):
+        return BoardAccess.MAIN_SZ
+    if code.startswith("30"):
+        return BoardAccess.GEM
+    if code.startswith("68"):
+        return BoardAccess.STAR
+    if code.startswith(("8", "4")):
+        return BoardAccess.BSE
+    return None
+
+
 class AlertChannel(str, Enum):
     """预警通知渠道。"""
     CLI = "cli"            # 终端输出（默认）
@@ -325,6 +377,12 @@ class InvestorPreference:
     enabled_rules: list[str] | None = None  # None = 基于 tier 自动决定
     benchmark: str = "沪深300"
     investment_horizon: str = "3-5年"
+    # 可交易板块 — 根据投资者账户权限设置，用于选股/推荐时过滤
+    # 默认全部板块可交易，投资者可根据自身情况调整
+    accessible_boards: list[BoardAccess] = field(default_factory=lambda: [
+        BoardAccess.MAIN_SH, BoardAccess.MAIN_SZ,
+        BoardAccess.GEM, BoardAccess.STAR, BoardAccess.BSE,
+    ])
     # 自选股关注列表 (symbol → name)，与 data/watchlist.json 联动
     alert_preferences: AlertPreferences = field(default_factory=AlertPreferences)
     watchlist: dict[str, str] = field(default_factory=dict)
@@ -345,6 +403,7 @@ class InvestorPreference:
             "enabled_rules": self.enabled_rules,
             "benchmark": self.benchmark,
             "investment_horizon": self.investment_horizon,
+            "accessible_boards": [b.value for b in self.accessible_boards],
             "alert_preferences": self.alert_preferences.to_dict(),
             "watchlist": self.watchlist,
             "last_updated": self.last_updated,
@@ -364,7 +423,7 @@ class InvestorPreference:
             hp = HoldingPeriod(hp_raw)
         except ValueError:
             hp = HoldingPeriod.MEDIUM
-        return cls(
+        prefs = cls(
             risk_profile=RiskProfile(d.get("risk_profile", "balanced")),
             investment_goal=InvestmentGoal(d.get("investment_goal", "absolute_return")),
             trading_style=TradingStyle(d.get("trading_style", "mixed")),
@@ -381,6 +440,18 @@ class InvestorPreference:
             last_updated=d.get("last_updated", ""),
             setup_step=d.get("setup_step", 0),
         )
+        # 处理 accessible_boards（YAML 反序列化后从字符串转枚举）
+        boards_raw = d.get("accessible_boards")
+        if boards_raw and isinstance(boards_raw, list):
+            boards = []
+            for b in boards_raw:
+                try:
+                    boards.append(BoardAccess(b))
+                except ValueError:
+                    pass
+            if boards:
+                prefs.accessible_boards = boards
+        return prefs
 
     def completeness(self) -> dict:
         """计算画像完整度 (0-100)，返回分数 + 缺失项列表。"""

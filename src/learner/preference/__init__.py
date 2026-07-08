@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 from .adapter import (
+    is_board_accessible,
+    resolve_board_filter,
     resolve_competence_penalty,
     resolve_macro_cap_multiplier,
     resolve_position_limits,
@@ -19,6 +21,7 @@ from .adapter import (
 )
 from .loader import InvestorPreferenceLoader
 from .model import (
+    BoardAccess,
     CircleOfCompetence,
     InvestmentGoal,
     InvestorPreference,
@@ -27,6 +30,7 @@ from .model import (
     RiskProfile,
     ScoreWeights,
     TradingStyle,
+    get_board_from_symbol,
 )
 
 # 向后兼容：PreferenceAdapter 作为模块级命名空间
@@ -37,9 +41,12 @@ class PreferenceAdapter:
     resolve_position_limits = staticmethod(resolve_position_limits)
     resolve_macro_cap_multiplier = staticmethod(resolve_macro_cap_multiplier)
     resolve_competence_penalty = staticmethod(resolve_competence_penalty)
+    resolve_board_filter = staticmethod(resolve_board_filter)
+    is_board_accessible = staticmethod(is_board_accessible)
 
 
 __all__ = [
+    "BoardAccess",
     "InvestorPreference",
     "RiskProfile",
     "InvestmentGoal",
@@ -50,9 +57,12 @@ __all__ = [
     "ScoreWeights",
     "InvestorPreferenceLoader",
     "PreferenceAdapter",
+    "get_board_from_symbol",
     "resolve_weights",
     "resolve_rule_filter",
     "resolve_position_limits",
     "resolve_macro_cap_multiplier",
     "resolve_competence_penalty",
+    "resolve_board_filter",
+    "is_board_accessible",
 ]

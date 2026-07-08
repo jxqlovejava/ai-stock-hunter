@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .model import (
     AlertPreferences,
+    BoardAccess,
     CircleOfCompetence,
     HoldingPeriod,
     InvestorPreference,
@@ -21,6 +22,7 @@ from .model import (
     TIMING_PRESETS,
     TimeHorizonConfig,
     TradingStyle,
+    get_board_from_symbol,
 )
 
 # ------------------------------------------------------------------
@@ -333,6 +335,40 @@ def _user_explicitly_disabled_monitor(prefs: InvestorPreference) -> bool:
         not prefs.alert_preferences.enable_realtime
         and prefs.setup_step > 0
     )
+
+
+def resolve_board_filter(prefs: InvestorPreference):
+    """返回一个板块过滤谓词，用于选股/推荐时提前过滤不可交易板块。
+
+    Returns:
+        callable: 接收 symbol (str)，返回 True 表示该股票可交易
+
+    >>> from src.learner.preference.model import BoardAccess
+    >>> prefs = InvestorPreference(accessible_boards=[BoardAccess.MAIN_SH, BoardAccess.MAIN_SZ])
+    >>> is_accessible = resolve_board_filter(prefs)
+    >>> is_accessible("600519")   # 上海主板
+    True
+    >>> is_accessible("300750")   # 创业板 → 不在列表中
+    False
+    """
+    accessible = set(prefs.accessible_boards)
+
+    def _filter(symbol: str) -> bool:
+        board = get_board_from_symbol(symbol)
+        if board is None:
+            # 无法识别板块的代码（如 ETF、可转债等），放行由下游处理
+            return True
+        return board in accessible
+
+    return _filter
+
+
+def is_board_accessible(prefs: InvestorPreference, symbol: str) -> bool:
+    """检查单只股票是否在投资者可交易的板块内。
+
+    便捷函数，等价于 resolve_board_filter(prefs)(symbol)。
+    """
+    return resolve_board_filter(prefs)(symbol)
 
 
 def resolve_trading_style_weights(prefs: InvestorPreference) -> dict[str, float]:
