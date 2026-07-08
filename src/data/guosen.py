@@ -6,11 +6,12 @@
   - gs-stock-financial-query: 财务三表（利润表/资产负债表/现金流量表）
   - gs-economy-query: 宏观经济数据
 
-认证: GS_API_KEY 环境变量
+认证: GS_API_KEY 环境变量 (支持多 Key 逗号分隔，日限额耗尽自动 fallback)
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import ssl
 from datetime import datetime, timedelta
@@ -21,6 +22,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
 from .base import DataProvider
+
+logger = logging.getLogger(__name__)
 
 
 class _LegacySSLAdapter(HTTPAdapter):
@@ -43,19 +46,63 @@ class GuosenProvider(DataProvider):
     BASE_URL = "https://dgzt.guosen.com.cn/skills"
     TIMEOUT = 15
 
+    QUOTA_EXCEEDED_CODE = 197006  # 日限额耗尽
+
     def __init__(self, api_key: str | None = None):
-        self._api_key = api_key or os.environ.get("GS_API_KEY", "")
-        if not self._api_key:
+        # 支持多 Key: 逗号分隔 或 GS_API_KEY_2/3 环境变量
+        raw = api_key or os.environ.get("GS_API_KEY", "")
+        self._api_keys: list[str] = []
+        for part in raw.split(","):
+            k = part.strip()
+            if k:
+                self._api_keys.append(k)
+        for i in range(2, 10):
+            extra = os.environ.get(f"GS_API_KEY_{i}", "")
+            if extra.strip():
+                self._api_keys.append(extra.strip())
+
+        if not self._api_keys:
             raise RuntimeError(
                 "GS_API_KEY 未配置。请设置环境变量 GS_API_KEY 或传入 api_key 参数。"
+                " 支持多 Key 逗号分隔: GS_API_KEY=key1,key2"
             )
-        # 创建带旧版 SSL 支持的 session（国信 API 服务器使用旧 TLS）
+
+        self._active_idx: int = 0
+        self._exhausted: set[int] = set()
         self._session = requests.Session()
         self._session.mount("https://", _LegacySSLAdapter())
+        logger.info("国信: %d 个 Key 已加载", len(self._api_keys))
+
+    # ── Key 管理 ──────────────────────────────────────────────
+
+    @property
+    def _active_key(self) -> str:
+        return self._api_keys[self._active_idx]
 
     @property
     def _params(self) -> dict:
-        return {"softName": "agent_skills", "apiKey": self._api_key}
+        return {"softName": "agent_skills", "apiKey": self._active_key}
+
+    def _is_quota_exceeded(self, response_data: dict) -> bool:
+        """检查响应是否为日限额耗尽。"""
+        result = response_data.get("result", {})
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get("code", 0) == self.QUOTA_EXCEEDED_CODE
+        if isinstance(result, dict):
+            return result.get("code", 0) == self.QUOTA_EXCEEDED_CODE
+        return False
+
+    def _switch_key(self) -> bool:
+        """日限额耗尽时切换 Key。返回 False=全部耗尽。"""
+        self._exhausted.add(self._active_idx)
+        logger.warning("国信 Key #%d 日限额耗尽，切换", self._active_idx + 1)
+        for i in range(len(self._api_keys)):
+            if i not in self._exhausted:
+                self._active_idx = i
+                logger.info("国信 → Key #%d", i + 1)
+                return True
+        logger.error("国信: 全部 %d 个 Key 日限额已耗尽", len(self._api_keys))
+        return False
 
     # ------------------------------------------------------------------
     # Quote
@@ -305,23 +352,32 @@ class GuosenProvider(DataProvider):
             return 0
 
     def health_check(self) -> bool:
-        """测试 API 连通性。"""
-        try:
-            r = self._session.get(
-                f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0",
-                params={**self._params, "code": "600519", "setCode": 1, "target": 0},
-                timeout=10,
-                proxies={"http": None, "https": None},
-            )
-            d = r.json()
-            code = (
-                d.get("result", [{}])[0].get("code", -1)
-                if isinstance(d.get("result"), list)
-                else d.get("result", {}).get("code", -1)
-            )
-            return code == 0
-        except Exception:
-            return False
+        """测试 API 连通性（支持多 Key fallback）。"""
+        tried = 0
+        while tried < len(self._api_keys):
+            tried += 1
+            try:
+                r = self._session.get(
+                    f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0",
+                    params={**self._params, "code": "600519", "setCode": 1, "target": 0},
+                    timeout=10,
+                    proxies={"http": None, "https": None},
+                )
+                d = r.json()
+                # 日限额耗尽 → 切换 Key 重试
+                if self._is_quota_exceeded(d):
+                    if self._switch_key():
+                        continue
+                    return False
+                code = (
+                    d.get("result", [{}])[0].get("code", -1)
+                    if isinstance(d.get("result"), list)
+                    else d.get("result", {}).get("code", -1)
+                )
+                return code == 0
+            except Exception:
+                return False
+        return False
 
     # ------------------------------------------------------------------
     # Helpers
