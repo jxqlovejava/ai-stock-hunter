@@ -358,6 +358,12 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             lines.append(f"\n  🏭 供应链瓶颈: {ba.core_business}")
             layer_cn = str(ba.supply_chain_layer).replace("SupplyChainLayer.", "") if ba.supply_chain_layer else "?"
             type_cn = str(ba.bottleneck_type).replace("BottleneckType.", "") if ba.bottleneck_type else "?"
+            # 翻译常见枚举值
+            _enum_cn = {"MATERIAL": "原材料", "ADJACENT": "相邻行业", "COMPONENT": "零部件",
+                        "MANUFACTURING": "制造", "DISTRIBUTION": "分销", "RETAIL": "零售",
+                        "CRITICAL": "关键瓶颈", "MODERATE": "中等瓶颈", "MILD": "轻度瓶颈"}
+            layer_cn = _enum_cn.get(layer_cn, layer_cn)
+            type_cn = _enum_cn.get(type_cn, type_cn)
             lines.append(f"  定位:{layer_cn}  类型:{type_cn}  评分:{ba.bottleneck_score}/100")
 
         # 三情景
@@ -618,7 +624,11 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             m = CN.get(sd.get("method", ""), sd.get("method", ""))
             lines.append(f"  方法:{m}  上限:{sd.get('macro_cap',0):.0%}×{sd.get('risk_multiplier',1.0):.2f}")
             if sd.get("params_source"):
-                lines.append(f"  📋 {sd['params_source']}")
+                src = sd["params_source"]
+                # 翻译公式为中文可读格式
+                src = src.replace("linear:base=", "公式: ")
+                src = src.replace("_fallback", "").replace("linear", "线性回退")
+                lines.append(f"  📋 {src}")
 
     # ── Step 9 风控执行 ──────────────────────────────────────────────
     _section(lines, 9)

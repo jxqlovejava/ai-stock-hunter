@@ -171,8 +171,8 @@ class KellyPositionSizer:
             payoff_ratio=kp.payoff_ratio,
             n_trades=kp.n_trades,
             source_citation=(
-                f"kelly_f*={raw_kelly_f:.1%}(b={kp.payoff_ratio:.2f},p={kp.win_rate:.1%},n={kp.n_trades}),"
-                f"fraction={fraction:.0%}→{target_f:.1%}"
+                f"凯利公式: f*={raw_kelly_f:.1%} (盈亏比={kp.payoff_ratio:.2f}, 胜率={kp.win_rate:.1%}, 样本={kp.n_trades}笔), "
+                f"凯利系数{fraction:.0%}→目标仓位{target_f:.1%}"
             ),
         )
 
@@ -205,8 +205,8 @@ class KellyPositionSizer:
             payoff_ratio=kp.payoff_ratio,
             n_trades=kp.n_trades,
             source_citation=(
-                f"linear_fallback(n={kp.n_trades}<{TradeTracker.MIN_TRADES_FOR_KELLY}):"
-                f"base=({score}-50)/50×{macro_cap}={base_f:.1%}"
+                f"样本不足({kp.n_trades}<{TradeTracker.MIN_TRADES_FOR_KELLY})，回退线性公式: "
+                f"({score}-50)/50×仓位上限{macro_cap}={base_f:.1%}"
             ),
         )
 

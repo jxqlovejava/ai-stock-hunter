@@ -145,22 +145,22 @@ class PerspectiveAnalyzer:
         ps.sub_scores["护城河深度"] = round(q / 100 * 3, 2)
         score += (q / 100 * 3) - 1.5
         if q >= 70:
-            bull.append(f"护城河评分 {q}/100 — 商业模式有持久竞争优势")
+            bull.append(f"护城河评分 {q:.0f}/100 — 商业模式有持久竞争优势")
         elif q >= 50:
-            bull.append(f"护城河评分 {q}/100 — 有一定壁垒但非牢不可破")
+            bull.append(f"护城河评分 {q:.0f}/100 — 有一定壁垒但非牢不可破")
         else:
-            bear.append(f"护城河评分 {q}/100 — 竞争优势可能不持久")
+            bear.append(f"护城河评分 {q:.0f}/100 — 竞争优势可能不持久")
 
         # 支柱2: 安全边际 (value proxy)
         v = getattr(l1, "value_score", 50) or 50
         ps.sub_scores["安全边际"] = round(v / 100 * 3, 2)
         score += (v / 100 * 3) - 1.5
         if v >= 70:
-            bull.append(f"估值评分 {v}/100 — 价格远低于内在价值，安全边际充足")
+            bull.append(f"估值评分 {v:.0f}/100 — 价格远低于内在价值，安全边际充足")
         elif v >= 45:
-            bull.append(f"估值评分 {v}/100 — 估值合理区间，有一定安全边际")
+            bull.append(f"估值评分 {v:.0f}/100 — 估值合理区间，有一定安全边际")
         else:
-            bear.append(f"估值评分 {v}/100 — 估值偏高，缺乏安全边际。巴菲特不会在此时出手")
+            bear.append(f"估值评分 {v:.0f}/100 — 估值偏高，缺乏安全边际。巴菲特不会在此时出手")
 
         # 支柱3: PE 检查 (业务可预测性+价格合理性)
         pe = (quote.get("pe_ttm") or quote.get("pe") or 0) if quote else 0
@@ -200,7 +200,7 @@ class PerspectiveAnalyzer:
         ps.key_concern = ("估值过高，安全边际不足" if v < 45 or pe > 30
                           else "护城河能否持续20年？" if q < 60
                           else "是否在能力圈内？是否真正理解这门生意？")
-        ps.unique_insight = f"巴菲特4支柱: 护城河{q}/100 + 安全边际{v}/100 + PE{pe:.1f} + 周期{cycle}/100 → 综合{ps.score:.1f}/5"
+        ps.unique_insight = f"巴菲特4支柱: 护城河{q:.0f}/100 + 安全边际{v:.0f}/100 + PE{pe:.1f} + 周期{cycle:.0f}/100 → 综合{ps.score:.1f}/5"
         ps.questions_to_ask = [
             "如果股市关闭5年，你还会持有吗？",
             "竞争对手能否轻易复制它的护城河？",
@@ -234,7 +234,7 @@ class PerspectiveAnalyzer:
         elif exec_score < 40:
             bear.append(f"高管评分 {exec_score}/100 — 管理层存在红旗信号")
         if q < 50:
-            bear.append(f"质量评分 {q}/100 — 需深入调查管理层文化")
+            bear.append(f"质量评分 {q:.0f}/100 — 需深入调查管理层文化")
 
         # 维度2: 复利可持续性 (earnings_revision + alpha narrative)
         er = getattr(l1, "earnings_revision_score", 50) or 50
@@ -282,7 +282,7 @@ class PerspectiveAnalyzer:
         ps.key_concern = ("管理层是否值得托付10年？" if exec_score < 50
                           else "复利会不会中断？" if er < 60
                           else "你确定在自己的能力圈内吗？")
-        ps.unique_insight = f"李录3维度: 管理层{mgmt_score:.0f}/100 + 复利{er}/100 + 能力圈{'✅' if imm and comp=='in_circle' else '⚠️'} → {ps.score:.1f}/5"
+        ps.unique_insight = f"李录3维度: 管理层{mgmt_score:.0f}/100 + 复利{er:.0f}/100 + 能力圈{'✅' if imm and comp=='in_circle' else '⚠️'} → {ps.score:.1f}/5"
         ps.questions_to_ask = [
             "创始人还在管理公司吗？他/她的核心价值观是什么？",
             "10年后这家公司会更大更好吗？什么可能让它消失？",
