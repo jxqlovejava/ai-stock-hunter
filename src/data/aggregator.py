@@ -375,7 +375,11 @@ class DataAggregator:
         except Exception:
             status["huatai"] = "❌ (不可用)"
         gs = self.guosen
-        status["guosen"] = "✅" if (gs is not None and gs.health_check()) else "❌ (无 GS_API_KEY)"
+        status["guosen"] = (
+            "✅" if (gs is not None and gs.health_check())
+            else "❌ (API不可达)" if gs is not None
+            else "❌ (无 GS_API_KEY)"
+        )
         status["tencent"] = "✅" if self.mootdx.health_check() else "❌ (腾讯 HTTP 不可达)"
         status["mootdx"] = "✅" if self.mootdx.health_check() else "❌ (mootdx TCP 不可达)"
         status["akshare"] = "✅" if self.akshare.health_check() else "❌"
