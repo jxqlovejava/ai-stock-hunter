@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""回测模块 — Backtrader 封装。"""
+"""回测模块 — BaizeCerebro 统一编排器 + Backtrader 兼容封装。"""
+
+from .cerebro import BaizeCerebro, BaizeDataFeed
+from .strategy import BaizeStrategy
+from .broker import BaizeBroker
+from .result import BaizeResult, Order, OrderStatus, OrderType, TradeRecord
 
 from .comparator import StrategyComparator, StrategyRanking
 from .competitor_benchmark import BenchmarkResult, CompetitorAnalyzer, CompetitorProfile, PKReport
@@ -9,10 +14,10 @@ from .intraday_engine import (
     IntradayEngine,
     IntradayResult,
     IntradayStrategy,
-    Order,
+    Order as IntradayOrder,
     OrderDirection,
     OrderHandler,
-    OrderStatus,
+    OrderStatus as IntradayOrderStatus,
     Portfolio,
 )
 from .mvp1_strategy import MVP1Strategy
@@ -28,6 +33,17 @@ from .visualizer import BacktestVisualizer
 from .walkforward import WalkForwardConfig, WalkForwardOptimizer, WalkForwardResult
 
 __all__ = [
+    # 新 Cerebro 架构
+    "BaizeCerebro",
+    "BaizeDataFeed",
+    "BaizeStrategy",
+    "BaizeBroker",
+    "BaizeResult",
+    "Order",
+    "OrderStatus",
+    "OrderType",
+    "TradeRecord",
+    # 兼容旧引擎
     "BacktestEngine",
     "BacktestResult",
     "MVP1Strategy",
@@ -57,8 +73,6 @@ __all__ = [
     "IntradayStrategy",
     "Portfolio",
     "Holding",
-    "Order",
     "OrderDirection",
-    "OrderStatus",
     "OrderHandler",
 ]
