@@ -304,6 +304,116 @@ def cmd_game_theory():
     print(get_game_theory_summary())
 
 
+@_safe_cmd
+def cmd_manipulation(args: list[str]):
+    """庄家操盘手法检测 — 7 种经典操纵模式实时识别。
+
+    用法: python -m src manipulation <code> [--date YYYY-MM-DD]
+
+    检测模式: 诱多出货 / 诱空吸筹 / 对倒拉升 / 洗盘震仓 /
+             分时钓鱼线 / 尾盘偷袭拉升 / 尾盘偷袭砸盘
+    """
+    import argparse
+    from datetime import datetime
+    from src.game_theory.manipulation import ManipulationDetector
+    from src.data.aggregator import DataAggregator
+
+    parser = argparse.ArgumentParser(description="庄家操盘手法检测")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--date", type=str, default="", help="检测日期 YYYY-MM-DD")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src manipulation <code> [--date YYYY-MM-DD]")
+        print()
+        print("检测 7 种经典庄家操纵模式:")
+        print("  🔴 诱多出货 — 虚假突破→高位放量→跳水")
+        print("  🟠 诱空吸筹 — 砸盘破位→散户割肉→快速拉回")
+        print("  🟠 对倒拉升 — 自买自卖→量价齐升假象")
+        print("  🟠 洗盘震仓 — 急跌→制造恐慌→低位吸筹")
+        print("  🔴 分时钓鱼线 — 直线拉升→缓慢阴跌出货")
+        print("  🟡 尾盘偷袭拉升 — 14:50后异常拉升操纵收盘价")
+        print("  🟡 尾盘偷袭砸盘 — 14:50后异常砸盘打压股价")
+        return
+
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol}")
+        return
+
+    date = parsed.date or datetime.now().strftime("%Y-%m-%d")
+
+    print(f"🕵️ 庄家操盘手法检测: {symbol} ({date})")
+    print("=" * 60)
+
+    # 获取分钟级数据
+    agg = DataAggregator()
+    try:
+        quote = agg.get_quote(symbol)
+        name = quote.name if quote else symbol
+    except Exception:
+        name = symbol
+
+    print(f"   标的: {name}")
+    print()
+
+    # 尝试获取分钟K线
+    try:
+        minute_df = agg.mootdx.get_history(symbol, period="1min")
+    except Exception:
+        try:
+            minute_df = agg.get_history(symbol, period="1min")
+        except Exception:
+            minute_df = None
+
+    # 归一化列名 (支持中文/英文)
+    COLUMN_MAP = {
+        "开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
+        "成交量": "volume", "成交额": "amount", "日期": "datetime",
+        "open": "open", "close": "close", "high": "high", "low": "low",
+        "vol": "volume", "volume": "volume", "amount": "amount",
+        "datetime": "datetime",
+    }
+    if minute_df is not None and not (hasattr(minute_df, "empty") and minute_df.empty):
+        if hasattr(minute_df, "rename"):
+            rename_map = {c: COLUMN_MAP.get(c, c) for c in minute_df.columns if c in COLUMN_MAP}
+            minute_df = minute_df.rename(columns=rename_map)
+
+    if minute_df is None or (hasattr(minute_df, "empty") and minute_df.empty):
+        print("⚠️ 无法获取分钟级数据，使用日线降级检测")
+        try:
+            daily_df = agg.get_history(symbol)
+        except Exception:
+            print("❌ 数据获取失败")
+            return
+        detector = ManipulationDetector()
+        result = detector.detect(symbol, daily_df, name=name)
+    else:
+        detector = ManipulationDetector()
+        result = detector.detect(symbol, minute_df, name=name)
+
+    # 输出结果
+    print(f"   操纵风险评分: {result.risk_score:.0f}/100")
+    print(f"   风险等级: {result.risk_level.upper()}")
+    print()
+
+    if result.signals:
+        print(f"   检测到 {len(result.signals)} 个可疑信号:")
+        for sig in result.signals:
+            emoji = {"high": "🔴", "medium": "🟠", "low": "🟡"}.get(sig.risk_level, "⚪")
+            print(f"   {emoji} {sig.playbook_name}")
+            print(f"      置信度: {sig.confidence:.0%} | 检测时间: {sig.detected_at}")
+            for e in sig.evidence:
+                print(f"      • {e}")
+            print(f"      → {sig.suggestion}")
+            print()
+    else:
+        print("   🟢 未检测到明显的庄家操纵迹象")
+
+    print("─" * 60)
+    print(result.summary)
+
+
 def cmd_calibrate():
     """置信度校准报告。"""
     print("📐 置信度校准")
@@ -2899,6 +3009,7 @@ _NL_ROUTES: list[dict] = [
     {"keys": ["进化", "学习", "策略进化", "论文", "evolution"], "cmd": "evolution list", "help": "python -m src evolution list"},
     {"keys": ["偏好", "设置", "配置", "profile", "preference", "风险偏好", "投资风格"], "cmd": "preference setup", "help": "python -m src preference setup"},
     {"keys": ["为什么涨", "为什么跌", "涨停原因", "跌停原因", "大涨原因", "大跌原因", "涨跌原因", "归因", "attribute"], "cmd": "attribute", "help": "python -m src attribute <code>  # 需要股票代码"},
+    {"keys": ["庄家", "操纵", "诱多", "诱空", "出货", "对倒", "洗盘", "钓鱼线", "尾盘偷袭", "操盘手法", "manipulation"], "cmd": "manipulation", "help": "python -m src manipulation <code>  # 需要股票代码"},
 ]
 
 
@@ -3065,6 +3176,7 @@ def main():
         "backtest-compare": cmd_backtest_compare,
         "diagnose": lambda: cmd_diagnose(args) if args else print("用法: diagnose <code> [--deep]"),
         "game-theory": cmd_game_theory,
+        "manipulation": lambda: cmd_manipulation(args),
         "calibrate": cmd_calibrate,
         "profile": cmd_profile,
         "preference": lambda: cmd_preference(args),

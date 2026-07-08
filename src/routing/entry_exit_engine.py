@@ -170,6 +170,11 @@ class EntryExitEngine:
         if ov:
             exit_signals.append(ov)
 
+        # 4. 庄家操纵检测 (Phase 10)
+        mp = self._detect_manipulation(close, volume)
+        if mp:
+            exit_signals.append(mp)
+
         result.exit_signals = exit_signals
         result.urgent_exit = any(
             s.urgency == "URGENT" for s in exit_signals
@@ -404,6 +409,63 @@ class EntryExitEngine:
                 confidence=0.65,
                 urgency="URGENT",
             )
+        return None
+
+    def _detect_manipulation(self, close: pd.DataFrame, volume: pd.DataFrame | None = None) -> Optional[ExitSignal]:
+        """检测庄家操纵风险 — 诱多出货/钓鱼线等高风险信号触发紧急出场。
+
+        基于日线量价和分时异常的快速判断:
+        - 上影线 > 3% + 放量 → 疑似钓鱼线出货
+        - 收盘在日均价之下 + 盘中冲高 > 3% → 疑似诱多
+        """
+        if close.shape[0] < 5:
+            return None
+
+        latest = close.iloc[-1]
+        high = latest.get("high", 0) if isinstance(latest, pd.Series) else latest
+        close_p = latest.get("close", 0) if isinstance(latest, pd.Series) else latest
+        open_p = latest.get("open", 0) if isinstance(latest, pd.Series) else latest
+
+        if isinstance(close, pd.DataFrame) and "high" in close.columns:
+            high_val = float(close["high"].iloc[-1])
+            close_val = float(close["close"].iloc[-1])
+            open_val = float(close["open"].iloc[-1])
+        else:
+            return None
+
+        # 上影线长度
+        upper_shadow = (high_val - max(close_val, open_val)) / open_val if open_val > 0 else 0
+
+        # 成交量检查
+        vol_anomaly = False
+        if volume is not None and "volume" in volume.columns:
+            latest_vol = float(volume["volume"].iloc[-1])
+            avg_vol = float(volume["volume"].iloc[-20:].mean()) if volume.shape[0] >= 20 else latest_vol
+            vol_anomaly = latest_vol > avg_vol * 1.5 if avg_vol > 0 else False
+
+        # 条件 1: 长上影线 (> 3%) + 放量 → 钓鱼线
+        if upper_shadow > 0.03 and vol_anomaly:
+            return ExitSignal(
+                type="MANIPULATION_RISK",
+                description=f"疑似庄家钓鱼线出货 — 上影线 {upper_shadow*100:.1f}% + 放量",
+                exit_zone_low=round(close_val * 0.97, 2),
+                exit_zone_high=round(close_val, 2),
+                confidence=0.70,
+                urgency="URGENT",
+            )
+
+        # 条件 2: 盘中冲高回落 (> 3%) → 诱多嫌疑
+        daily_range = (high_val - close_val) / open_val if open_val > 0 else 0
+        if daily_range > 0.03 and close_val < open_val and vol_anomaly:
+            return ExitSignal(
+                type="MANIPULATION_RISK",
+                description=f"疑似庄家诱多出货 — 盘中冲高 {daily_range*100:.1f}% 后回落放量",
+                exit_zone_low=round(close_val * 0.98, 2),
+                exit_zone_high=round(close_val, 2),
+                confidence=0.65,
+                urgency="URGENT",
+            )
+
         return None
 
     def _detect_overbought(self, close: pd.DataFrame) -> Optional[ExitSignal]:

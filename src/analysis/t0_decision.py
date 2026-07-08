@@ -428,6 +428,42 @@ class T0DecisionEngine:
             result.signals_bull.append(T0Signal("bull", 5, "intraday",
                 f"从低点反弹{result.rebound_from_low:.1f}%，有抄底盘"))
 
+        # ── 庄家操纵检测 (Phase 10) ──
+        try:
+            from src.game_theory.manipulation import ManipulationDetector
+            detector = ManipulationDetector()
+            # 使用当前可用的分钟数据
+            if hasattr(self, '_minute_data') and self._minute_data is not None:
+                manip_result = detector.detect("", self._minute_data)
+                if manip_result.signals:
+                    for sig in manip_result.signals:
+                        if sig.playbook_id == "lure_bull_dump" and sig.confidence >= 0.6:
+                            score -= 20
+                            result.signals_bear.append(T0Signal(
+                                "bear", -20, "manipulation",
+                                f"⚠️ 疑似诱多出货 (置信度 {sig.confidence:.0%}): {sig.suggestion[:60]}"
+                            ))
+                        elif sig.playbook_id == "fishing_line" and sig.confidence >= 0.6:
+                            score -= 25
+                            result.signals_bear.append(T0Signal(
+                                "bear", -25, "manipulation",
+                                f"🔴 疑似钓鱼线出货 (置信度 {sig.confidence:.0%}): {sig.suggestion[:60]}"
+                            ))
+                        elif sig.playbook_id == "lure_bear_accumulate" and sig.confidence >= 0.5:
+                            score -= 10
+                            result.signals_bear.append(T0Signal(
+                                "bear", -10, "manipulation",
+                                f"⚠️ 疑似诱空吸筹 (置信度 {sig.confidence:.0%})，谨慎操作"
+                            ))
+                        elif sig.playbook_id == "closing_manipulation" and sig.confidence >= 0.5:
+                            score -= 5
+                            result.signals_bear.append(T0Signal(
+                                "bear", -5, "manipulation",
+                                f"⚠️ 尾盘异动 (置信度 {sig.confidence:.0%})，次日可能反向"
+                            ))
+        except Exception:
+            pass  # 操纵检测失败不影响主流程
+
         result.score = score
 
         # ── 决策映射 ──
