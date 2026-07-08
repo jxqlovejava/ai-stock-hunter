@@ -1010,17 +1010,25 @@ class Orchestrator:
                             if position_limits else 0.30
                         ),
                     }
+                    # 从信号的 ATR 止损反推 ATR 值，用于初始止损
+                    _atr = None
+                    if signal.atr_stop > 0 and current_px > 0:
+                        _atr = (current_px - signal.atr_stop) / 2.0  # 默认 atr_multiplier=2
                     self.position_state_mgr.open(
                         symbol=symbol, name=name,
                         entry_price=current_px if current_px > 0 else float(signal.entry_zone_low or signal.suggested_stop or 0),
                         stop_config=stop_cfg,
+                        atr_value=_atr,
                     )
                 elif signal.action in ("CLOSE",):
                     self.position_state_mgr.close(symbol)
                 else:
                     # HOLD / REDUCE → 观测当前价格更新 HWM
                     if current_px > 0:
-                        _, alerts = self.position_state_mgr.update_price(symbol, current_px)
+                        _atr = None
+                        if signal.atr_stop > 0 and current_px > 0:
+                            _atr = (current_px - signal.atr_stop) / 2.0
+                        _, alerts = self.position_state_mgr.update_price(symbol, current_px, atr_value=_atr)
                         for alert in alerts:
                             logger.info(
                                 "持仓预警 [%s] %s: %s", alert.severity, alert.symbol, alert.message,

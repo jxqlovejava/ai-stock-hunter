@@ -2770,6 +2770,128 @@ def cmd_sweep(args: list[str]):
 
 
 @_safe_cmd
+def cmd_pullback_scan(args: list[str]):
+    """回调扫描 — 扫描自选股中的回调入场机会。"""
+    import argparse
+    from src.analysis.pullback import (
+        PullbackDetector, AntiManipulationGate,
+        PullbackScanner, ScanConfig,
+    )
+
+    parser = argparse.ArgumentParser(description="回调入场扫描")
+    parser.add_argument("--watchlist", type=str, default=DEFAULT_WATCHLIST_PATH,
+                        help="自选股文件路径 (JSON)")
+    parser.add_argument("--sector", type=str, default="",
+                        help="行业过滤 (空白=全部)")
+    parser.add_argument("--min-score", type=float, default=50.0,
+                        help="最低回调质量分 (默认 50)")
+    parser.add_argument("--no-anti-manip", action="store_true",
+                        help="跳过反操纵验证（仅技术检测）")
+    parsed = parser.parse_args(args)
+
+    watchlist = _load_watchlist(parsed.watchlist)
+    if not watchlist:
+        print("📭 自选股列表为空")
+        print("   创建自选股: python -m src alert watch-add <symbol>")
+        return
+
+    symbols = [s["symbol"] for s in watchlist]
+    names = {s["symbol"]: s.get("name", "") for s in watchlist}
+
+    gate = None if parsed.no_anti_manip else AntiManipulationGate()
+    detector = PullbackDetector(anti_manipulation_gate=gate)
+    scanner = PullbackScanner(data_provider=None, detector=detector)
+
+    config = ScanConfig(
+        symbols=symbols,
+        names=names,
+        sector_filter=parsed.sector,
+        min_score=parsed.min_score,
+        require_authentic=not parsed.no_anti_manip,
+    )
+
+    # 逐个扫描（无 data_provider 时需要手动提供数据）
+    result = scanner.scan(config)
+
+    if result.ready or result.watch or result.blocked:
+        print(scanner.format_result(result))
+    else:
+        print("📊 未检测到回调信号 — 自选股均不在回调区域")
+
+
+@_safe_cmd
+def cmd_pullback_watch(args: list[str]):
+    """回调条件监控 — 管理回调入场条件单。"""
+    import argparse
+    from src.analysis.pullback import (
+        PullbackDetector, AntiManipulationGate,
+        EntryConditionMonitor,
+    )
+
+    parser = argparse.ArgumentParser(description="回调条件监控")
+    sub = parser.add_subparsers(dest="action", help="操作")
+
+    add_p = sub.add_parser("add", help="加入监控")
+    add_p.add_argument("symbol", help="股票代码")
+    add_p.add_argument("--name", type=str, default="", help="股票名称")
+
+    sub.add_parser("list", help="查看监控列表")
+
+    check_p = sub.add_parser("check", help="检查单票条件")
+    check_p.add_argument("symbol", help="股票代码")
+
+    rm_p = sub.add_parser("remove", help="移除监控")
+    rm_p.add_argument("symbol", help="股票代码")
+
+    parsed = parser.parse_args(args)
+
+    gate = AntiManipulationGate()
+    detector = PullbackDetector(anti_manipulation_gate=gate)
+    monitor = EntryConditionMonitor(detector=detector)
+
+    if parsed.action == "add":
+        monitor.add(parsed.symbol, name=parsed.name)
+        print(f"✅ {parsed.symbol} {parsed.name} 已加入回调监控")
+    elif parsed.action == "list":
+        entries = monitor.list_all()
+        if not entries:
+            print("📭 监控列表为空")
+            print("   添加: python -m src pullback-watch add <code>")
+            return
+        print(f"📋 回调监控列表 ({len(entries)} 项):")
+        print(f"  {'代码':<8} {'名称':<10} {'状态':<18} {'条件满足':>6} {'触发价':>8}")
+        for e in entries:
+            status = e.last_status.value if e.last_status else "NEW"
+            print(
+                f"  {e.symbol:<8} {e.name:<10} {status:<18} "
+                f"{e.condition_met_count:>6} {e.trigger_price:>8.2f}"
+            )
+    elif parsed.action == "check":
+        entry = monitor.check_one(parsed.symbol)
+        if entry is None:
+            print(f"❌ {parsed.symbol} 不在监控列表中")
+            return
+        print(f"📌 {entry.symbol} {entry.name}")
+        print(f"   状态: {entry.last_status.value if entry.last_status else 'N/A'}")
+        print(f"   条件: {entry.trigger_condition}")
+        print(f"   触发价: {entry.trigger_price:.2f}")
+        print(f"   连续满足: {entry.condition_met_count} 次")
+        print(f"   上次检查: {entry.last_check_at}")
+    elif parsed.action == "remove":
+        ok = monitor.remove(parsed.symbol)
+        print(f"{'✅' if ok else '❌'} {parsed.symbol} {'已移除' if ok else '未找到'}")
+    else:
+        # 默认列出
+        entries = monitor.list_all()
+        if not entries:
+            print("📭 监控列表为空")
+            return
+        print(f"📋 回调监控列表 ({len(entries)} 项)")
+        for e in entries:
+            print(f"  {e.symbol} {e.name}: {e.trigger_condition or '待检测'}")
+
+
+@_safe_cmd
 def cmd_alert(args: list[str]):
     """预警管理 — 添加/查看/清理价格和止损预警。"""
     import argparse
@@ -3848,6 +3970,9 @@ def main():
         # Phase 12: 持仓实时监控 + 动态止盈止损
         "position-monitor": lambda: cmd_position_monitor(args),
         "pm": lambda: cmd_position_monitor(args),
+        # Phase 12: 回调入场
+        "pullback-scan": lambda: cmd_pullback_scan(args),
+        "pullback-watch": lambda: cmd_pullback_watch(args),
     }
 
     handler = commands.get(cmd)
