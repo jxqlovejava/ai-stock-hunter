@@ -96,6 +96,15 @@ class T0Result:
     stop_loss: float = 0.0
     trigger_condition: str = ""
 
+    # 多日趋势上下文
+    trend_5d: str = ""           # "上升" / "下降" / "震荡"
+    trend_10d: str = ""          # 同上
+    volume_trend: str = ""       # "放量" / "缩量" / "平量"
+    multi_day_summary: str = ""  # 综合多日趋势描述
+    # 跨天分析
+    gap_analysis: str = ""       # 近10日跳空缺口及回补状态
+    overnight_risk: str = ""     # 隔夜波动风险
+
     def to_summary(self) -> str:
         """生成决策摘要。"""
         action_emoji = {
@@ -172,9 +181,25 @@ class T0DecisionEngine:
             name: 股票名称
         """
         if len(daily_bars) < 5:
-            logger.warning("T+0: 日线数据不足 (%d 根)，无法分析", len(daily_bars))
-            return T0Result(symbol=symbol, name=name, action=T0Action.HOLD,
-                            trigger_condition="日线数据不足，请至少提供5根日线Bar")
+            logger.warning("T+0: 日线数据不足 (%d 根)，切换为快照模式", len(daily_bars))
+            result = T0Result(
+                symbol=symbol, name=name, action=T0Action.HOLD,
+                trigger_condition=(
+                    "日线K线数据不足（仅{}根），已切换为价格快照模式。"
+                    "建议盘中实时运行以获得更精确的均线和支撑阻力位。".format(len(daily_bars))
+                ),
+            )
+            if len(daily_bars) > 0:
+                closes = np.array([b.close for b in daily_bars])
+                result.ma5 = float(np.mean(closes))
+                result.support_1 = float(min(closes))
+                result.resistance = float(max(closes))
+                # 多日趋势 — 至少标出价格位置
+                if n := len(closes) >= 2:
+                    chg = (closes[-1] / closes[0] - 1) * 100
+                    result.trend_5d = "上升" if chg > 3 else ("下降" if chg < -3 else "震荡")
+                    result.multi_day_summary = f"近{n}日: {result.trend_5d} ({chg:+.1f}%)"
+            return result
 
         if len(minute_bars) < 10:
             logger.warning("T+0: 分钟数据不足 (%d 根)，仅做日线分析", len(minute_bars))
@@ -211,6 +236,13 @@ class T0DecisionEngine:
         # ── 日内分析 ──
         if len(minute_bars) >= 10:
             self._analyze_intraday(result, minute_bars, prev_close)
+
+        # ── 多日趋势 ──
+        self._analyze_multi_day_trend(result, daily_bars)
+
+        # ── 跨天分析 ──
+        self._analyze_gaps(result, daily_bars)
+        self._analyze_overnight_risk(result, daily_bars)
 
         # ── 综合评分 ──
         self._score(result, chg_3d, chg_5d)
@@ -296,6 +328,99 @@ class T0DecisionEngine:
     # ------------------------------------------------------------------
     # 形态识别
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _analyze_multi_day_trend(result: T0Result, daily_bars: list[Bar]) -> None:
+        """分析 5 日和 10 日趋势，填入 result 的多日趋势字段。"""
+        closes = np.array([b.close for b in daily_bars])
+        volumes_arr = np.array([b.volume for b in daily_bars])
+        n = len(closes)
+
+        # 5 日趋势
+        if n >= 5:
+            chg_5d = (closes[-1] / closes[-5] - 1) * 100
+            result.trend_5d = "上升" if chg_5d > 3 else ("下降" if chg_5d < -3 else "震荡")
+        # 10 日趋势
+        if n >= 10:
+            chg_10d = (closes[-1] / closes[-10] - 1) * 100
+            result.trend_10d = "上升" if chg_10d > 5 else ("下降" if chg_10d < -5 else "震荡")
+        # 量能趋势：近 3 日均量 vs 前 7 日均量
+        if len(volumes_arr) >= 10:
+            recent_vol = float(np.mean(volumes_arr[-3:]))
+            prior_vol = float(np.mean(volumes_arr[-10:-3]))
+            if prior_vol > 0:
+                vol_ratio = recent_vol / prior_vol
+                result.volume_trend = "放量" if vol_ratio > 1.3 else ("缩量" if vol_ratio < 0.7 else "平量")
+        # 综合摘要
+        parts = []
+        if result.trend_5d:
+            trend_icons = {"上升": "📈", "下降": "📉", "震荡": "➡️"}
+            parts.append(f"近5日{trend_icons.get(result.trend_5d, '')}{result.trend_5d}")
+        if result.trend_10d and result.trend_10d != result.trend_5d:
+            parts.append(f"近10日{result.trend_10d}")
+        if result.volume_trend:
+            parts.append(f"量能{result.volume_trend}")
+        if parts:
+            result.multi_day_summary = "，".join(parts)
+
+    @staticmethod
+    def _analyze_gaps(result: T0Result, daily_bars: list[Bar]) -> None:
+        """跨天缺口分析: 近10日向上/向下跳空缺口及回补状态。"""
+        bars = daily_bars[-11:]  # 最多看10个间隔
+        if len(bars) < 2:
+            return
+        gaps = []
+        for i in range(1, len(bars)):
+            prev_close = bars[i - 1].close
+            curr_open = bars[i].open
+            if prev_close <= 0:
+                continue
+            gap_pct = (curr_open / prev_close - 1) * 100
+            bar_date = getattr(bars[i], "timestamp", None) or getattr(bars[i], "date", "")
+            if hasattr(bar_date, "strftime"):
+                bar_date = bar_date.strftime("%m-%d")
+            if gap_pct > 1.5:
+                # 向上跳空: 回补条件 = 当日最低价 ≤ 前日收盘价
+                filled = bars[i].low <= prev_close if bars[i].low > 0 else False
+                status = "已补" if filled else "未补"
+                gaps.append(f"{bar_date} ↑{gap_pct:+.1f}%{status}")
+            elif gap_pct < -1.5:
+                # 向下跳空: 回补条件 = 当日最高价 ≥ 前日收盘价
+                filled = bars[i].high >= prev_close if bars[i].high > 0 else False
+                status = "已补" if filled else "未补"
+                gaps.append(f"{bar_date} ↓{gap_pct:+.1f}%{status}")
+        if gaps:
+            result.gap_analysis = "；".join(gaps[-5:])  # 最多5个
+            # 添加上下文解读
+            unfilled = [g for g in gaps if "未补" in g]
+            if unfilled:
+                result.gap_analysis += f" — {len(unfilled)}个未补缺口构成潜在支撑/阻力"
+
+    @staticmethod
+    def _analyze_overnight_risk(result: T0Result, daily_bars: list[Bar]) -> None:
+        """隔夜风险: 统计近10日隔夜涨跌幅的标准差。"""
+        bars = daily_bars[-11:]
+        if len(bars) < 3:
+            return
+        overnight_changes = []
+        for i in range(1, min(len(bars), 11)):
+            prev_close = bars[i - 1].close
+            curr_open = bars[i].open
+            if prev_close > 0:
+                overnight = (curr_open / prev_close - 1) * 100
+                overnight_changes.append(overnight)
+        if overnight_changes:
+            import numpy as np
+            std = float(np.std(overnight_changes))
+            mean = float(np.mean(overnight_changes))
+            if std > 2:
+                risk_level = f"偏高({std:.1f}%)"
+            elif std > 1:
+                risk_level = f"正常({std:.1f}%)"
+            else:
+                risk_level = f"偏低({std:.1f}%)"
+            direction = "偏多" if mean > 0.3 else ("偏空" if mean < -0.3 else "中性")
+            result.overnight_risk = f"隔夜波动{risk_level} 方向{direction}(均值{mean:+.1f}%)"
 
     @staticmethod
     def _detect_daily_patterns(bars: list[Bar]) -> list[str]:

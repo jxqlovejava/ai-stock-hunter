@@ -113,6 +113,8 @@ class OrchestratorResult:
     t0_result: Optional[dict] = None
     # 宏观事件因果链分析
     macro_event: Optional[dict] = None
+    # 市场情绪完整对象
+    market_sentiment: Optional[object] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -347,13 +349,18 @@ class Orchestrator:
             "rules": all_rules,
         }
 
-        # Step 2: 准入检查
+        # Step 2: 准入检查 — 尝试从数据源获取实际上市日期
         gate_ctx = {
             "is_limit_up": False,
             "is_limit_down": False,
             "is_suspended": False,
-            "listing_days": 365,
         }
+        try:
+            q = self.data.get_quote(symbol, market)
+            if q and q.listing_date:
+                gate_ctx["listing_date"] = q.listing_date
+        except Exception:
+            pass  # 数据不可用时使用 admission 的默认值
         gate_result = self.admission.check(symbol, name, gate_ctx)
         result.gate_status = gate_result.status.value
         if gate_result.status.value == "REJECTED":
@@ -631,6 +638,7 @@ class Orchestrator:
             manipulation_scan=manipulation_scan,        # Phase 11: 反操纵扫描
         )
         result.report = report
+        result.market_sentiment = sentiment_dict
         if report_source_citations_gap:
             report.source_citations.append(report_source_citations_gap)
 
@@ -990,40 +998,13 @@ class Orchestrator:
 
         result.passed = True
 
-        # Phase 12: 更新持仓状态（开仓/平仓/价格观测）
+        # Phase 12: 持仓价格追踪（仅更新已有持仓的 HWM/止损预警，不自动开仓/平仓）
+        # 实际交易由用户执行，之后通过场景五同步到系统。分析信号仅作参考建议。
         if signal is not None and result.passed:
             current_px = float(quote_dict.get("price", 0) or quote_dict.get("close", 0) or 0)
             try:
-                if signal.action in ("OPEN", "ADD"):
-                    # 开仓/加仓 → 创建或更新持仓状态
-                    stop_cfg = {
-                        "initial_stop_pct": (
-                            -float(position_limits.get("single_stop_loss_pct", 0.02))
-                            if position_limits else -0.02
-                        ),
-                        "breakeven_trigger_pct": (
-                            float(position_limits.get("breakeven_trigger_pct", 0.20))
-                            if position_limits else 0.20
-                        ),
-                        "trailing_trigger_pct": (
-                            float(position_limits.get("trailing_trigger_pct", 0.30))
-                            if position_limits else 0.30
-                        ),
-                    }
-                    # 从信号的 ATR 止损反推 ATR 值，用于初始止损
-                    _atr = None
-                    if signal.atr_stop > 0 and current_px > 0:
-                        _atr = (current_px - signal.atr_stop) / 2.0  # 默认 atr_multiplier=2
-                    self.position_state_mgr.open(
-                        symbol=symbol, name=name,
-                        entry_price=current_px if current_px > 0 else float(signal.entry_zone_low or signal.suggested_stop or 0),
-                        stop_config=stop_cfg,
-                        atr_value=_atr,
-                    )
-                elif signal.action in ("CLOSE",):
-                    self.position_state_mgr.close(symbol)
-                else:
-                    # HOLD / REDUCE → 观测当前价格更新 HWM
+                if self.position_state_mgr.is_open(symbol):
+                    # 已有持仓 → 更新价格追踪（HWM / 止损预警）
                     if current_px > 0:
                         _atr = None
                         if signal.atr_stop > 0 and current_px > 0:
@@ -1033,6 +1014,8 @@ class Orchestrator:
                             logger.info(
                                 "持仓预警 [%s] %s: %s", alert.severity, alert.symbol, alert.message,
                             )
+                # 注意: 不再根据分析信号自动 open()/close() 持仓。
+                # 开仓/平仓由用户在真实交易后通过场景五同步到 data/positions.json。
             except Exception as e:
                 logger.debug("Phase 12 position state update failed for %s: %s", symbol, e)
 
@@ -1611,15 +1594,41 @@ class Orchestrator:
         except ImportError:
             return None
 
-        # 拉取日线数据 (近 20 根)
+        # 拉取日线数据 (近 30 个交易日)
         try:
+            from datetime import datetime, timedelta
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
             daily_bars = self.data.mootdx.get_bars(
-                symbol, Resolution.DAY, start="", end="",
+                symbol, Resolution.DAY, start=start_date, end=end_date,
             )
             daily_bars = [b for b in daily_bars if b is not None]
             if len(daily_bars) < 5:
-                logger.warning("T+0: 日线数据不足 (%d 根)", len(daily_bars))
-                return None
+                logger.warning("T+0: 日线数据不足 (%d 根)，尝试获取更早的数据", len(daily_bars))
+                # 回退：尝试从 akshare 获取日线数据
+                try:
+                    import akshare as ak
+                    df = ak.stock_zh_a_hist(
+                        symbol=symbol, period='daily',
+                        start_date=start_date, end_date=end_date,
+                        adjust='qfq',
+                    )
+                    if df is not None and len(df) >= 5:
+                        from src.data.schema import Bar
+                        daily_bars = []
+                        for _, row in df.iterrows():
+                            bar = Bar(
+                                open=float(row['开盘']), close=float(row['收盘']),
+                                high=float(row['最高']), low=float(row['最低']),
+                                volume=int(row['成交量']), amount=float(row.get('成交额', 0)),
+                                timestamp=row.get('日期', None),
+                            )
+                            daily_bars.append(bar)
+                        daily_bars = daily_bars[-20:]
+                except Exception:
+                    pass
+            if len(daily_bars) < 5:
+                logger.warning("T+0: 所有数据源均不足 (%d 根)，返回基础快照", len(daily_bars))
             daily_bars = daily_bars[-20:]  # 取最近 20 根
         except Exception as e:
             logger.debug("T+0: 日线数据获取失败: %s", e)
@@ -1686,6 +1695,11 @@ class Orchestrator:
             "stop_loss": result.stop_loss,
             "trigger_condition": result.trigger_condition,
             "summary": result.to_summary(),
+            "multi_day_summary": result.multi_day_summary,
+            "volume_trend": result.volume_trend,
+            "trend_5d": result.trend_5d,
+            "gap_analysis": result.gap_analysis,
+            "overnight_risk": result.overnight_risk,
         }
 
     def run_macro_event(
@@ -2083,6 +2097,14 @@ class Orchestrator:
                 "northbound_net": sentiment.northbound_net,
                 "limit_up_count": sentiment.limit_up_count,
                 "limit_down_count": sentiment.limit_down_count,
+                # 深度解读字段
+                "market_breadth_insight": sentiment.market_breadth_insight,
+                "volume_insight": sentiment.volume_insight,
+                "northbound_insight": sentiment.northbound_insight,
+                "limit_pool_insight": sentiment.limit_pool_insight,
+                "vix_insight": sentiment.vix_insight,
+                "sector_signal_insight": sentiment.sector_signal_insight,
+                "panic_arb_advice": sentiment.panic_arb_advice,
             }
         except Exception as e:
             logger.debug("Sentiment detection unavailable: %s", e)
