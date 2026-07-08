@@ -2515,6 +2515,136 @@ def _save_watchlist(stocks: list[dict], path: str = DEFAULT_WATCHLIST_PATH):
 
 
 @_safe_cmd
+def cmd_position_monitor(args: list[str]):
+    """持仓监控 — 检查所有开仓头寸的状态和动态止损。
+
+    用法:
+      python -m src position-monitor status          # 查看所有持仓摘要
+      python -m src position-monitor check           # 实时拉取价格并更新/检查止损
+      python -m src position-monitor detail <code>   # 查看单票详情
+      python -m src position-monitor close <code>    # 手动清除持仓状态
+    """
+    import argparse
+    from src.routing.position_state import (
+        PositionStateManager, StopStage, StopAlert, DynamicStopCalculator,
+    )
+
+    parser = argparse.ArgumentParser(description="持仓状态监控")
+    parser.add_argument("action", nargs="?", default="status",
+                        choices=["status", "check", "detail", "close", "list"],
+                        help="status=摘要 check=实时检查 detail=<code> close=<code>")
+    parser.add_argument("symbol", nargs="?", default="", help="股票代码 (detail/close 时使用)")
+    parsed, _remaining = parser.parse_known_args(args)
+
+    mgr = PositionStateManager()
+
+    if parsed.action in ("status", "list"):
+        positions = mgr.get_all()
+        if not positions:
+            print("📭 暂无开仓头寸。使用 position-monitor check 检查。")
+            return
+        print(f"\n📊 持仓监控 ({len(positions)} 只开仓):")
+        header = (
+            f"{'标的':<10s} {'方向':<6s} {'入场价':>8s} {'最新价':>8s} "
+            f"{'浮盈%':>8s} {'max浮盈%':>9s} {'阶段':<12s} {'止损价':>8s} {'距止损%':>8s}"
+        )
+        print(header)
+        print("-" * 90)
+        for p in sorted(positions, key=lambda x: x.max_favor_pct, reverse=True):
+            dist_pct = (
+                f"{(p.last_price - p.stop_price) / p.last_price * 100:.1f}%"
+                if p.last_price > 0 and p.stop_price > 0 else "N/A"
+            )
+            stage_icon = {
+                StopStage.INITIAL: "🟡 初始",
+                StopStage.BREAKEVEN: "🟢 保本",
+                StopStage.TRAILING: "🔵 追踪",
+            }
+            print(
+                f"{p.symbol:<10s} {p.direction:<6s} {p.entry_price:>8.2f} {p.last_price:>8.2f} "
+                f"{p.unrealized_pnl_pct*100:>7.1f}% {p.max_favor_pct*100:>8.1f}% "
+                f"{stage_icon.get(p.stop_stage, p.stop_stage.value):<12s} "
+                f"{p.stop_price:>8.2f} {dist_pct:>8s}"
+            )
+
+        # 汇总统计
+        trailing_count = sum(1 for p in positions if p.stop_stage == StopStage.TRAILING)
+        breakeven_count = sum(1 for p in positions if p.stop_stage == StopStage.BREAKEVEN)
+        initial_count = sum(1 for p in positions if p.stop_stage == StopStage.INITIAL)
+        print(f"\n   阶段分布: 🟡初始 {initial_count}  |  🟢保本 {breakeven_count}  |  🔵追踪 {trailing_count}")
+
+    elif parsed.action == "check":
+        from src.data.aggregator import DataAggregator
+        agg = DataAggregator()
+        positions = mgr.get_all()
+        if not positions:
+            print("📭 暂无开仓头寸。")
+            return
+        total_alerts = 0
+        for p in positions:
+            try:
+                q = agg.get_quote(p.symbol)
+                if q and q.price:
+                    _, alerts = mgr.update_price(p.symbol, float(q.price))
+                    for a in alerts:
+                        icon = {"CRITICAL": "🚨", "WARNING": "⚠️", "INFO": "ℹ️"}.get(a.severity, "📌")
+                        print(f"  {icon} [{a.severity}] {p.symbol} {p.name}: {a.message}")
+                        total_alerts += 1
+                else:
+                    print(f"  ⚠️ {p.symbol}: 行情获取失败")
+            except Exception as e:
+                print(f"  ⚠️ {p.symbol}: {e}")
+        print(f"\n✅ 检查完成。{total_alerts} 条预警。")
+
+    elif parsed.action == "detail":
+        sym = parsed.symbol
+        if not sym:
+            print("用法: python -m src position-monitor detail <code>")
+            return
+        p = mgr.get(sym)
+        if not p:
+            print(f"📭 持仓未找到: {sym}")
+            return
+        print(f"\n📋 持仓详情: {p.symbol}")
+        print("=" * 40)
+        print(f"   名称: {p.name}")
+        print(f"   方向: {p.direction}")
+        print(f"   入场价: {p.entry_price:.2f} ({p.entry_date.isoformat()[:10]})")
+        print(f"   数量: {p.quantity}")
+        print(f"   最高价: {p.high_price:.2f}")
+        print(f"   最低价: {p.low_price:.2f}")
+        print(f"   最新价: {p.last_price:.2f}")
+        print(f"   浮盈: {p.unrealized_pnl_pct*100:.1f}%")
+        print(f"   最大浮盈: {p.max_favor_pct*100:.1f}%")
+        print(f"   最大浮亏: {p.max_adversity_pct*100:.1f}%")
+        stage_icon = {
+            StopStage.INITIAL: "🟡 INITIAL",
+            StopStage.BREAKEVEN: "🟢 BREAKEVEN",
+            StopStage.TRAILING: "🔵 TRAILING",
+        }
+        print(f"   止损阶段: {stage_icon.get(p.stop_stage, p.stop_stage.value)}")
+        print(f"   止损价: {p.stop_price:.2f}")
+        print(f"   止损备注: {p.stop_note or '(无)'}")
+        print(f"\n   配置:")
+        print(f"     初始止损%: {p.initial_stop_pct*100:.0f}%")
+        print(f"     保本触发: {p.breakeven_trigger_pct*100:.0f}% (r019)")
+        print(f"     追踪触发: {p.trailing_trigger_pct*100:.0f}% (r028)")
+        print(f"     追踪回撤: {p.trailing_stop_pct*100:.0f}%")
+        print(f"     ATR倍率: {p.atr_multiplier:.1f}")
+
+    elif parsed.action == "close":
+        sym = parsed.symbol
+        if not sym:
+            print("用法: python -m src position-monitor close <code>")
+            return
+        state = mgr.close(sym)
+        if state:
+            print(f"✅ 持仓状态已清除: {sym} (入场 {state.entry_price:.2f}, 最大浮盈 {state.max_favor_pct*100:.1f}%)")
+        else:
+            print(f"📭 持仓未找到: {sym}")
+
+
+@_safe_cmd
 def cmd_sweep(args: list[str]):
     """自选股扫雷 — 检查所有自选股的价格预警、止损、异常波动。"""
     import argparse
@@ -3589,6 +3719,12 @@ def main():
         print("  paper-trade <action>    模拟交易管理")
         print("  trade-track <add|list|kelly>  交易追踪")
         print()
+        print("📊 持仓监控 (NEW):")
+        print("  position-monitor status  查看所有持仓摘要")
+        print("  position-monitor check   实时检查更新止损")
+        print("  position-monitor detail  单票详情")
+        print("  pm                       同 position-monitor")
+        print()
         print("🔔 盯盘 & 预警:")
         print("  sweep                   自选股扫雷")
         print("  alert watch-add <code>  加入自选股")
@@ -3709,6 +3845,9 @@ def main():
         # Phase 9: 行业深度 + 公司深度研究
         "sector-research": lambda: cmd_sector_research(args),
         "deep-research": lambda: cmd_deep_research(args),
+        # Phase 12: 持仓实时监控 + 动态止盈止损
+        "position-monitor": lambda: cmd_position_monitor(args),
+        "pm": lambda: cmd_position_monitor(args),
     }
 
     handler = commands.get(cmd)

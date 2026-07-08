@@ -132,6 +132,9 @@ class PositionLimits:
     max_total_loss_pct: float = 0.25   # 能忍受的总最大亏损比例
     gem_discount: float = 0.80          # 创业板/科创板折扣
     kelly_fraction: float = 0.50        # 凯利分数 (0.1-1.0, 默认 half-Kelly)
+    # Phase 12: 动态止盈止损阈值
+    breakeven_trigger_pct: float = 0.20  # 保本止损触发阈值 (军规 r019)
+    trailing_trigger_pct: float = 0.30   # 移动止盈触发阈值 (军规 r028)
 
     def to_dict(self) -> dict:
         return {
@@ -145,6 +148,8 @@ class PositionLimits:
             "max_total_loss_pct": self.max_total_loss_pct,
             "gem_discount": self.gem_discount,
             "kelly_fraction": self.kelly_fraction,
+            "breakeven_trigger_pct": self.breakeven_trigger_pct,
+            "trailing_trigger_pct": self.trailing_trigger_pct,
         }
 
     @classmethod
@@ -160,6 +165,8 @@ class PositionLimits:
             max_total_loss_pct=d.get("max_total_loss_pct", 0.25),
             gem_discount=d.get("gem_discount", 0.80),
             kelly_fraction=d.get("kelly_fraction", 0.50),
+            breakeven_trigger_pct=d.get("breakeven_trigger_pct", 0.20),
+            trailing_trigger_pct=d.get("trailing_trigger_pct", 0.30),
         )
 
 
