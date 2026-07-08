@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""多维诊断（原 L1 Analyze）— 多维度扫描（量化为主，AI 为辅）。
+"""多维诊断 — 多维度扫描（量化为主，AI 为辅）。
 
 诊断维度:
   1. 宏观环境打分 (PMI/ERP/M1-M2/社融/LPR/DR007/货币信用象限)
@@ -25,7 +25,7 @@ from src.routing.investor_mental_model import InvestorMentalModelFit
 
 @dataclass
 class DiagnosisReport:
-    """多维诊断报告（原 DiagnosisReport / L1）。"""
+    """多维诊断报告。"""
     symbol: str
     name: str
     macro_score: float = 50.0
@@ -63,7 +63,7 @@ class DiagnosisReport:
 
 
 class DiagnosisEngine:
-    """多维诊断引擎（原 L1Analyzer）: 宏观/价值/质量/动量/估值/周期/情绪/高管 8+ 维度。"""
+    """多维诊断引擎: 宏观/价值/质量/动量/估值/周期/情绪/高管 8+ 维度。"""
 
     def analyze(
         self,
@@ -187,7 +187,7 @@ class DiagnosisEngine:
                 data_type="executive", source_tier="T2", nature="fact",
             ))
 
-        # L1 评分维度 — 基于原始数据的分析解释
+        # 评分维度 — 基于原始数据的分析解释
         citations.append(make_citation(
             provider="l1_analyzer", field="l1_multi_dimension_scores",
             data_type="factor",
@@ -669,7 +669,3 @@ SCREENING_PRESETS: dict[str, ScreeningPreset] = {
     ),
 }
 
-
-# -- 向后兼容别名 (deprecated) --
-L1Analyzer = DiagnosisEngine
-AnalysisReport = DiagnosisReport

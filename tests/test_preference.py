@@ -366,8 +366,8 @@ class TestPreferencePipelineIntegration:
     def test_l2_judge_with_weights_override(self):
         """传递 weights_override 不改变接口兼容性。"""
         from src.routing.l1_analyze import AnalysisReport
-        from src.routing.l2_judge import L2Judge
-        judge = L2Judge()
+        from src.routing.verdict import VerdictEngine
+        judge = VerdictEngine()
         report = AnalysisReport(
             symbol="600519", name="贵州茅台",
             value_score=70, quality_score=65, momentum_score=55,
@@ -380,8 +380,8 @@ class TestPreferencePipelineIntegration:
     def test_l3_with_preference_params(self):
         """传递 position_limits 和 risk_multiplier 不崩溃。"""
         from src.routing.l2_judge import Verdict
-        from src.routing.l3_trade import L3Trader
-        trader = L3Trader()
+        from src.routing.positioning import PositioningEngine
+        trader = PositioningEngine()
         verdict = Verdict(symbol="600519", score=80, confidence=0.7)
         signal = trader.generate_signal(
             verdict,
@@ -393,8 +393,8 @@ class TestPreferencePipelineIntegration:
     def test_l4_with_position_limits(self):
         """传递 position_limits 覆盖类级常量。"""
         from src.routing.l3_trade import TradeSignal
-        from src.routing.l4_risk import L4RiskOfficer
-        risk_officer = L4RiskOfficer()
+        from src.routing.risk_control import RiskControlEngine
+        risk_officer = RiskControlEngine()
         signal = TradeSignal(
             symbol="600519", action="OPEN", target_weight=0.25,
         )

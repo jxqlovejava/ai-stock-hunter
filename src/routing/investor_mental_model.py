@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """投资思维模型分析层 — 投资者偏好、能力圈、行为偏差校验。
 
-Phase: 作为 Orchestrator 中 L1 → L2 之间的必经阶段。
+Phase: 作为 Orchestrator 中诊断 → 裁决之间的必经阶段。
 """
 
 from __future__ import annotations

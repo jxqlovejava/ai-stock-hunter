@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""高管数据管道测试 — 从 adapter 到 L1 评分到 L3 信号全链路。"""
+"""高管数据管道测试 — 从 adapter 到 诊断评分到 仓位调度信号全链路。"""
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -145,19 +145,19 @@ class TestParseBoardChanges:
 
 class TestScoreExecutive:
     def test_no_data(self):
-        from src.routing.l1_analyze import L1Analyzer
-        result = L1Analyzer._score_executive(None)
+        from src.routing.diagnosis import DiagnosisEngine
+        result = DiagnosisEngine._score_executive(None)
         assert result["score"] == 50.0
         assert "数据不可用" in result["risks"][0]
 
     def test_empty_context(self):
-        from src.routing.l1_analyze import L1Analyzer
-        result = L1Analyzer._score_executive({"trades": [], "profiles": [], "changes": []})
+        from src.routing.diagnosis import DiagnosisEngine
+        result = DiagnosisEngine._score_executive({"trades": [], "profiles": [], "changes": []})
         assert result["score"] == 45.0  # -5 for missing profiles
         assert any("缺失" in r for r in result["risks"])
 
     def test_net_buying_boost(self):
-        from src.routing.l1_analyze import L1Analyzer
+        from src.routing.diagnosis import DiagnosisEngine
         ctx = {
             "trades": [
                 {"trade_type": "buy", "volume": 250000},
@@ -165,12 +165,12 @@ class TestScoreExecutive:
             "profiles": [{"name": "张三", "tenure_start": "2020-01-01"}],
             "changes": [],
         }
-        result = L1Analyzer._score_executive(ctx)
+        result = DiagnosisEngine._score_executive(ctx)
         assert result["score"] > 60  # 50 + 25(buy) + 5(profiles) + 5(long_tenure)
         assert result["score"] <= 85
 
     def test_net_selling_penalty(self):
-        from src.routing.l1_analyze import L1Analyzer
+        from src.routing.diagnosis import DiagnosisEngine
         ctx = {
             "trades": [
                 {"trade_type": "sell", "volume": 300000},
@@ -178,12 +178,12 @@ class TestScoreExecutive:
             "profiles": [],
             "changes": [],
         }
-        result = L1Analyzer._score_executive(ctx)
+        result = DiagnosisEngine._score_executive(ctx)
         assert result["score"] < 45  # 50 - 25(sell) - 5(no profiles)
         assert any("净减持" in r for r in result["risks"])
 
     def test_abnormal_board_change(self):
-        from src.routing.l1_analyze import L1Analyzer
+        from src.routing.diagnosis import DiagnosisEngine
         ctx = {
             "trades": [],
             "profiles": [],
@@ -191,12 +191,12 @@ class TestScoreExecutive:
                 {"person_name": "王五", "reason": "个人原因辞职"},
             ],
         }
-        result = L1Analyzer._score_executive(ctx)
+        result = DiagnosisEngine._score_executive(ctx)
         assert result["score"] <= 35  # 50 - 10 - 5(no profiles)
         assert any("王五" in r for r in result["risks"])
 
     def test_tenure_expiry_not_penalized(self):
-        from src.routing.l1_analyze import L1Analyzer
+        from src.routing.diagnosis import DiagnosisEngine
         ctx = {
             "trades": [],
             "profiles": [],
@@ -204,7 +204,7 @@ class TestScoreExecutive:
                 {"person_name": "赵六", "reason": "任期届满"},
             ],
         }
-        result = L1Analyzer._score_executive(ctx)
+        result = DiagnosisEngine._score_executive(ctx)
         assert result["score"] >= 45  # only penalized for no profiles, not for tenure expiry
 
 

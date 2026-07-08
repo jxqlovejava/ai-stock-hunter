@@ -488,7 +488,7 @@ class CompetitorAnalyzer:
 
         # Metric-specific insights
         if report.winner_per_metric.get("最大回撤") != our_result.strategy_name:
-            report.insights.append("最大回撤控制非最优 → 建议收紧 L4 风控止损阈值或增强组合优化")
+            report.insights.append("最大回撤控制非最优 → 建议收紧风控止损阈值或增强组合优化")
         if report.winner_per_metric.get("夏普比率") != our_result.strategy_name:
             report.insights.append("夏普比率非最优 → 建议提升因子 Alpha 或优化仓位管理")
 

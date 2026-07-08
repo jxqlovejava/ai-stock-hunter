@@ -354,7 +354,7 @@ def _cmd_preference_setup(loader):
     print("\n🎯 投资者画像设置向导")
     print("=" * 50)
     print("花 3 分钟设置你的专属画像，分析引擎会根据你的实际情况")
-    print("调整 L2 评分权重、L3 仓位建议、L4 风控参数。")
+    print("调整裁决评分权重、仓位调度建议、风控参数。")
     print("(按回车跳过，保持当前值)\n")
 
     # ── 基本信息 ──
@@ -979,7 +979,7 @@ def cmd_alpha(symbol: str):
 
     if result.verdict:
         v = result.verdict
-        print(f"\n📋 L2 裁决: {v.score}/100 | 建议: {v.recommendation}")
+        print(f"\n📋 裁决: {v.score}/100 | 建议: {v.recommendation}")
         if v.alpha_rationale:
             print(f"   Alpha 理由: {v.alpha_rationale[:120]}...")
         if v.consensus_challenge:
@@ -2384,10 +2384,10 @@ def cmd_technical(args: list[str]):
                 "volume": kline[["volume"]].rename(columns={"volume": symbol}),
             }
 
-        from src.routing.l1_technical import L1TechnicalAnalyzer
+        from src.routing.technical import TechnicalAnalyzer
         from src.routing.entry_exit_engine import EntryExitEngine
 
-        analyzer = L1TechnicalAnalyzer()
+        analyzer = TechnicalAnalyzer()
         report = analyzer.analyze(symbol, name, panel)
 
         print(f"\n📊 技术综合评分: {report.composite_score:.0f}/100")

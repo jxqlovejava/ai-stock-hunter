@@ -6,8 +6,8 @@
   - n_trades >= 5: 使用 Half-Kelly (默认 kelly_fraction=0.5)
   - f* <= 0 (负期望): 返回 0，不建仓
 
-L4 联动:
-  凯利输出后仍经过 L4 单票上限/行业上限/回撤熔断等硬约束裁剪。
+风控联动:
+  凯利输出后仍经过 风控单票上限/行业上限/回撤熔断等硬约束裁剪。
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ class KellyPositionSizer:
 
         Args:
             symbol: 股票代码
-            score: L2 评分 (0-100)
+            score: 裁决评分 (0-100)
             macro_cap: 宏观仓位上限
             kelly_fraction: 凯利分数 (None=使用默认值, 0.3-1.0)
             position_limits: 用户偏好仓位约束 (含 single_stock_cap)
@@ -133,7 +133,7 @@ class KellyPositionSizer:
 
         f* = (b × p - q) / b
         target = fraction × f* (默认 half-Kelly)
-        target = min(target, L4 single_stock_cap)
+        target = min(target, single_stock_cap)  # 风控单票上限
         target = min(target, macro_cap)
         """
         b_d = D(kp.payoff_ratio)
@@ -147,7 +147,7 @@ class KellyPositionSizer:
         # 分数凯利
         target_d = fraction_d * raw_kelly_d
 
-        # L4 硬约束: 单票上限
+        # 风控硬约束: 单票上限
         single_cap = D(position_limits.get("single_stock_cap", 1.0)) if position_limits else D("1.0")
         target_d = min(target_d, single_cap)
 
@@ -192,7 +192,7 @@ class KellyPositionSizer:
         macro_cap_d = D(macro_cap)
         base_d = max(D("0"), (score_d - D("50")) / D("50") * macro_cap_d)
 
-        # L4 约束
+        # 风控约束
         if position_limits:
             base_d = min(base_d, D(position_limits.get("single_stock_cap", 1.0)))
 

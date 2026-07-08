@@ -265,7 +265,7 @@ class InfoPricingEstimate(BaseModel):
 
 
 class InformationSignal(BaseModel):
-    """标准化输出——I-Layer 对 L1/L2 的输出格式。"""
+    """标准化输出——I-Layer 对 诊断/裁决 的输出格式。"""
 
     topic_id: str
     topic_name: str
@@ -276,7 +276,7 @@ class InformationSignal(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="置信度")
     reasoning: str = ""  # 信号生成理由
     suggested_weight: float = Field(
-        default=0.1, ge=0.0, le=0.5, description="在 L2 评分中的建议权重"
+        default=0.1, ge=0.0, le=0.5, description="在裁决评分中的建议权重"
     )
     related_stocks: list[str] = Field(default_factory=list)
     expires_at: datetime = Field(

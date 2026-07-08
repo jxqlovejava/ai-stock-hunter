@@ -19,17 +19,17 @@ class GuardrailViolation:
     rule: str  # 违规规则名
     severity: str  # "FATAL" / "WARNING" / "INFO"
     message: str  # 人类可读描述
-    stage: str = ""  # 违规发生的管道阶段, 如 "L1" / "L2"
+    stage: str = ""  # 违规发生的管道阶段, 如 "diagnosis" / "verdict"
     context: dict = field(default_factory=dict)  # 额外上下文
 
 
 class GuardrailEnforcer:
     """管道护栏执行器。
 
-    在 L0-L4 每个阶段后调用，检查数据质量和安全规则。
+    在管道每个阶段后调用，检查数据质量和安全规则。
     """
 
-    MIN_CONFIDENCE = 0.6  # 最低信心度阈值 — 低于此值禁止进入 L3
+    MIN_CONFIDENCE = 0.6  # 最低信心度阈值 — 低于此值禁止进入仓位调度阶段
     MAX_UNSOURCED_RATIO = 0.3  # 分析报告中 [UNSOURCED] 数据点最大比例
 
     def enforce(
@@ -72,7 +72,7 @@ class GuardrailEnforcer:
             if confidence < self.MIN_CONFIDENCE:
                 violations.append(GuardrailViolation(
                     rule="G002_LOW_CONFIDENCE",
-                    severity="FATAL" if stage in ("L2", "L3") else "WARNING",
+                    severity="FATAL" if stage in ("verdict", "positioning") else "WARNING",
                     message=f"信心度 {confidence:.2f} 低于阈值 {self.MIN_CONFIDENCE}",
                     stage=stage,
                     context={"confidence": confidence, "threshold": self.MIN_CONFIDENCE},

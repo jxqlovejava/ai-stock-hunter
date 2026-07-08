@@ -69,17 +69,5 @@ __all__ = [
     "AnalysisContext",
     "TokenCounter",
     "create_context",
-    # -- 向后兼容 (deprecated) --
-    "L0Gate", "SecurityPass",
-    "L1Analyzer", "AnalysisReport",
-    "L2Judge",
-    "L3Trader",
-    "L4RiskOfficer",
 ]
 
-# 向后兼容模块级别名
-from .admission import L0Gate, SecurityPass  # noqa: E402, F811
-from .diagnosis import L1Analyzer, AnalysisReport  # noqa: E402, F811
-from .verdict import L2Judge  # noqa: E402, F811
-from .positioning import L3Trader  # noqa: E402, F811
-from .risk_control import L4RiskOfficer  # noqa: E402, F811

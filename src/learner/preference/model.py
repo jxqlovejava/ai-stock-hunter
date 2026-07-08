@@ -2,7 +2,7 @@
 """投资者偏好数据模型。
 
 与 `UserProfile`（回顾型能力评估）不同，`InvestorPreference` 是用户自我声明的、
-前向约束与偏好，用于注入路由管道以定制 L2 权重、L3 仓位、L4 风控及军规启用。
+前向约束与偏好，用于注入路由管道以定制裁决权重、仓位调度乘数、风控参数及军规启用。
 """
 
 from __future__ import annotations
@@ -257,13 +257,13 @@ class AlertPreferences:
 class TimeHorizonConfig:
     """时间维度配置 — 由 trading_style + holding_period 解析。
 
-    用于驱动 L1/L2/L3/L4 的参数差异化：
+    用于驱动 诊断/裁决/仓位调度/风控 的参数差异化：
       - 短线：技术因子为主，ATR 止损，高频盯盘
       - 长线：基本面因子为主，固定止损，低频或无盯盘
     """
     is_short_term: bool = False            # 是否为短线/波段模式
-    l2_technical_weight: float = 0.20      # L2 技术权重建议
-    l2_fundamental_weight: float = 0.40    # L2 基本面权重建议
+    l2_technical_weight: float = 0.20      # 裁决技术权重建议
+    l2_fundamental_weight: float = 0.40    # 裁决基本面权重建议
     stop_loss_pct: float = -0.02           # 单笔止损比例
     atr_stop_multiplier: float = 2.0       # ATR 止损倍率（短线用）
     time_stop_days: int = 60               # 时间止损天数（短线 3-7）
@@ -327,7 +327,7 @@ TIMING_PRESETS: dict[tuple[TradingStyle, HoldingPeriod], TimeHorizonConfig] = {
 
 @dataclass
 class ScoreWeights:
-    """L2 评分权重覆盖。None = 使用系统默认值。"""
+    """裁决评分权重覆盖。None = 使用系统默认值。"""
     fundamental: float | None = None
     technical: float | None = None
     macro: float | None = None

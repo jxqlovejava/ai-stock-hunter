@@ -86,7 +86,7 @@ class TestKellyPositionSizer:
         assert result.target_weight == pytest.approx(0.10)  # 0.25 × 0.4
 
     def test_hot_start_l4_cap(self, hot_tracker: TradeTracker):
-        """凯利仓位被 L4 单票上限裁剪。"""
+        """凯利仓位被风控单票上限裁剪。"""
         sizer = KellyPositionSizer(hot_tracker, default_kelly_fraction=1.0)
         result = sizer.calc(
             "600519", score=70, macro_cap=0.80,
@@ -127,7 +127,7 @@ class TestKellyPositionSizer:
         assert result.n_trades == 0
 
     def test_cold_start_l4_cap(self, cold_tracker: TradeTracker):
-        """冷启动线性回退也被 L4 裁剪。"""
+        """冷启动线性回退也被风控裁剪。"""
         sizer = KellyPositionSizer(cold_tracker, default_kelly_fraction=0.5)
         result = sizer.calc(
             "000001", score=80, macro_cap=0.80,

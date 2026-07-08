@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L0 保安 — 硬过滤层（纯规则，0% AI）。
+"""准入检查 — 硬过滤层（纯规则，0% AI）。
 
 过滤规则:
   1. ST/*ST → REJECT
@@ -24,7 +24,7 @@ class GateStatus(str, Enum):
 
 @dataclass
 class AdmissionResult:
-    """准入检查结果（原 AdmissionResult）。"""
+    """准入检查结果。"""
     symbol: str
     name: str
     status: GateStatus
@@ -32,7 +32,7 @@ class AdmissionResult:
 
 
 class AdmissionCheck:
-    """准入检查（原 L0 Gate）: 股票资质过滤。
+    """准入检查: 股票资质过滤。
 
     纯规则引擎，不依赖 AI。在军规之后、多维诊断之前运行。
     """
@@ -94,7 +94,3 @@ class AdmissionCheck:
                 accepted.append(c)
         return accepted, rejected
 
-
-# -- 向后兼容别名 (deprecated) --
-L0Gate = AdmissionCheck
-SecurityPass = AdmissionResult

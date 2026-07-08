@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""信号适配器 — 将 L3 TradeSignal 转换为 mx-moni 可执行的交易指令。
+"""信号适配器 — 将 TradeSignal 转换为 mx-moni 可执行的交易指令。
 
 处理:
   - 仓位计算 → 模拟资金分配
@@ -32,7 +32,7 @@ class MoniOrder:
 
 
 class SignalAdapter:
-    """L3 TradeSignal → MoniOrder 转换器。"""
+    """TradeSignal → MoniOrder 转换器。"""
 
     # 默认配置
     DEFAULT_CAPITAL = 100_000.0  # 初始模拟资金（元）
@@ -61,7 +61,7 @@ class SignalAdapter:
         """将 TradeSignal 转换为模拟交易订单。
 
         Args:
-            signal: L3 产出的交易信号
+            signal: 仓位调度产出的交易信号
             current_price: 当前市价（用于计算数量）
 
         Returns:

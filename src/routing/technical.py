@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L1 技术分析器 — 短线/波段专用 6 维技术评分。
+"""技术分析器 — 短线/波段专用 6 维技术评分。
 
 当 trading_style ∈ {SWING, SHORT_TERM} 时，由 Orchestrator 注入运行。
 评分维度:
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TechnicalReport:
-    """L1 技术分析报告。"""
+    """技术分析报告。"""
     symbol: str
     name: str = ""
     # 6 维子评分 (0-100)
@@ -85,14 +85,14 @@ DEFAULT_WEIGHTS = {
 # ---------------------------------------------------------------------------
 
 
-class L1TechnicalAnalyzer:
+class TechnicalAnalyzer:
     """短线技术分析器。
 
     消费 factor registry 中的 technical category 因子，
     聚合为 6 维评分 + 信号清单。
 
     用法:
-        analyzer = L1TechnicalAnalyzer(registry)
+        analyzer = TechnicalAnalyzer(registry)
         report = analyzer.analyze("000001", "平安银行", panel)
     """
 
@@ -347,7 +347,7 @@ class L1TechnicalAnalyzer:
         return [
             make_citation(
                 provider="factor_registry",
-                field="l1_technical",
+                field="technical",
                 data_type="technical_analysis",
                 confidence=0.75,
             ),

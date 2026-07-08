@@ -61,7 +61,7 @@ class TokenCounter:
         """记录当前计数的快照。
 
         Args:
-            label: 快照标签，如 "L0" / "L1" / "L2"
+            label: 快照标签，如 "admission" / "diagnosis" / "verdict"
 
         Returns:
             快照时的 token 数

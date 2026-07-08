@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Multi-Agent Quality Checker — 借鉴 CogAlpha 论文的多维度质量审查。
 
-将 CogAlpha 的「多 Agent 质量审查器」适配到本项目的 L1 分析报告：
+将 CogAlpha 的「多 Agent 质量审查器」适配到本项目的 诊断报告：
 
   1. DataFreshness    — 数据新鲜度：source_citations 是否过期
   2. Consistency      — 内部一致性：子评分是否逻辑自洽
@@ -34,7 +34,7 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-# L1 分析报告类型引用（延迟导入避免循环）
+# 诊断报告类型引用（延迟导入避免循环）
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.routing.diagnosis import DiagnosisReport as AnalysisReport  # 向后兼容别名
@@ -75,10 +75,10 @@ class MultiAgentQualityChecker:
     }
 
     def check(self, report: "AnalysisReport") -> QualityReport:
-        """对 L1 分析报告执行多维度质量审查。
+        """对 诊断报告执行多维度质量审查。
 
         Args:
-            report: L1 分析师输出的 AnalysisReport
+            report: 诊断引擎输出的 AnalysisReport
 
         Returns:
             QualityReport with aggregated verdicts

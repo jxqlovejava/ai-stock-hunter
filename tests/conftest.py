@@ -62,7 +62,7 @@ def sample_macro() -> dict:
 
 @pytest.fixture
 def sample_analysis_report() -> object:
-    """模拟 L1 分析报告。"""
+    """模拟诊断报告。"""
     try:
         from src.routing.l1_analyze import AnalysisReport
         return AnalysisReport(
@@ -82,7 +82,7 @@ def sample_analysis_report() -> object:
 
 @pytest.fixture
 def sample_verdict() -> object:
-    """模拟 L2 裁决。"""
+    """模拟裁决。"""
     try:
         from src.routing.l2_judge import Verdict
         return Verdict(

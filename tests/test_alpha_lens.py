@@ -582,19 +582,19 @@ class TestPipelineIntegration:
     """测试 Alpha Lens 在全链路中的集成。"""
 
     def test_l1_report_with_alpha(self):
-        """L1 AnalysisReport 携带 AlphaProfile。"""
-        from src.routing.l1_analyze import L1Analyzer
+        """诊断报告 携带 AlphaProfile。"""
+        from src.routing.diagnosis import DiagnosisEngine
         from src.alpha.schema import AlphaProfile
-        l1 = L1Analyzer()
+        l1 = DiagnosisEngine()
         alpha = AlphaProfile(alpha_score=65)
         report = l1.analyze("600519", "茅台", alpha_profile=alpha)
         assert report.alpha_profile is not None
         assert report.alpha_profile.alpha_score == 65
 
     def test_l2_verdict_with_alpha_multiplier(self):
-        """L2 Verdict 包含 Alpha 乘数和理由。"""
-        from src.routing.l1_analyze import L1Analyzer, AnalysisReport
-        from src.routing.l2_judge import L2Judge
+        """裁决 包含 Alpha 乘数和理由。"""
+        from src.routing.diagnosis import DiagnosisEngine, DiagnosisReport
+        from src.routing.verdict import VerdictEngine
         from src.alpha.schema import (
             AlphaProfile, AlphaSource, SourceTier,
             ConsensusGap, NarrativeStage, NarrativeLifecycle,
@@ -617,7 +617,7 @@ class TestPipelineIntegration:
             alpha_rationale="信息来源一手性强；市场共识可能存在偏差；叙事处于逻辑成型期",
         )
 
-        l1 = L1Analyzer()
+        l1 = DiagnosisEngine()
         report = l1.analyze(
             "600519", "茅台",
             quote={"pe_percentile": 30},
@@ -625,7 +625,7 @@ class TestPipelineIntegration:
             alpha_profile=high_alpha,
         )
 
-        l2 = L2Judge()
+        l2 = VerdictEngine()
         verdict = l2.judge(report)
 
         assert verdict.alpha_multiplier > 1.0  # 高 Alpha → 乘数 > 1
@@ -633,8 +633,8 @@ class TestPipelineIntegration:
 
     def test_l2_verdict_with_low_alpha(self):
         """低 Alpha → 乘数 < 1。"""
-        from src.routing.l1_analyze import L1Analyzer
-        from src.routing.l2_judge import L2Judge
+        from src.routing.diagnosis import DiagnosisEngine
+        from src.routing.verdict import VerdictEngine
         from src.alpha.schema import (
             AlphaProfile, AlphaSource, SourceTier,
             NarrativeStage, NarrativeLifecycle,
@@ -646,7 +646,7 @@ class TestPipelineIntegration:
             alpha_score=25,
         )
 
-        l1 = L1Analyzer()
+        l1 = DiagnosisEngine()
         report = l1.analyze(
             "000001", "平安银行",
             quote={"pe_percentile": 50},
@@ -654,16 +654,16 @@ class TestPipelineIntegration:
             alpha_profile=low_alpha,
         )
 
-        l2 = L2Judge()
+        l2 = VerdictEngine()
         verdict = l2.judge(report)
 
         assert verdict.alpha_multiplier < 1.0  # 低 Alpha → 乘数 < 1
 
     def test_l3_signal_alpha_timing(self):
-        """L3 TradeSignal 包含 Alpha 时序信息。"""
-        from src.routing.l1_analyze import L1Analyzer
-        from src.routing.l2_judge import L2Judge
-        from src.routing.l3_trade import L3Trader
+        """仓位调度信号 包含 Alpha 时序信息。"""
+        from src.routing.diagnosis import DiagnosisEngine
+        from src.routing.verdict import VerdictEngine
+        from src.routing.positioning import PositioningEngine
         from src.alpha.schema import (
             AlphaProfile, AlphaSource, SourceTier,
             ConsensusGap, NarrativeStage, NarrativeLifecycle,
@@ -684,7 +684,7 @@ class TestPipelineIntegration:
             alpha_rationale="信息来源一手性强；市场共识可能存在偏差；叙事处于逻辑成型期（最佳Alpha窗口）",
         )
 
-        l1 = L1Analyzer()
+        l1 = DiagnosisEngine()
         report = l1.analyze(
             "600519", "茅台",
             quote={"pe_percentile": 30},
@@ -692,20 +692,20 @@ class TestPipelineIntegration:
             alpha_profile=alpha,
         )
 
-        l2 = L2Judge()
+        l2 = VerdictEngine()
         verdict = l2.judge(report)
 
-        l3 = L3Trader()
+        l3 = PositioningEngine()
         signal = l3.generate_signal(verdict)
 
         assert len(signal.alpha_timing) > 0
 
     def test_l4_alpha_decay_check(self):
-        """L4 风控检测 Alpha 衰减。"""
+        """风控检测 Alpha 衰减。"""
         from src.routing.l3_trade import TradeSignal
-        from src.routing.l4_risk import L4RiskOfficer
+        from src.routing.risk_control import RiskControlEngine
 
-        l4 = L4RiskOfficer()
+        l4 = RiskControlEngine()
         signal = TradeSignal(
             symbol="600519",
             action="HOLD",

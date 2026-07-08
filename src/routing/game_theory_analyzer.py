@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """博弈论分析层 — 市场主导玩家 / 拥挤度 / 杠杆 / 席位 / 价格冲击。
 
-Phase: 作为 Orchestrator 中 L1 → L2 之间的必经阶段。
+Phase: 作为 Orchestrator 中诊断 → 裁决之间的必经阶段。
 """
 
 from __future__ import annotations

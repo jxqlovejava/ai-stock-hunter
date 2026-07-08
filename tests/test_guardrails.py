@@ -96,25 +96,25 @@ class TestGuardrailEnforcer:
         """空引用列表应产生 WARNING。"""
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
-        violations = enforcer.enforce(stage="L1", source_citations=[])
+        violations = enforcer.enforce(stage="diagnosis", source_citations=[])
         assert len(violations) > 0
         assert any(v.rule == "G001_NO_SOURCES" for v in violations)
 
     def test_low_confidence_fatal(self):
-        """低置信度在 L2 阶段应是 FATAL。"""
+        """低置信度在裁决阶段应是 FATAL。"""
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
-        violations = enforcer.enforce(stage="L2", confidence=0.5)
+        violations = enforcer.enforce(stage="verdict", confidence=0.5)
         assert any(
             v.rule == "G002_LOW_CONFIDENCE" and v.severity == "FATAL"
             for v in violations
         )
 
     def test_low_confidence_warning_in_l1(self):
-        """低置信度在 L1 阶段应只是 WARNING。"""
+        """低置信度在诊断阶段应只是 WARNING。"""
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
-        violations = enforcer.enforce(stage="L1", confidence=0.5)
+        violations = enforcer.enforce(stage="diagnosis", confidence=0.5)
         assert any(
             v.rule == "G002_LOW_CONFIDENCE" and v.severity == "WARNING"
             for v in violations
@@ -124,14 +124,14 @@ class TestGuardrailEnforcer:
         """中等置信度应产生 INFO。"""
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
-        violations = enforcer.enforce(stage="L1", confidence=0.75)
+        violations = enforcer.enforce(stage="diagnosis", confidence=0.75)
         assert any(v.rule == "G003_MODERATE_CONFIDENCE" for v in violations)
 
     def test_high_confidence_no_warning(self):
         """高置信度 (≥0.8) 不应触发任何置信度违规。"""
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
-        violations = enforcer.enforce(stage="L1", confidence=0.90)
+        violations = enforcer.enforce(stage="diagnosis", confidence=0.90)
         assert not any(
             v.rule in ("G002_LOW_CONFIDENCE", "G003_MODERATE_CONFIDENCE")
             for v in violations
@@ -148,7 +148,7 @@ class TestGuardrailEnforcer:
             fetch_timestamp=datetime.now() - timedelta(hours=3),
             data_freshness=timedelta(hours=1),
         )
-        violations = enforcer.enforce(stage="L1", source_citations=[stale_cit])
+        violations = enforcer.enforce(stage="diagnosis", source_citations=[stale_cit])
         assert any(v.rule == "G004_STALE_DATA" for v in violations)
 
     def test_fresh_data_no_stale_warning(self):
@@ -162,7 +162,7 @@ class TestGuardrailEnforcer:
             data_freshness=timedelta(hours=1),
         )
         violations = enforcer.enforce(
-            stage="L1", source_citations=[fresh_cit],
+            stage="diagnosis", source_citations=[fresh_cit],
             data_freshness_check=True,
         )
         assert not any(v.rule == "G004_STALE_DATA" for v in violations)
@@ -211,7 +211,7 @@ class TestGuardrailEnforcer:
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
         violations = enforcer.enforce(
-            stage="L1",
+            stage="diagnosis",
             has_unsourced=True,
             unsourced_count=1,
             total_data_points=10,
@@ -223,7 +223,7 @@ class TestGuardrailEnforcer:
         from src.routing.guardrails import GuardrailEnforcer
         enforcer = GuardrailEnforcer()
         violations = enforcer.enforce(
-            stage="L1",
+            stage="diagnosis",
             has_unsourced=True,
             unsourced_count=5,
             total_data_points=10,  # 50% > 30% threshold

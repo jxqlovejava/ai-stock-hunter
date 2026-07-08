@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""模拟交易桥接 — 连接 L3 信号与 mx-moni 模拟账户。
+"""模拟交易桥接 — 连接仓位调度信号与 mx-moni 模拟账户。
 
 职责:
-  1. 接收 L3 TradeSignal
+  1. 接收 TradeSignal
   2. 通过 SignalAdapter 转换为 MoniOrder
   3. 调用 mx-moni API 执行模拟交易
   4. 跟踪订单状态、持仓盈亏
@@ -46,7 +46,7 @@ class PaperTradingSession:
 
 
 class PaperTradingBridge:
-    """L3 → mx-moni 桥接器。
+    """仓位调度 → mx-moni 桥接器。
 
     用法:
         bridge = PaperTradingBridge()
@@ -128,7 +128,7 @@ class PaperTradingBridge:
         """执行单个 TradeSignal → 模拟交易。
 
         Args:
-            signal: L3 产出的交易信号
+            signal: 仓位调度产出的交易信号
             current_price: 当前市价
             dry_run: 仅转换不执行（用于回测）
 

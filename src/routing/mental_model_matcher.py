@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Munger 232 思维模型匹配器。
 
-根据 L1 报告/组合/情绪等上下文，从 232 个模型中挑选最相关的 3-5 个。
+根据诊断报告/组合/情绪等上下文，从 232 个模型中挑选最相关的 3-5 个。
 匹配规则完全确定性，不调用 LLM。
 """
 
@@ -235,7 +235,7 @@ class MentalModelMatcher:
     def _has_red_flags(report: Optional[object]) -> bool:
         if report is None:
             return False
-        # 博弈论风险或 L1 上游风险均视为红旗
+        # 博弈论风险或诊断上游风险均视为红旗
         gt = getattr(report, "game_theory_profile", None)
         if gt and getattr(gt, "risks", None):
             return True

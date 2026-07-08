@@ -199,6 +199,71 @@ class NarrativeStage:
 
 
 # ---------------------------------------------------------------------------
+# Shiso Leaf — 供应链深度 Alpha（紫苏叶理论）
+# ---------------------------------------------------------------------------
+
+
+class ShisoLeafTier(Enum):
+    """紫苏叶层级：标的是金枪鱼(终端显眼)还是紫苏叶(上游隐蔽关键)。
+
+    紫苏叶理论: 顶级寿司店里食客都在抢金枪鱼大腹(GPU/云计算/终端龙头)，
+    但真正让整家店停摆的不是最贵的鱼肉，而是紫苏叶——离终端 2-3 层、
+    被忽视但不可替代的上游环节。没有它，寿司根本卷不起来。
+    """
+    TUNA = "tuna"              # 金枪鱼: 终端显眼，已被充分定价
+    SHISO_LEAF = "shiso_leaf"  # 紫苏叶: 上游隐蔽关键，被忽视
+    COMMODITY = "commodity"    # 普通配料: 可替代、无差异化
+
+
+@dataclass
+class SupplyChainDepth:
+    """供应链深度 Alpha — 紫苏叶理论的量化表达。
+
+    回答: 「这个标的是金枪鱼还是紫苏叶？」
+          「它离终端需求有多远？」
+          「没有它，下游会停摆吗？」
+
+    核心判定:
+      - 离终端 ≥ 2 层 + 不可替代性 ≥ 60 + 瓶颈型 → 紫苏叶
+      - 在终端或系统层 → 金枪鱼（已被充分关注）
+      - 无瓶颈 + 可替代 → 普通配料
+    """
+    shiso_tier: ShisoLeafTier = ShisoLeafTier.COMMODITY
+    depth_from_end_demand: int = 0             # 离终端需求层数 (≥2 才算紫苏叶)
+    irreplaceability_score: float = 50.0       # 0-100, 不可替代性评分
+    supplier_concentration: int = 10            # 全球/国内主要供应商数量 (≤3 → 极高不可替代性)
+    switching_cost: str = "medium"             # 下游切换成本: low/medium/high
+    cost_share_of_downstream: float = 0.0      # 占下游产品总成本比例 (低但必需 → 最紫苏叶)
+    chain_layer: str = ""                       # 所在产业链层级描述
+    depth_score: float = 50.0                  # 0-100, 综合供应链深度 Alpha 评分
+    bottleneck_type: str = ""                   # OWNER / ADJACENT / DERIVATIVE / NONE
+    bottleneck_score: float = 0.0              # 0-100, 瓶颈约束评分
+    upstream_tickers: list[str] = field(default_factory=list)  # 更上游的 A 股标的
+    rationale: str = ""                         # 判定理由
+    confidence: float = 0.5
+
+    @property
+    def is_shiso_leaf(self) -> bool:
+        """是否为紫苏叶标的。"""
+        return (
+            self.shiro_tier == ShisoLeafTier.SHISO_LEAF
+            or (
+                self.depth_from_end_demand >= 2
+                and self.irreplaceability_score >= 60
+                and self.bottleneck_type in ("OWNER", "ADJACENT")
+            )
+        )
+
+    @property
+    def is_tuna(self) -> bool:
+        """是否为金枪鱼标的（终端显眼，已被充分定价）。"""
+        return (
+            self.shiro_tier == ShisoLeafTier.TUNA
+            or self.depth_from_end_demand <= 1
+        )
+
+
+# ---------------------------------------------------------------------------
 # Alpha Profile — 汇总 DTO
 # ---------------------------------------------------------------------------
 
@@ -217,12 +282,13 @@ class AlphaProfile:
     """Alpha 视角综合分析结果。
 
     汇总 AlphaSource、ConsensusGap、NarrativeStage 三个维度的结论，
-    作为 AnalysisReport.alpha_profile 注入 L1 分析报告。
+    作为 DiagnosisReport.alpha_profile 注入诊断报告。
     """
-    # 三维 Alpha 评估
+    # 四维 Alpha 评估
     source: AlphaSource = field(default_factory=AlphaSource)
     consensus_gap: ConsensusGap = field(default_factory=ConsensusGap)
     narrative: NarrativeStage = field(default_factory=NarrativeStage)
+    supply_chain: SupplyChainDepth = field(default_factory=SupplyChainDepth)
 
     # 综合评分
     alpha_score: float = 50.0                # 综合 Alpha 评分 0-100
@@ -242,9 +308,13 @@ class AlphaProfile:
 
     @property
     def has_alpha(self) -> bool:
-        """是否存在可操作的 Alpha。"""
+        """是否存在可操作的 Alpha。
+
+        紫苏叶标的可降低 Alpha 分数门槛（因为市场尚未充分发现）。
+        """
+        min_score = 55 if self.supply_chain.is_shiso_leaf else 60
         return (
-            self.alpha_score >= 60
+            self.alpha_score >= min_score
             and self.alpha_confidence >= 0.6
             and self.decay_status in (AlphaDecayStatus.FRESH, AlphaDecayStatus.AGING)
         )
@@ -259,8 +329,9 @@ class AlphaProfile:
         """Alpha 视角一句话总结。"""
         if not self.has_alpha:
             return "无显著 Alpha — 信息已定价或理解无差异"
+        shiso_tag = " [🍃紫苏叶]" if self.supply_chain.is_shiso_leaf else ""
         return (
-            f"Alpha {self.alpha_score:.0f}/100: "
+            f"Alpha {self.alpha_score:.0f}/100{shiso_tag}: "
             f"{self.key_differentiator} "
             f"[叙事: {self.narrative.stage.value}] "
             f"[衰减: {self.decay_status.value}]"

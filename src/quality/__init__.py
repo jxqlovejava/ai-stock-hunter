@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """质量审查模块 — 借鉴 CogAlpha 论文的多 Agent 质量审查器。
 
-Multi-Agent Quality Checker 对 L1 分析报告执行 5 维度审查:
+Multi-Agent Quality Checker 对 诊断报告执行 5 维度审查:
   1. DataFreshness    — 数据新鲜度
   2. Consistency      — 内部一致性
   3. Leakage          — 未来信息泄露

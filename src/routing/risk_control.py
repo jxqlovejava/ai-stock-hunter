@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""风控执行（原 L4 Risk）— 硬约束执行（不可覆盖）。Phase 4: Alpha 衰减风控。"""
+"""风控执行 — 硬约束执行（不可覆盖）。Phase 4: Alpha 衰减风控。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class RiskCheck:
 
 
 class RiskControlEngine:
-    """风控执行引擎（原 L4RiskOfficer）。
+    """风控执行引擎。
 
     硬约束（不可覆盖）:
       - 单票最大仓位: 20%
@@ -124,7 +124,7 @@ class RiskControlEngine:
         """风控审查。返回调整后的仓位。
 
         Args:
-            signal: L3 交易信号
+            signal: 交易信号
             portfolio: 当前组合状态 {sector_pct, drawdown_pct, position_loss_pct}
             market: 市场状态 {hs300_change_pct}
             position_limits: 用户偏好风控约束，覆盖类级默认值。
@@ -307,6 +307,3 @@ class RiskControlEngine:
 
         return violations
 
-
-# -- 向后兼容别名 (deprecated) --
-L4RiskOfficer = RiskControlEngine

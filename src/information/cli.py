@@ -181,7 +181,7 @@ def _handle_topic(args: argparse.Namespace, mgr: TopicManager) -> None:
         print("   1. orchestrator 调用 Skill(last30days-cn) 采集社交媒体")
         print("   2. orchestrator 调用 AKShare 采集财经新闻")
         print("   3. 结果传入 NLP 管道做情感分析")
-        print("   4. 生成 TopicSnapshot → 消费方 L1/L2")
+        print("   4. 生成 TopicSnapshot → 消费方 诊断/裁决")
 
 
 def _handle_lifecycle(args: argparse.Namespace, mgr: TopicManager) -> None:

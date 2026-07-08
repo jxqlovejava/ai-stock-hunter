@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """质量审查 DTO — Multi-Agent Quality Checker 输出。
 
-借鉴 CogAlpha 论文设计，适配本项目的 L1 分析报告审查。
+借鉴 CogAlpha 论文设计，适配本项目的 诊断报告审查。
 """
 
 from __future__ import annotations

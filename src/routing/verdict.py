@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""综合裁决（原 L2 Judge）— 加权评分 + 置信度 + 反共识检查 + 主题生命周期调整。"""
+"""综合裁决 — 加权评分 + 置信度 + 反共识检查 + 主题生命周期调整。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Verdict:
     falsifiable: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     topic_adjustments: dict = field(default_factory=dict)  # Phase 3: topic lifecycle adjustments
-    source_citations: list = field(default_factory=list)  # Phase 1: 继承自 L1 的引用
+    source_citations: list = field(default_factory=list)  # Phase 1: 继承自诊断阶段的引用
     # Phase 4: Alpha Lens 输出
     alpha_rationale: str = ""              # 为什么这个判断有 Alpha
     consensus_challenge: str = ""          # 市场可能错在哪
@@ -35,7 +35,7 @@ class Verdict:
 
 
 class VerdictEngine:
-    """综合裁决引擎（原 L2Judge）。
+    """综合裁决引擎。
 
     评分权重:
       - 基本面 (诊断 价值 + 质量): 30%
@@ -74,7 +74,7 @@ class VerdictEngine:
         """综合评分，生成裁决。
 
         Args:
-            report: L1 分析报告
+            report: 诊断报告
             sector_score: 行业景气评分 (0-100)
             topic_adj: 主题生命周期权重调整 {topic_id: bonus}, bonus in [-0.2, +0.1]
             weights_override: 自定义权重 dict，覆盖 class-level WEIGHTS。
@@ -216,7 +216,7 @@ class VerdictEngine:
             falsifiable=falsifiable,
             risks=risks,
             topic_adjustments=topic_info,
-            source_citations=report.source_citations,  # Phase 1: 继承 L1 的引用
+            source_citations=report.source_citations,  # Phase 1: 继承诊断阶段的引用
             alpha_rationale=alpha_rationale,            # Phase 4: Alpha 判定理由
             consensus_challenge=consensus_challenge,    # Phase 4: 挑战共识
             alpha_multiplier=round(alpha_mult, 2),      # Phase 4: Alpha 乘数
@@ -328,6 +328,3 @@ class VerdictEngine:
         }
         return mapping.get(level, 50.0)
 
-
-# -- 向后兼容别名 (deprecated) --
-L2Judge = VerdictEngine

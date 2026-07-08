@@ -122,7 +122,7 @@ class InvestorPreferenceLoader:
 ## 能力圈
 {coc_lines}
 
-## L2 评分权重
+## 裁决评分权重
 {chr(10).join(weight_lines)}
 
 ## 军规过滤

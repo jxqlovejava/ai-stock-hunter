@@ -142,7 +142,7 @@ class TopicManager:
 
     # ── Phase 3: 生命周期 → 权重调整 ──────────────────────────────────────
 
-    # 生命周期阶段 → L2 行业权重调整值
+    # 生命周期阶段 → 裁决行业权重调整值
     LIFECYCLE_WEIGHT_ADJ: dict[LifecycleStage, float] = {
         LifecycleStage.EMERGING: +0.10,
         LifecycleStage.SPREADING: 0.0,

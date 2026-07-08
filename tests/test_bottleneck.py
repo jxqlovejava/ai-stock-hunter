@@ -91,8 +91,8 @@ class TestSupplyChain:
 
 class TestL1BottleneckIntegration:
     def test_analyzer_includes_bottleneck(self):
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         report = analyzer.analyze(
             "300308", "中际旭创",
             {"pe_percentile": 40, "northbound": 1},
@@ -103,8 +103,8 @@ class TestL1BottleneckIntegration:
         assert report.bottleneck_analysis.bottleneck_score > 50
 
     def test_analyzer_no_bottleneck_for_unknown(self):
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         report = analyzer.analyze(
             "600519", "贵州茅台",
             {"pe_percentile": 40, "northbound": 1},

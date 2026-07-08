@@ -7,7 +7,7 @@
 
 提供的增强能力:
   - get_quote: 实时行情（queryIndicator 解析）
-  - diagnosisStock: 个股诊断报告（L1 分析师 AI 增强）
+  - diagnosisStock: 个股诊断报告（诊断引擎 AI 增强）
   - marketInsight: 市场洞察（宏观事件解读）
   - queryIndicator: 金融指标查询（补充国信/AKShare 无法覆盖的指标）
 """

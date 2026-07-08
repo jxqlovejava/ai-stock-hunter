@@ -1195,7 +1195,7 @@ class Orchestrator:
         analysis_result: dict,
         portfolio: dict | None = None,
     ) -> dict:
-        """Signal Writer: L3→L4→护栏审查 (唯一写权限)。
+        """Signal Writer: 仓位调度→风控→护栏审查 (唯一写权限)。
 
         映射到 signal-writer Agent 的职责边界。
         """
@@ -1203,7 +1203,7 @@ class Orchestrator:
         if verdict is None:
             return {"blocked": True, "blocked_by": ["无裁决结果"]}
 
-        # L3 (with investor preference limits)
+        # 仓位调度 (with investor preference limits)
         position_limits = None
         risk_mult = 1.0
         if investor is not None:
@@ -1228,7 +1228,7 @@ class Orchestrator:
             confidence=signal.confidence,
         )
 
-        # L4 (with investor preference limits)
+        # 风控 (with investor preference limits)
         risk = self.risk_ctrl.check(signal, portfolio, position_limits=position_limits)
         l4_violations = self.enforcer.enforce(
             stage="risk_control",
@@ -1427,7 +1427,7 @@ class Orchestrator:
         macro: Optional[dict] = None,
         portfolio: Optional[dict] = None,
     ) -> OrchestratorResult:
-        """并行版分析管道：独立数据获取/分析器并发，L2/L3/L4 顺序执行。"""
+        """并行版分析管道：独立数据获取/分析器并发，裁决/仓位调度/风控 顺序执行。"""
         result = OrchestratorResult(symbol=symbol, name=name)
 
         # ---- Phase 1: 并行独立数据获取 ----
@@ -1490,7 +1490,7 @@ class Orchestrator:
                     logger.debug("Parallel analysis %s failed: %s", key, e)
                     analyses[key] = None
 
-        # ---- Phase 3: 顺序 L1→质量→L2→L3→L4 ----
+        # ---- Phase 3: 顺序 诊断→质量→裁决→仓位调度→风控 ----
         # 为简化，复用 run() 的剩余逻辑；这里仅演示边界划分
         enriched_macro = macro or {}
         if macro_regime is not None:

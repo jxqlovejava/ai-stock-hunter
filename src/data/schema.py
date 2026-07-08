@@ -112,7 +112,7 @@ class Quote(BaseModel):
     pb: Optional[float] = Field(default=None, description="市净率")
     market_cap: Optional[float] = Field(default=None, description="总市值（元）")
     dividend_yield: Optional[float] = Field(default=None, description="股息率 (%)")
-    # 军规/L0 门禁字段
+    # 军规/准入门禁字段
     is_st: Optional[bool] = Field(default=None, description="是否为 ST/*ST")
     suspended: Optional[bool] = Field(default=None, description="是否停牌")
     listing_date: Optional[datetime] = Field(default=None, description="上市日期")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Confidence Gate — 在信号进入 L3 交易阶段前校验数据可信度。"""
+"""Confidence Gate — 在信号进入 仓位调度阶段前校验数据可信度。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class ConfidenceTooLowError(Exception):
 
 
 class ConfidenceGate:
-    """校验 citation 是否满足进入 L3 的最低要求。"""
+    """校验 citation 是否满足进入仓位调度的最低要求。"""
 
     MIN_CONFIDENCE = 0.6
 

@@ -112,13 +112,13 @@ class VerdictEnforcer:
         quote: Optional[dict] = None,
         data_points: int = 0,
     ) -> EnforcedVerdict:
-        """对 L1/L2 分析结果执行强制结论检查.
+        """对诊断/裁决结果执行强制结论检查.
 
         Args:
             symbol: 股票代码
             name: 股票名称
-            l1_report: L1 分析报告
-            l2_verdict: L2 裁决结果
+            l1_report: 诊断报告
+            l2_verdict: 裁决结果
             quote: 行情数据
             data_points: 独立数据点数量
         """
@@ -135,7 +135,7 @@ class VerdictEnforcer:
             verdict.one_line_conclusion = f"{name}: 数据不足，放弃判断"
             return verdict
 
-        # ---- Step 2: Extract confidence from L2 ----
+        # ---- Step 2: Extract confidence from verdict ----
         if l2_verdict is not None:
             verdict.confidence = getattr(l2_verdict, "confidence", 0.5) or 0.5
         elif l1_report is not None:
@@ -176,7 +176,7 @@ class VerdictEnforcer:
         """构建并验证 5 条核心逻辑."""
         mt = MirrorTest()
 
-        # R1: 最核心投资逻辑 (从 L1 多头案例 + L2 最高分维度提取)
+        # R1: 最核心投资逻辑 (从诊断多头案例 + 裁决最高分维度提取)
         scores = {}
         if l1_report:
             scores["宏观"] = getattr(l1_report, "macro_score", 50) or 50
@@ -191,15 +191,15 @@ class VerdictEnforcer:
         # R2: 第二逻辑
         if l1_report:
             bull = getattr(l1_report, "bull_case", "") or ""
-            mt.reason_2 = bull[:120] if bull else "L1 分析未生成多头案例"
+            mt.reason_2 = bull[:120] if bull else "诊断分析未生成多头案例"
 
-        # R3: 第三逻辑 (从 L2 裁决提取)
+        # R3: 第三逻辑 (从裁决提取)
         if l2_verdict:
             composite = getattr(l2_verdict, "composite_score", None)
             if composite:
                 mt.reason_3 = f"综合评分 {composite:.0f}/100"
             else:
-                mt.reason_3 = "L2 裁决综合评分可用"
+                mt.reason_3 = "裁决综合评分可用"
 
         # R4: 风险认知
         if l1_report:
@@ -217,7 +217,7 @@ class VerdictEnforcer:
             gap = getattr(l2_verdict, "consensus_challenge", "") or ""
             mt.reason_5 = gap[:120] if gap else "时机判断: 当前市场环境适合入场"
         else:
-            mt.reason_5 = "基于 L1 多维分析综合判断"
+            mt.reason_5 = "基于多维诊断综合判断"
 
         # Validate
         filled = sum(1 for r in [mt.reason_1, mt.reason_2, mt.reason_3, mt.reason_4, mt.reason_5] if r)
@@ -392,7 +392,7 @@ class VerdictEnforcer:
         if verdict.confidence < cls.MIN_CONFIDENCE_FOR_PASS:
             return VerdictLevel.GREY_ZONE
 
-        # From L2 composite score
+        # From verdict composite score
         if l2:
             composite = getattr(l2, "composite_score", 50) or 50
             if composite >= 65:

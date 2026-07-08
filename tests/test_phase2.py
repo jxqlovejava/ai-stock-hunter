@@ -43,72 +43,72 @@ class TestDoctrine:
         assert not result.passed
 
 
-# ── L0 Gate ──
+# ── 准入检查 ──
 
-class TestL0Gate:
+class TestAdmission:
     def test_st_rejected(self):
-        from src.routing.l0_gate import L0Gate
-        gate = L0Gate()
+        from src.routing.admission import AdmissionCheck
+        gate = AdmissionCheck()
         result = gate.check("000000", "*ST 华泽")
         assert result.status.value == "REJECTED"
 
     def test_normal_accepted(self):
-        from src.routing.l0_gate import L0Gate
-        gate = L0Gate()
+        from src.routing.admission import AdmissionCheck
+        gate = AdmissionCheck()
         result = gate.check("600519", "贵州茅台")
         assert result.status.value == "ACCEPTED"
 
     def test_ipo_rejected(self):
-        from src.routing.l0_gate import L0Gate
-        gate = L0Gate()
+        from src.routing.admission import AdmissionCheck
+        gate = AdmissionCheck()
         result = gate.check("688981", "中芯国际", {"listing_days": 30})
         assert result.status.value == "REJECTED"
 
 
-# ── L2 Judge ──
+# ── 裁决 ──
 
-class TestL2Judge:
+class TestVerdict:
     def test_high_score_buy(self):
-        from src.routing.l1_analyze import L1Analyzer
-        from src.routing.l2_judge import L2Judge
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        from src.routing.verdict import VerdictEngine
+        analyzer = DiagnosisEngine()
         report = analyzer.analyze("600519", "茅台",
                                    {"pe_percentile": 20, "northbound": 1},
                                    [{"roe": 25}],
                                    {"pmi": 52, "erp": 5},
                                    {"level": "NORMAL"})
-        judge = L2Judge()
+        judge = VerdictEngine()
         verdict = judge.judge(report)
         assert verdict.score >= 60
         assert verdict.recommendation in ("BUY", "ADD")
 
     def test_low_confidence_blocked(self):
-        from src.routing.l1_analyze import AnalysisReport
-        from src.routing.l2_judge import L2Judge
-        report = AnalysisReport(symbol="000001", name="测试",
+        from src.routing.diagnosis import DiagnosisReport
+        from src.routing.verdict import VerdictEngine
+        report = DiagnosisReport(symbol="000001", name="测试",
                                  value_score=30, quality_score=30,
                                  momentum_score=30, macro_score=30)
-        judge = L2Judge()
+        judge = VerdictEngine()
         verdict = judge.judge(report)
         assert verdict.confidence < 0.7
 
 
-# ── L4 Risk ──
+# ── 风控 ──
 
-class TestL4Risk:
+class TestRiskControl:
     def test_position_cap(self):
-        from src.routing.l3_trade import L3Trader, TradeSignal
-        from src.routing.l4_risk import L4RiskOfficer
+        from src.routing.positioning import PositioningEngine, TradeSignal
+        from src.routing.risk_control import RiskControlEngine
         signal = TradeSignal(symbol="600519", action="OPEN", target_weight=0.30)
-        officer = L4RiskOfficer()
+        officer = RiskControlEngine()
         risk = officer.check(signal)
         assert risk.adjusted_weight <= 0.20
 
     def test_black_swan(self):
-        from src.routing.l3_trade import TradeSignal
-        from src.routing.l4_risk import L4RiskOfficer
+        from src.routing.positioning import TradeSignal
+        from src.routing.risk_control import RiskControlEngine
         signal = TradeSignal(symbol="600519", action="OPEN", target_weight=0.10)
-        officer = L4RiskOfficer()
+        officer = RiskControlEngine()
         risk = officer.check(signal, market={"hs300_change_pct": -0.06})
         assert risk.adjusted_weight == 0.0
 

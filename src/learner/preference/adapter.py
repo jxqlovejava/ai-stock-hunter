@@ -2,7 +2,7 @@
 """偏好适配器 — 将 InvestorPreference 映射为管道可用的值。
 
 纯函数，无状态。将用户声明的风险偏好、投资目标、层级等
-转换为 L2 权重、L3 仓位乘数、L4 风控参数、军规过滤器。
+转换为 裁决权重、仓位调度乘数、风控参数、军规过滤器。
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ POSITION_RISK_MULTIPLIERS: dict[RiskProfile, float] = {
 
 
 def resolve_weights(prefs: InvestorPreference) -> dict[str, float]:
-    """解析 L2 评分权重。
+    """解析裁决评分权重。
 
     优先级:
       1. prefs.score_weights 中的显式覆盖值
@@ -203,7 +203,7 @@ def resolve_position_limits(prefs: InvestorPreference) -> dict:
 def resolve_macro_cap_multiplier(prefs: InvestorPreference) -> float:
     """解析宏观仓位上限乘数。
 
-    conservative=0.7 → L3 macro_cap 打 7 折
+    conservative=0.7 → 仓位调度 macro_cap 打 7 折
     balanced=1.0   → 不变
     aggressive=1.2 → 上浮 20%
     """
@@ -372,7 +372,7 @@ def is_board_accessible(prefs: InvestorPreference, symbol: str) -> bool:
 
 
 def resolve_trading_style_weights(prefs: InvestorPreference) -> dict[str, float]:
-    """根据 trading_style 调整 L2 权重，覆盖 risk_profile 的预设。
+    """根据 trading_style 调整裁决权重，覆盖 risk_profile 的预设。
 
     短线/波段：技术+情绪权重↑，基本面↓
     长线：基本面权重↑，技术↓

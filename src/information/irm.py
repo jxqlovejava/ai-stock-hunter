@@ -3,7 +3,7 @@
 Unique alpha source: how companies respond to investor questions about policy,
 rumors, and market events. No other quant tool has this data.
 
-Feeds into L1 analysis as investor_sentiment dimension.
+Feeds into diagnosis as investor_sentiment dimension.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class IrmQuestion:
 
 @dataclass
 class IrmAnalysis:
-    """互动易分析结果 — feeds into L1 analysis."""
+    """互动易分析结果 — feeds into diagnosis."""
     symbol: str
     total_questions: int = 0
     answered_count: int = 0
@@ -105,9 +105,9 @@ class IrmAnalyzer:
         return analysis
 
     def get_l1_score(self, symbol: str) -> dict:
-        """Get L1-relevant scores from 互动易 analysis.
+        """Get diagnosis-relevant scores from 互动易 analysis.
 
-        Returns dict suitable for injecting into L1Analyzer:
+        Returns dict suitable for injecting into DiagnosisEngine:
             investor_attention: 0-100 (higher = more investor engagement)
             transparency_score: 0-100 (higher = better reply rate + tone)
             policy_awareness: 0-100 (higher = company actively addressing policy)

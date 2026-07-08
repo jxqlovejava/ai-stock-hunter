@@ -255,7 +255,7 @@ class SectorTransmissionAnalyzer:
     def get_sector_score_modifier(
         self, sector: str, impacts: dict[str, SectorImpact]
     ) -> float:
-        """Get L1 score modifier for a sector based on policy transmission.
+        """Get diagnosis score modifier for a sector based on policy transmission.
 
         Returns a modifier in [-15, +15] for sector-level macro score adjustment.
         """

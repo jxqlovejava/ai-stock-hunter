@@ -20,7 +20,9 @@ from .schema import (
     ConsensusGap,
     NarrativeLifecycle,
     NarrativeStage,
+    ShisoLeafTier,
     SourceTier,
+    SupplyChainDepth,
 )
 
 logger = logging.getLogger(__name__)
@@ -350,6 +352,143 @@ class AlphaLens:
         )
 
     # ------------------------------------------------------------------
+    # 供应链深度 Alpha（紫苏叶理论）— 第四维
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def analyze_supply_chain_depth(
+        symbol: str = "",
+        supply_chain_data: Optional[dict] = None,
+        bottleneck_data: Optional[dict] = None,
+    ) -> SupplyChainDepth:
+        """供应链深度 Alpha 分析 — 紫苏叶理论量化。
+
+        紫苏叶理论: 顶级寿司店里食客抢金枪鱼大腹(GPU/云计算)，
+        但真正让整家店停摆的是紫苏叶——离终端 2-3 层、
+        被忽视但不可替代的上游环节。
+
+        判定逻辑:
+          1. 离终端 ≥ 2 层 + 瓶颈型(OWNER/ADJACENT) → 紫苏叶
+          2. 在终端/系统层 + 无瓶颈 → 金枪鱼
+          3. 可替代 + 无差异化 → 普通配料
+
+        Args:
+            symbol: 股票代码
+            supply_chain_data: SupplyChainDeepMapper.analyze() 的结果
+            bottleneck_data: BottleneckAnalysis 字典（可选）
+
+        Returns:
+            SupplyChainDepth with complete analysis
+        """
+        sc = supply_chain_data or {}
+        bt = bottleneck_data or {}
+
+        # 1. 计算离终端需求的距离
+        chain_layer = sc.get("chain_position", "")
+        layer_name = sc.get("layer", "")
+
+        # 从 SupplyChainLayer 推算层数
+        layer_depth_map = {
+            "END_DEMAND": 0,
+            "SYSTEM": 1,
+            "MODULE": 2,
+            "DEVICE": 2,
+            "PACKAGING": 3,
+            "EQUIPMENT": 3,
+            "SUBSTRATE": 4,
+            "MATERIAL": 4,
+        }
+        depth = layer_depth_map.get(layer_name, 0)
+
+        # 2. 判定紫苏叶层级
+        bottleneck_type = bt.get("bottleneck_type", sc.get("bottleneck_type", "NONE"))
+        bottleneck_score_val = float(bt.get("bottleneck_score", sc.get("bottleneck_score", 0)))
+
+        if bottleneck_type in ("OWNER", "ADJACENT") and depth >= 2:
+            shiso_tier = ShisoLeafTier.SHISO_LEAF
+        elif depth <= 1:
+            shiso_tier = ShisoLeafTier.TUNA
+        else:
+            shiso_tier = ShisoLeafTier.COMMODITY
+
+        # 3. 不可替代性评分
+        # 供应商集中度（从 supply_chain_data 或 bottleneck_data 推断）
+        supplier_count = bt.get("supplier_count", 10)
+        switching = "medium"
+        if bottleneck_type == "OWNER":
+            switching = "high"
+            supplier_count = min(supplier_count, 3)
+        elif bottleneck_type == "ADJACENT":
+            switching = "high"
+            supplier_count = min(supplier_count, 5)
+
+        # 不可替代性 = f(瓶颈类型, 供应商数, 切换成本)
+        if bottleneck_type == "OWNER":
+            irreplaceability = 90.0
+        elif bottleneck_type == "ADJACENT":
+            irreplaceability = 75.0
+        elif bottleneck_type == "DERIVATIVE":
+            irreplaceability = 50.0
+        else:
+            irreplaceability = 20.0
+
+        # 供应商越少越不可替代
+        if supplier_count <= 2:
+            irreplaceability = max(irreplaceability, 85.0)
+        elif supplier_count <= 5:
+            irreplaceability = max(irreplaceability, 65.0)
+
+        # 4. 综合深度评分
+        cost_share = float(sc.get("cost_pass_through", 0.0))
+        depth_score = (
+            irreplaceability * 0.50
+            + bottleneck_score_val * 0.30
+            + min(100, depth * 12.5) * 0.20  # 每层 +12.5，最多 4 层
+        )
+        depth_score = round(max(0, min(100, depth_score)), 1)
+
+        # 5. 判定理由
+        if shiso_tier == ShisoLeafTier.SHISO_LEAF:
+            rationale = (
+                f"🍃 紫苏叶标的: 离终端需求 {depth} 层，"
+                f"处于 {chain_layer}，不可替代性 {irreplaceability:.0f}/100。"
+                f"市场关注度集中在终端(GPU/服务器)，该环节被忽视但不可或缺。"
+            )
+        elif shiso_tier == ShisoLeafTier.TUNA:
+            rationale = (
+                f"🐟 金枪鱼标的: 位于 {chain_layer}（终端/系统层），"
+                f"已被市场充分关注和定价，Alpha 空间主要来自基本面超预期而非信息不对称。"
+            )
+        else:
+            rationale = (
+                f"普通配料: 位于 {chain_layer}，深度 {depth} 层，"
+                f"不可替代性 {irreplaceability:.0f}/100，可替代风险较高。"
+            )
+
+        # 置信度
+        confidence = 0.5
+        if sc.get("in_chain"):
+            confidence += 0.2
+        if bottleneck_type in ("OWNER", "ADJACENT"):
+            confidence += 0.15
+
+        return SupplyChainDepth(
+            shiso_tier=shiso_tier,
+            depth_from_end_demand=depth,
+            irreplaceability_score=round(irreplaceability, 1),
+            supplier_concentration=supplier_count,
+            switching_cost=switching,
+            cost_share_of_downstream=round(cost_share, 2),
+            chain_layer=chain_layer,
+            depth_score=depth_score,
+            bottleneck_type=bottleneck_type,
+            bottleneck_score=round(bottleneck_score_val, 1),
+            upstream_tickers=sc.get("related_tickers", []),
+            rationale=rationale,
+            confidence=round(min(0.9, confidence), 2),
+        )
+
+    # ------------------------------------------------------------------
     # 综合 Alpha 评分
     # ------------------------------------------------------------------
 
@@ -358,13 +497,15 @@ class AlphaLens:
         source: AlphaSource,
         consensus_gap: ConsensusGap,
         narrative: NarrativeStage,
+        supply_chain: Optional[SupplyChainDepth] = None,
     ) -> float:
-        """综合三个维度计算 Alpha 评分。
+        """综合四个维度计算 Alpha 评分。
 
         公式:
-          alpha_score = source.alpha_potential * 0.3
-                      + consensus_gap.gap_score * 0.35
-                      + narrative_stage_bonus * 0.35
+          alpha_score = source.alpha_potential * 0.25
+                      + consensus_gap.gap_score * 0.30
+                      + narrative_stage_bonus * 0.25
+                      + supply_chain_depth_bonus * 0.20
 
         叙事阶段 Alpha 乘数:
           DORMANT:    0.6 (可能太早)
@@ -373,6 +514,8 @@ class AlphaLens:
           CONSENSUS:  0.3 (Alpha 基本消失)
           CROWDED:    0.1 (几乎无 Alpha)
           FADING:     0.0 (无 Alpha)
+
+        紫苏叶加分: supply_chain.depth_score * 0.20（第四维）
 
         Returns:
             Alpha 综合评分 0-100
@@ -390,8 +533,14 @@ class AlphaLens:
         source_score = source.alpha_potential
         gap_score = consensus_gap.gap_score
         narrative_score = narrative.early_signal_score * stage_mult
+        supply_chain_score = supply_chain.depth_score if supply_chain else 50.0
 
-        alpha = source_score * 0.3 + gap_score * 0.35 + narrative_score * 0.35
+        alpha = (
+            source_score * 0.25
+            + gap_score * 0.30
+            + narrative_score * 0.25
+            + supply_chain_score * 0.20
+        )
         return round(max(0, min(100, alpha)), 1)
 
     # ------------------------------------------------------------------
@@ -415,8 +564,16 @@ class AlphaLens:
         days_since_first_discussion: int = 0,
         large_position_changes: Optional[dict] = None,
         existing_profile: Optional[AlphaProfile] = None,
+        supply_chain_data: Optional[dict] = None,
+        bottleneck_data: Optional[dict] = None,
     ) -> AlphaProfile:
-        """综合分析 — 一次调用完成三维 Alpha 评估。
+        """综合分析 — 一次调用完成四维 Alpha 评估。
+
+        四维:
+          1. 信息来源层级 (AlphaSource)
+          2. 共识-现实缺口 (ConsensusGap)
+          3. 叙事生命周期 (NarrativeStage)
+          4. 供应链深度 Alpha (SupplyChainDepth) 🆕 紫苏叶理论
 
         Args:
             symbol: 股票代码
@@ -434,9 +591,11 @@ class AlphaLens:
             days_since_first_discussion: 首次讨论距今
             large_position_changes: 大资金动向
             existing_profile: 已有 profile（用于衰减追踪）
+            supply_chain_data: SupplyChainDeepMapper.analyze() 的结果
+            bottleneck_data: BottleneckAnalysis 字典
 
         Returns:
-            AlphaProfile with complete analysis
+            AlphaProfile with complete four-dimensional analysis
         """
         # 1. 信息来源层级
         source = self.classify_source_tier(news_sources or [])
@@ -461,23 +620,35 @@ class AlphaLens:
             large_position_changes=large_position_changes,
         )
 
-        # 4. 综合评分
-        alpha_score = self.compute_alpha_score(source, consensus_gap, narrative)
+        # 4. 供应链深度 Alpha（紫苏叶理论）
+        supply_chain = self.analyze_supply_chain_depth(
+            symbol=symbol,
+            supply_chain_data=supply_chain_data,
+            bottleneck_data=bottleneck_data,
+        )
 
-        # 5. 衰减追踪
+        # 5. 综合评分（四维）
+        alpha_score = self.compute_alpha_score(
+            source, consensus_gap, narrative, supply_chain,
+        )
+
+        # 6. 衰减追踪
         decay = self._compute_decay(existing_profile, alpha_score)
 
-        # 6. 生成 rationale
+        # 7. 生成 rationale（四维）
         rationale, differentiator = self._generate_rationale(
-            source, consensus_gap, narrative, alpha_score, decay[0]
+            source, consensus_gap, narrative, alpha_score, decay[0], supply_chain,
         )
 
         return AlphaProfile(
             source=source,
             consensus_gap=consensus_gap,
             narrative=narrative,
+            supply_chain=supply_chain,
             alpha_score=alpha_score,
-            alpha_confidence=self._calc_confidence(source, consensus_gap, narrative),
+            alpha_confidence=self._calc_confidence(
+                source, consensus_gap, narrative, supply_chain,
+            ),
             decay_status=decay[0],
             first_detected=(
                 existing_profile.first_detected if existing_profile else None
@@ -532,12 +703,15 @@ class AlphaLens:
         source: AlphaSource,
         gap: ConsensusGap,
         narrative: NarrativeStage,
+        supply_chain: Optional[SupplyChainDepth] = None,
     ) -> float:
-        """计算 Alpha 判定总置信度。"""
+        """计算 Alpha 判定总置信度（四维加权）。"""
+        sc_conf = supply_chain.confidence if supply_chain else 0.5
         conf = (
-            source.confidence * 0.3
-            + gap.confidence * 0.35
-            + narrative.stage_confidence * 0.35
+            source.confidence * 0.25
+            + gap.confidence * 0.30
+            + narrative.stage_confidence * 0.25
+            + sc_conf * 0.20
         )
         return round(max(0, min(1.0, conf)), 2)
 
@@ -548,8 +722,9 @@ class AlphaLens:
         narrative: NarrativeStage,
         alpha_score: float,
         decay_status: AlphaDecayStatus,
+        supply_chain: Optional[SupplyChainDepth] = None,
     ) -> tuple[str, str]:
-        """生成 Alpha 判定理由和核心差异点。"""
+        """生成 Alpha 判定理由和核心差异点（四维）。"""
         parts: list[str] = []
 
         # 信息来源维度
@@ -582,10 +757,24 @@ class AlphaLens:
         }
         parts.append(stage_desc.get(narrative.stage, ""))
 
+        # 供应链深度维度
+        if supply_chain and supply_chain.is_shiso_leaf:
+            parts.append(
+                f"🍃 紫苏叶标的: 离终端{supply_chain.depth_from_end_demand}层，"
+                f"不可替代性{supply_chain.irreplaceability_score:.0f}/100"
+            )
+        elif supply_chain and supply_chain.is_tuna:
+            parts.append("🐟 金枪鱼标的: 终端层，已被充分关注")
+
         rationale = "；".join(parts)
 
         # 核心差异点
-        if gap.is_market_wrong:
+        if supply_chain and supply_chain.is_shiso_leaf:
+            differentiator = (
+                f"🍃 紫苏叶: 处于{ supply_chain.chain_layer}，"
+                f"市场关注集中在终端，该上游环节被忽视但不可或缺"
+            )
+        elif gap.is_market_wrong:
             differentiator = f"市场可能{'低估' if gap.mispricing_direction == 'undervalued' else '高估'}了该标的价值"
         elif narrative.stage in (NarrativeLifecycle.DORMANT, NarrativeLifecycle.EMERGING):
             differentiator = "叙事尚未被市场充分定价，存在提前布局窗口"

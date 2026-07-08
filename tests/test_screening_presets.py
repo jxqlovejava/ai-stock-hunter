@@ -79,56 +79,56 @@ class TestQuickFilter:
 
     def test_st_stock_filtered(self):
         """ST 股票应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
         quote = {"is_st": True}
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_star_st_stock_filtered(self):
         """*ST 股票应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
         quote = {"is_star_st": True}
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_small_market_cap_filtered(self):
         """市值低于门槛应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]  # min_market_cap = 2e9
         quote = {"market_cap": 1e9}  # 10 亿 < 20 亿
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_large_market_cap_passes(self):
         """市值超过门槛应通过 (且 PE 在阈值内)。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
         quote = {"market_cap": 5e9, "pe_ttm": 12}  # 50 亿 > 20 亿, PE 12 < max 15
         assert analyzer._passes_quick_filter(quote, preset) is True
 
     def test_high_pe_filtered_in_value(self):
         """高 PE 在价值筛选中应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
         quote = {"market_cap": 5e9, "pe_ttm": 50}  # PE 50 > max 15
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_negative_pe_filtered_in_growth(self):
         """负 PE 在成长筛选中应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["growth"]
         quote = {"market_cap": 1e10, "pe_ttm": -5}
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_null_quote_filtered(self):
         """空行情应被过滤。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
+        analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
         assert analyzer._passes_quick_filter(None, preset) is False  # type: ignore
         assert analyzer._passes_quick_filter({}, preset) is False
@@ -139,7 +139,7 @@ class TestPresetScoreCalc:
 
     def test_calc_preset_score_value(self):
         """价值型评分应以价值因子为主。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
         from src.routing.l1_analyze import AnalysisReport
         report = AnalysisReport(
             symbol="600519", name="贵州茅台",
@@ -147,7 +147,7 @@ class TestPresetScoreCalc:
             momentum_score=50, macro_score=55,
         )
         preset = SCREENING_PRESETS["value"]
-        score = L1Analyzer._calc_preset_score(report, preset)
+        score = DiagnosisEngine._calc_preset_score(report, preset)
         # 价值权重 0.45, 质量 0.25
         assert score > 0
         # 价值得分高 → 总评分高
@@ -156,7 +156,7 @@ class TestPresetScoreCalc:
 
     def test_calc_preset_score_growth(self):
         """成长型评分应以质量和动量为主。"""
-        from src.routing.l1_analyze import L1Analyzer, SCREENING_PRESETS
+        from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
         from src.routing.l1_analyze import AnalysisReport
         report = AnalysisReport(
             symbol="300750", name="宁德时代",
@@ -164,7 +164,7 @@ class TestPresetScoreCalc:
             momentum_score=75, macro_score=55,
         )
         preset = SCREENING_PRESETS["growth"]
-        score = L1Analyzer._calc_preset_score(report, preset)
+        score = DiagnosisEngine._calc_preset_score(report, preset)
         # 质量 0.4, 动量 0.3 → 高质量+高动量应得分高
         assert score > 50
 
@@ -174,22 +174,22 @@ class TestScreenByPreset:
 
     def test_screen_value_empty_candidates(self):
         """空候选列表应返回空结果。"""
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         results = analyzer.screen_by_preset("value", [])
         assert results == []
 
     def test_screen_unknown_preset_raises(self):
         """未知预设应抛出 ValueError。"""
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         with pytest.raises(ValueError, match="未知预设"):
             analyzer.screen_by_preset("nonexistent", [])
 
     def test_screen_value_basic(self):
         """基本价值筛选 — 有合格候选。"""
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         candidates = [
             {
                 "symbol": "600519",
@@ -209,8 +209,8 @@ class TestScreenByPreset:
 
     def test_screen_limit_respected(self):
         """limit 参数应被遵守。"""
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         candidates = [
             {
                 "symbol": f"00000{i}",
@@ -225,8 +225,8 @@ class TestScreenByPreset:
 
     def test_screen_results_sorted_by_score(self):
         """结果应按得分降序排列。"""
-        from src.routing.l1_analyze import L1Analyzer
-        analyzer = L1Analyzer()
+        from src.routing.diagnosis import DiagnosisEngine
+        analyzer = DiagnosisEngine()
         candidates = [
             {
                 "symbol": "000001",

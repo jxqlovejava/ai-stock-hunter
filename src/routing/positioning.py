@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""仓位调度（原 L3 Trade）— 信号→仓位映射。Phase 4: Alpha 时序注入。Phase 5: 凯利公式仓位管理。"""
+"""仓位调度 — 信号→仓位映射。Phase 4: Alpha 时序注入。Phase 5: 凯利公式仓位管理。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class TradeSignal:
     action: str            # OPEN / ADD / HOLD / REDUCE / CLOSE
     target_weight: float   # 目标仓位占比 (0.0 - 1.0)
     is_core: bool = False  # 是否核心仓操作
-    limit: float = 0.0     # L4 施加的仓位上限
+    limit: float = 0.0     # 风控施加的仓位上限
     source_citations: list = field(default_factory=list)  # Phase 1: 继承引用链
     confidence: float = 0.5  # Phase 1: 信号信心度
     alpha_timing: str = ""  # Phase 4: Alpha 时序提示 (叙事阶段 + 操作提示)
@@ -39,8 +39,8 @@ class TradeSignal:
     sizing_method: str = ""       # "kelly" / "linear_fallback" / "negative_expectation"
     kelly_f: float = 0.0          # 原始凯利 f*
     kelly_params_source: str = ""  # 凯利参数来源说明
-    name: str = ""                # 股票名称 (for L4 黑名单/流动性检查)
-    extra: dict = field(default_factory=dict)  # 原始行情数据 (for L4 黑名单检查)
+    name: str = ""                # 股票名称 (风控黑名单/流动性检查)
+    extra: dict = field(default_factory=dict)  # 原始行情数据 (风控黑名单检查)
     # Phase 7: 短线/波段入场出场时机
     entry_zone_low: float = 0.0   # 入场区间下限
     entry_zone_high: float = 0.0  # 入场区间上限
@@ -54,7 +54,7 @@ class TradeSignal:
 
 
 class PositioningEngine:
-    """仓位调度引擎（原 L3Trader）。
+    """仓位调度引擎。
 
     信号映射:
       - score ≥ 75 → 建仓/加仓
@@ -69,7 +69,7 @@ class PositioningEngine:
     """
 
     def __init__(self, kelly_sizer=None):
-        """初始化 L3 交易员。
+        """初始化仓位调度引擎。
 
         Args:
             kelly_sizer: KellyPositionSizer 实例 (可选)。None 时仅使用线性公式。
@@ -102,7 +102,7 @@ class PositioningEngine:
            future release.
 
         Args:
-            verdict: L2 裁决结果
+            verdict: 综合裁决结果
             macro_cap: 宏观仓位上限 (0.0-1.0)
             is_core: 是否核心仓 (阻止 REDUCE/CLOSE)
             is_gem: 是否双创 (创业板/科创板折扣)
@@ -224,7 +224,7 @@ class PositioningEngine:
         (Signal) from the *how much* (PortfolioTarget).
 
         Args:
-            verdict: L2 Verdict from VerdictEngine.
+            verdict: 综合裁决结果 (Verdict from VerdictEngine).
             time_horizon: Prediction horizon ("short" / "medium" / "long").
 
         Returns:
@@ -323,6 +323,3 @@ class PositioningEngine:
         else:
             return "CLOSE"
 
-
-# -- 向后兼容别名 (deprecated) --
-L3Trader = PositioningEngine

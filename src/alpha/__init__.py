@@ -8,12 +8,12 @@
   2. 共识-现实缺口 (ConsensusGap)    — 耐心撑过情绪周期
   3. 叙事生命周期   (NarrativeStage)  — 提前挖掘未交易的东西
 
-贯穿白泽全链路 L0→L4：
-  - L0 Gate: Alpha 机会存在性门禁
-  - L1 Analyze: Alpha 来源识别
-  - L2 Judge: Alpha 质量裁决
-  - L3 Trade: Alpha 时序定位
-  - L4 Risk: Alpha 衰减监控
+贯穿白泽全链路准入→裁决：
+  - 准入检查: Alpha 机会存在性门禁
+  - 多维诊断: Alpha 来源识别
+  - 综合裁决: Alpha 质量裁决
+  - 仓位调度: Alpha 时序定位
+  - 风控执行: Alpha 衰减监控
 """
 
 from .attribution import AlphaAttribution, AttributionReport
