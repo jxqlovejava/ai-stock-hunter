@@ -91,6 +91,7 @@ class FeedbackCollector:
         self._path = db_path
         self._feedbacks: list[Feedback] = []
         self._counter = 0
+        self._memory_store = None  # lazy init: src.memory.MemoryStore
         self._memory_only = db_path == ":memory:"
         if not self._memory_only:
             self._load()

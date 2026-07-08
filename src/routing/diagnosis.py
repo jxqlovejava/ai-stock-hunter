@@ -42,6 +42,7 @@ class DiagnosisReport:
     valuation_score: float = 50.0        # 多维估值综合评分
     valuation_analysis: Optional[object] = None  # ValuationResult DTO
     cycle_score: float = 50.0            # 经济周期友好度 0-100
+    manipulation_risk_score: float = 0.0  # Phase 10: 庄家操纵风险评分 0-100
     cycle_phase: str = ""                # 周期阶段名称
     cycle_analysis: Optional[object] = None  # CycleAnalysis DTO
     bull_case: str = ""
@@ -134,6 +135,15 @@ class DiagnosisEngine:
 
         report.bull_case = self._bull_case(name, quote, financials)
         report.bear_case = self._bear_case(name, quote, financials)
+
+        # Phase 10: 庄家操纵风险检测
+        try:
+            from src.game_theory.manipulation import ManipulationDetector
+            detector = ManipulationDetector()
+            manip_result = detector.detect(symbol, quote if quote else {}, name=name)
+            report.manipulation_risk_score = manip_result.risk_score
+        except Exception:
+            report.manipulation_risk_score = 0.0
 
         # Phase 1: 填充数据溯源和信心度
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
