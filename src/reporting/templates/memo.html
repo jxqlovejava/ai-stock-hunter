@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ context.title or "投资备忘录" }}</title>
+<style>
+/* ── Reset & base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; -webkit-font-smoothing: antialiased; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #1a1a2e;
+  background: #f5f6fa;
+  line-height: 1.7;
+  padding: 2rem;
+}
+
+/* ── Page ─────────────────────────────────────────────────── */
+.memo-page {
+  max-width: 1000px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 20px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+.memo-header {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  color: #fff;
+  padding: 2.5rem 3rem;
+}
+.memo-header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.02em; }
+.memo-header .subtitle { font-size: 0.9rem; opacity: 0.75; margin-top: 0.4rem; }
+.memo-header .meta-row {
+  display: flex; flex-wrap: wrap; gap: 1.5rem;
+  margin-top: 1.2rem; font-size: 0.85rem; opacity: 0.9;
+}
+.memo-header .meta-row .label { opacity: 0.6; }
+.memo-header .meta-row .value { font-weight: 600; }
+
+/* ── Body ─────────────────────────────────────────────────── */
+.memo-body { padding: 2.5rem 3rem 3rem; }
+
+/* ── Section ──────────────────────────────────────────────── */
+.section { margin-top: 2.2rem; }
+.section:first-child { margin-top: 0; }
+.section-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e8e8f0;
+  margin-bottom: 1rem;
+}
+.section-header .icon { font-size: 1.2rem; }
+.section-header h2 { font-size: 1.15rem; font-weight: 700; color: #16213e; }
+
+/* ── Cards ────────────────────────────────────────────────── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.card {
+  background: #f8f9fc; border-radius: 8px; padding: 1rem 1.2rem;
+  border: 1px solid #eef0f5;
+}
+.card .card-label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.04em; }
+.card .card-value { font-size: 1.3rem; font-weight: 700; margin-top: 0.2rem; }
+.card .card-value.green { color: #2e7d32; }
+.card .card-value.red { color: #c62828; }
+.card .card-value.amber { color: #f57f17; }
+.card .card-sub { font-size: 0.78rem; color: #999; margin-top: 0.15rem; }
+
+/* ── Score bar ────────────────────────────────────────────── */
+.score-row { display: flex; align-items: center; gap: 0.8rem; margin: 0.5rem 0; }
+.score-row .score-label { min-width: 80px; font-size: 0.88rem; color: #555; }
+.score-row .score-bar-wrap { flex: 1; height: 8px; background: #eef0f5; border-radius: 4px; overflow: hidden; }
+.score-row .score-bar-fill { height: 100%; border-radius: 4px; }
+.score-row .score-num { min-width: 36px; text-align: right; font-size: 0.85rem; font-weight: 600; }
+
+/* ── Table ────────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0.5rem 0; }
+.data-table th {
+  text-align: left; padding: 0.5rem 0.6rem;
+  background: #f0f1f5; font-weight: 600; color: #444;
+  border-bottom: 1px solid #ddd;
+}
+.data-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── Scenario ─────────────────────────────────────────────── */
+.scenario-row { display: flex; gap: 1rem; margin: 1rem 0; }
+.scenario-box { flex: 1; border-radius: 8px; padding: 1rem; text-align: center; border: 1px solid #e8e8f0; }
+.scenario-box.bull { background: #e8f5e9; border-color: #a5d6a7; }
+.scenario-box.base { background: #e3f2fd; border-color: #90caf9; }
+.scenario-box.bear { background: #fbe9e7; border-color: #ef9a9a; }
+.scenario-box .scenario-label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; }
+.scenario-box .scenario-price { font-size: 1.5rem; font-weight: 700; margin: 0.3rem 0; }
+.scenario-box .scenario-return { font-size: 0.88rem; }
+.scenario-box.bull .scenario-return { color: #2e7d32; }
+.scenario-box.bear .scenario-return { color: #c62828; }
+
+/* ── Risk / Catalyst tag ──────────────────────────────────── */
+.tag-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
+.tag {
+  display: inline-block; padding: 0.25rem 0.7rem; border-radius: 12px;
+  font-size: 0.78rem; font-weight: 500;
+}
+.tag.red { background: #ffebee; color: #c62828; }
+.tag.amber { background: #fff8e1; color: #f57f17; }
+.tag.green { background: #e8f5e9; color: #2e7d32; }
+.tag.blue { background: #e3f2fd; color: #1565c0; }
+
+/* ── KPI table ────────────────────────────────────────────── */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.8rem; }
+.kpi-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.6rem 0.8rem; background: #f8f9fc; border-radius: 6px;
+  border: 1px solid #eef0f5;
+}
+.kpi-item .kpi-label { font-size: 0.85rem; color: #555; }
+.kpi-item .kpi-value { font-size: 0.9rem; font-weight: 600; }
+
+/* ── Thesis ───────────────────────────────────────────────── */
+.thesis-block { border-left: 3px solid #1a73e8; padding-left: 1rem; margin: 0.8rem 0; }
+.thesis-block p { color: #333; line-height: 1.8; }
+
+/* ── Lists ────────────────────────────────────────────────── */
+.styled-list { list-style: none; padding: 0; }
+.styled-list li { padding: 0.35rem 0; padding-left: 1.2rem; position: relative; font-size: 0.9rem; }
+.styled-list li::before { content: "•"; position: absolute; left: 0; color: #888; }
+
+/* ── Footer ───────────────────────────────────────────────── */
+.memo-footer {
+  padding: 1.5rem 3rem; background: #f8f9fc; border-top: 1px solid #eef0f5;
+  font-size: 0.78rem; color: #999; text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Print ────────────────────────────────────────────────── */
+@media print {
+  body { background: #fff; padding: 0; }
+  .memo-page { box-shadow: none; border-radius: 0; }
+}
+
+/* ── Prose ────────────────────────────────────────────────── */
+.prose { font-size: 0.9rem; color: #444; line-height: 1.8; }
+.prose strong { color: #1a1a2e; }
+</style>
+</head>
+<body>
+<div class="memo-page">
+
+  <!-- ════════════ Header ════════════ -->
+  <header class="memo-header">
+    <h1>{{ context.title }}</h1>
+    <div class="subtitle">{{ context.subtitle }}</div>
+    <div class="meta-row">
+      {% if context.symbol %}<div><span class="label">代码</span> <span class="value">{{ context.symbol }}</span></div>{% endif %}
+      {% if context.report_date %}<div><span class="label">报告日期</span> <span class="value">{{ context.report_date }}</span></div>{% endif %}
+      {% if context.risk_profile %}<div><span class="label">风险偏好</span> <span class="value">{{ context.risk_profile }}</span></div>{% endif %}
+      {% if context.investment_goal %}<div><span class="label">投资目标</span> <span class="value">{{ context.investment_goal }}</span></div>{% endif %}
+      {% if context.current_price %}<div><span class="label">当前价格</span> <span class="value">{{ context.current_price }}</span></div>{% endif %}
+      {% if context.recommendation %}<div><span class="label">建议</span> <span class="value">{{ context.recommendation }}</span></div>{% endif %}
+    </div>
+  </header>
+
+  <!-- ════════════ Body ════════════ -->
+  <div class="memo-body">
+
+    <!-- ──── 1. Company Overview ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">🏢</span><h2>{{ context.i18n.company_overview or "公司概况" }}</h2></div>
+      <div class="prose">{{ context.company_overview or "" }}</div>
+      {% if context.business_summary %}
+      <div class="thesis-block" style="margin-top:0.8rem;"><p>{{ context.business_summary }}</p></div>
+      {% endif %}
+      <div class="card-grid" style="margin-top:1rem;">
+        {% if context.market_cap %}<div class="card"><div class="card-label">市值</div><div class="card-value">{{ context.market_cap }}</div></div>{% endif %}
+        {% if context.pe_ttm %}<div class="card"><div class="card-label">PE (TTM)</div><div class="card-value">{{ context.pe_ttm }}</div></div>{% endif %}
+        {% if context.pb %}<div class="card"><div class="card-label">PB</div><div class="card-value">{{ context.pb }}</div></div>{% endif %}
+        {% if context.roe %}<div class="card"><div class="card-label">ROE</div><div class="card-value">{{ context.roe }}</div></div>{% endif %}
+        {% if context.dividend_yield %}<div class="card"><div class="card-label">股息率</div><div class="card-value">{{ context.dividend_yield }}</div></div>{% endif %}
+        {% if context.sector %}<div class="card"><div class="card-label">行业</div><div class="card-value" style="font-size:1rem;">{{ context.sector }}</div></div>{% endif %}
+      </div>
+    </section>
+
+    <!-- ──── 2. Investment Thesis ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">💡</span><h2>{{ context.i18n.investment_thesis or "投资逻辑" }}</h2></div>
+      {% if context.thesis_bull %}
+      <div class="thesis-block" style="border-color:#2e7d32;">
+        <strong style="color:#2e7d32;">看多逻辑</strong>
+        <p>{{ context.thesis_bull }}</p>
+      </div>
+      {% endif %}
+      {% if context.thesis_bear %}
+      <div class="thesis-block" style="border-color:#c62828; margin-top:0.8rem;">
+        <strong style="color:#c62828;">看空逻辑</strong>
+        <p>{{ context.thesis_bear }}</p>
+      </div>
+      {% endif %}
+      {% if context.alpha_rationale %}
+      <div class="thesis-block" style="border-color:#0f3460; margin-top:0.8rem;">
+        <strong style="color:#0f3460;">Alpha 逻辑</strong>
+        <p>{{ context.alpha_rationale }}</p>
+      </div>
+      {% endif %}
+    </section>
+
+    <!-- ──── 3. Financial Analysis ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">📊</span><h2>{{ context.i18n.financial_analysis or "财务分析" }}</h2></div>
+
+      {% if context.diagnosis_scores %}
+      <h3 style="font-size:0.95rem; font-weight:600; color:#333; margin-bottom:0.5rem;">多维评分</h3>
+      {% for item in context.diagnosis_scores %}
+      {% set color = "#2e7d32" if item.score >= 70 else ("#f57f17" if item.score >= 45 else "#c62828") %}
+      <div class="score-row">
+        <span class="score-label">{{ item.label }}</span>
+        <div class="score-bar-wrap"><div class="score-bar-fill" style="width:{{ item.score }}%; background:{{ color }};"></div></div>
+        <span class="score-num" style="color:{{ color }};">{{ item.score }}</span>
+      </div>
+      {% endfor %}
+      {% endif %}
+
+      {% if context.financial_highlights %}
+      <h3 style="font-size:0.95rem; font-weight:600; color:#333; margin:1rem 0 0.5rem;">财务亮点</h3>
+      <table class="data-table">
+        <thead><tr>
+          {% for key in context.financial_highlights[0].keys() %}
+          <th>{{ key }}</th>
+          {% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for row in context.financial_highlights %}
+          <tr>
+            {% for key in row.keys() %}
+            <td class="{% if loop.index > 1 %}num{% endif %}">{{ row[key] }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    <!-- ──── 4. DCF Valuation ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">📐</span><h2>{{ context.i18n.dcf_valuation or "DCF 估值" }}</h2></div>
+
+      {% if context.dcf %}
+      <div class="card-grid">
+        {% if context.dcf.fair_value %}<div class="card"><div class="card-label">公允价值</div><div class="card-value green">{{ context.dcf.fair_value }}</div></div>{% endif %}
+        {% if context.dcf.margin_of_safety %}<div class="card"><div class="card-label">安全边际</div><div class="card-value {% if context.dcf.margin_of_safety > 20 %}green{% elif context.dcf.margin_of_safety > 0 %}amber{% else %}red{% endif %}">{{ context.dcf.margin_of_safety }}%</div></div>{% endif %}
+        {% if context.dcf.wacc %}<div class="card"><div class="card-label">WACC</div><div class="card-value">{{ context.dcf.wacc }}%</div></div>{% endif %}
+        {% if context.dcf.terminal_growth %}<div class="card"><div class="card-label">终值增长率</div><div class="card-value">{{ context.dcf.terminal_growth }}%</div></div>{% endif %}
+        {% if context.dcf.fcf_growth_rate %}<div class="card"><div class="card-label">FCF 增速假设</div><div class="card-value">{{ context.dcf.fcf_growth_rate }}%</div></div>{% endif %}
+        {% if context.dcf.project_years %}<div class="card"><div class="card-label">预测年限</div><div class="card-value">{{ context.dcf.project_years }}年</div></div>{% endif %}
+      </div>
+
+      {% if context.dcf.fcf_projections %}
+      <h3 style="font-size:0.9rem; font-weight:600; color:#333; margin:1rem 0 0.4rem;">FCF 预测</h3>
+      <table class="data-table">
+        <thead><tr>
+          {% for key in context.dcf.fcf_projections[0].keys() %}
+          <th>{{ key }}</th>
+          {% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for row in context.dcf.fcf_projections %}
+          <tr>
+            {% for key in row.keys() %}
+            <td class="num">{{ row[key] }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <div class="prose" style="margin-top:0.5rem;">
+        <strong>方法论：</strong> {{ context.dcf.methodology or "两阶段 DCF 模型（高增长期 + 永续增长期）" }}
+      </div>
+      {% else %}
+      <div class="prose" style="color:#999;">{{ context.i18n.dcf_not_available or "暂无可用的 DCF 数据" }}</div>
+      {% endif %}
+    </section>
+
+    <!-- ──── 5. Scenario Analysis ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">🔮</span><h2>{{ context.i18n.scenario_analysis or "情景分析" }}</h2></div>
+
+      {% if context.scenarios %}
+      <div class="scenario-row">
+        {% if context.scenarios.bull %}
+        <div class="scenario-box bull">
+          <div class="scenario-label">乐观</div>
+          <div class="scenario-price">{{ context.scenarios.bull.target }}</div>
+          <div class="scenario-return">{{ context.scenarios.bull.return_str }}</div>
+          <div style="font-size:0.78rem; color:#666; margin-top:0.3rem;">{{ context.scenarios.bull.probability_str }}</div>
+        </div>
+        {% endif %}
+        {% if context.scenarios.base %}
+        <div class="scenario-box base">
+          <div class="scenario-label">基准</div>
+          <div class="scenario-price">{{ context.scenarios.base.target }}</div>
+          <div class="scenario-return" style="color:#1565c0;">{{ context.scenarios.base.return_str }}</div>
+          <div style="font-size:0.78rem; color:#666; margin-top:0.3rem;">{{ context.scenarios.base.probability_str }}</div>
+        </div>
+        {% endif %}
+        {% if context.scenarios.bear %}
+        <div class="scenario-box bear">
+          <div class="scenario-label">悲观</div>
+          <div class="scenario-price">{{ context.scenarios.bear.target }}</div>
+          <div class="scenario-return">{{ context.scenarios.bear.return_str }}</div>
+          <div style="font-size:0.78rem; color:#666; margin-top:0.3rem;">{{ context.scenarios.bear.probability_str }}</div>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if context.scenarios.narrative %}
+      <div class="thesis-block">
+        <p>{{ context.scenarios.narrative }}</p>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="prose" style="color:#999;">{{ context.i18n.scenario_not_available or "暂无可用的情景数据" }}</div>
+      {% endif %}
+    </section>
+
+    <!-- ──── 6. Risk Factors ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">⚠️</span><h2>{{ context.i18n.risk_factors or "风险因素" }}</h2></div>
+
+      {% if context.risks %}
+      <div class="tag-list">
+        {% for r in context.risks %}
+        <span class="tag red">⚠ {{ r }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if context.risk_details %}
+      <div class="prose" style="margin-top:0.5rem;">{{ context.risk_details }}</div>
+      {% endif %}
+      <div class="prose" style="color:#999; font-size:0.82rem; margin-top:0.5rem;">
+        {% if not context.risks and not context.risk_details %}
+        {{ context.i18n.risk_not_available or "暂无风险数据" }}
+        {% else %}
+        <em>{{ context.i18n.risk_disclaimer or "风险提示：以上为分析识别的关键风险因素，实际投资中可能存在未预见的风险。" }}</em>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- ──── 7. Catalysts ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">⚡</span><h2>{{ context.i18n.catalysts or "催化剂" }}</h2></div>
+
+      {% if context.catalysts %}
+      <div class="tag-list">
+        {% for c in context.catalysts %}
+        <span class="tag green">{{ c }}</span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="prose" style="color:#999;">{{ context.i18n.catalyst_not_available or "暂未识别出近期催化剂" }}</div>
+      {% endif %}
+    </section>
+
+    <!-- ──── 8. Position Sizing ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">💰</span><h2>{{ context.i18n.position_sizing or "仓位建议" }}</h2></div>
+
+      {% if context.position %}
+      <div class="card-grid">
+        {% if context.position.suggested_weight %}<div class="card"><div class="card-label">建议仓位</div><div class="card-value">{{ context.position.suggested_weight }}</div></div>{% endif %}
+        {% if context.position.kelly_fraction %}<div class="card"><div class="card-label">凯利比例</div><div class="card-value">{{ context.position.kelly_fraction }}</div></div>{% endif %}
+        {% if context.position.stop_loss %}<div class="card"><div class="card-label">止损位</div><div class="card-value red">{{ context.position.stop_loss }}</div></div>{% endif %}
+        {% if context.position.target_price %}<div class="card"><div class="card-label">目标价</div><div class="card-value green">{{ context.position.target_price }}</div></div>{% endif %}
+        {% if context.position.max_position_pct %}<div class="card"><div class="card-label">单票上限</div><div class="card-value">{{ context.position.max_position_pct }}</div></div>{% endif %}
+        {% if context.position.confidence %}<div class="card"><div class="card-label">置信度</div><div class="card-value">{{ context.position.confidence }}</div></div>{% endif %}
+      </div>
+      {% if context.position.rationale %}
+      <div class="thesis-block" style="margin-top:0.8rem;"><p>{{ context.position.rationale }}</p></div>
+      {% endif %}
+      {% else %}
+      <div class="prose" style="color:#999;">{{ context.i18n.position_not_available or "暂未生成仓位建议" }}</div>
+      {% endif %}
+    </section>
+
+    <!-- ──── 9. Monitoring KPIs ──── -->
+    <section class="section">
+      <div class="section-header"><span class="icon">📡</span><h2>{{ context.i18n.monitoring_kpis or "监控指标" }}</h2></div>
+
+      {% if context.monitoring_kpis %}
+      <div class="kpi-grid">
+        {% for kpi in context.monitoring_kpis %}
+        <div class="kpi-item">
+          <span class="kpi-label">{{ kpi.label }}</span>
+          <span class="kpi-value">{{ kpi.value }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="prose" style="color:#999;">{{ context.i18n.kpi_not_available or "暂未设置监控指标" }}</div>
+      {% endif %}
+    </section>
+
+    <!-- ──── Appendix ──── -->
+    {% if context.data_caveats or context.self_critique_notes %}
+    <section class="section" style="margin-top:2.5rem; padding-top:1rem; border-top:1px dashed #ddd;">
+      <div class="section-header"><span class="icon">📋</span><h2>{{ context.i18n.appendix or "附录" }}</h2></div>
+      {% if context.self_critique_notes %}
+      <div class="thesis-block" style="border-color:#f57f17;">
+        <strong style="color:#f57f17;">自评说明</strong>
+        <p>{{ context.self_critique_notes }}</p>
+      </div>
+      {% endif %}
+      {% if context.data_caveats %}
+      <div class="prose" style="margin-top:0.5rem;">
+        <strong>数据说明：</strong>
+        <ul class="styled-list">
+          {% for c in context.data_caveats %}
+          <li>{{ c }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+  </div>
+
+  <!-- ════════════ Footer ════════════ -->
+  <footer class="memo-footer">
+    <p>{{ context.i18n.disclaimer or "免责声明：本报告由 AI 自动生成，仅供参考，不构成投资建议。投资有风险，入市需谨慎。" }}</p>
+    {% if context.generated_by %}<p style="margin-top:0.3rem;">生成引擎：{{ context.generated_by }}</p>{% endif %}
+  </footer>
+
+</div>
+</body>
+</html>

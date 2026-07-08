@@ -1,6 +1,6 @@
 # 开源项目参考清单
 
-> 最后更新：2026-07-05 | 参考项目总数：12
+> 最后更新：2026-07-08 | 参考项目总数：14
 
 ---
 
@@ -52,6 +52,24 @@
 | **解决的问题** | 回测结果不可复现是量化领域的毒瘤。审计流水线确保每次回测可追溯、可复现 |
 | **融入位置** | `src/backtest/`（回测审计设计）、计划Phase 2实现 |
 | **不借鉴的部分** | Rust实现（我们全Python）、CLI/SDK分工（方向一致但实现不同） |
+
+### 6. LEAN（QuantConnect，10k+★）
+
+| 项目 | https://github.com/QuantConnect/Lean |
+|------|--------------------------------------|
+| **借鉴内容** | 事件驱动算法框架（`OnData`/`OnOrderEvent`/`OnEndOfDay` 事件模型）、多资产统一抽象（Equity/Options/Futures/Forex/Crypto/CFD）、DataFeed 抽象层（`IDataProvider` + `ISubscriptionDataSource`）、Brokerage 模型（`IBrokerage` 统一接口 — 回测/实盘同一套 API）、Algorithm Portfolio 管理（`SecurityHolding` + `SecurityPortfolioManager`）、Warmup 期（预热数据窗口） |
+| **解决的问题** | 事件驱动回测架构的工业级参考——LEAN 是 Github 上最成熟的 C# 开源量化引擎，其 Algorithm→Portfolio→Risk→Execution 管道设计直接影响回测引擎的模块拆分思路 |
+| **融入位置** | `src/backtest/engine.py`（事件循环设计）、`src/routing/positioning.py`（组合管理模型）、未来多资产扩展 |
+| **不借鉴的部分** | C# 实现（LEAN 主体 C#，我们全 Python）、QuantConnect 云平台依赖、LEAN CLI/Cloud 部署工具链 |
+
+### 7. Dexter（27.3k★）
+
+| 项目 | https://github.com/virattt/dexter |
+|------|-----------------------------------|
+| **借鉴内容** | 自主金融研究 Agent 架构（任务规划→执行→自检→迭代循环）、智能任务分解（复杂查询→结构化研究步骤）、Self-Validation 自校验机制（检查自身工作并迭代至完成）、Scratchpad 调试日志（JSONL 格式记录 tool_call + LLM summary）、安全护栏（loop detection + step limits 防止失控执行） |
+| **解决的问题** | AI 驱动的金融研究 Agent 如何做任务编排——Dexter 的 think→plan→execute→validate→iterate 循环为我们的 orchestrator 管道设计提供了参考范式 |
+| **融入位置** | `src/routing/orchestrator.py`（编排管道设计）、Agent 自校验机制、调试日志格式 |
+| **不借鉴的部分** | Bun/TypeScript 技术栈（我们全 Python）、美股数据源（我们聚焦 A 股数据源） |
 
 ---
 
@@ -144,7 +162,7 @@
 | 模块 | 主要参考项目 |
 |------|------------|
 | **数据聚合层** | daily_stock_analysis、PanWatch |
-| **回测引擎** | Backtrader、open-xquant、AlphaEvo |
+| **回测引擎** | Backtrader、open-xquant、AlphaEvo、LEAN |
 | **因子体系** | FinceptTerminal、OpenStock |
 | **L1 分析师** | ai-berkshire、cyberagent |
 | **基本面深度分析** | ai-berkshire（四大师、7步研究、三情景估值） |
@@ -152,7 +170,7 @@
 | **博弈论知识库** | cyberagent（瓶颈分类、证据分级）+ 自主设计（15条A股规则） |
 | **军规引擎** | ai-gold-miner（投资者约束设计）+ 自主设计（30条A股专属） |
 | **情绪/恐慌套利** | OpenStock（跨源情绪聚合） |
-| **多Agent编排** | ai-berkshire、TradingAgents |
+| **多Agent编排** | ai-berkshire、TradingAgents、Dexter |
 | **策略进化** | AlphaEvo（自我进化循环+AntiFitMetrics） |
 | **测试框架** | TradingAgents（pytest + conftest） |
 
