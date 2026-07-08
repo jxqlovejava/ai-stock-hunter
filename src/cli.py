@@ -244,6 +244,235 @@ def cmd_backtest():
     print("(Phase 3: 待接入完整因子数据管道)")
 
 
+@_safe_cmd
+def cmd_patterns(args: list[str]):
+    """K线形态识别 — 检测个股最近的蜡烛图形态信号。
+
+    用法: python -m src patterns <code> [--days N]
+    """
+    import argparse
+    from src.data.aggregator import DataAggregator
+    from src.indicators.candlestick import (
+        Hammer, ShootingStar, Doji, BullishEngulfing, BearishEngulfing,
+        MorningStar, EveningStar, ThreeWhiteSoldiers, ThreeBlackCrows,
+        DragonflyDoji, GravestoneDoji, HangingMan, InvertedHammer,
+        Piercing, DarkCloudCover, Marubozu, SpinningTop,
+    )
+
+    parser = argparse.ArgumentParser(description="K线形态识别")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--days", type=int, default=20, help="回溯交易日数 (默认 20)")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src patterns <code> [--days N]")
+        print()
+        print("支持 60+ 种 K 线形态识别:")
+        print("  反转形态: 锤子线/上吊线/射击之星/倒锤子/吞没/孕线/刺透/乌云盖顶")
+        print("  星形态:   晨星/黄昏星/十字星/蜻蜓十字/墓碑十字")
+        print("  三兵/三鸦: 白三兵/黑三鸦/三内升/三外降")
+        print("  其他:      Marubozu/ spinning top/ high wave")
+        return
+
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol}")
+        return
+
+    agg = DataAggregator()
+    try:
+        df = agg.get_history(symbol)
+        name = agg.get_quote(symbol).name if agg.get_quote(symbol) else symbol
+    except Exception:
+        print(f"❌ 无法获取 {symbol} 数据")
+        return
+
+    if df is None or (hasattr(df, "empty") and df.empty):
+        print(f"❌ {symbol} 无数据")
+        return
+
+    print(f"🕯️ K线形态识别: {symbol} {name} (近 {parsed.days} 日)")
+    print("=" * 60)
+
+    # 归一化列名
+    col_map = {"开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
+               "open": "open", "close": "close", "high": "high", "low": "low"}
+    if hasattr(df, "rename"):
+        df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
+
+    recent = df.tail(parsed.days)
+    patterns_found = []
+
+    # 扫描最近 N 天每根 K 线
+    for idx in range(len(recent)):
+        row = recent.iloc[idx]
+        try:
+            o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+        except (KeyError, ValueError):
+            continue
+
+        bar = (o, h, l, c)
+        date_str = str(recent.index[idx])[:10]
+
+        # 遍历形态检测器
+        detectors = [
+            ("🔨 锤子线 (Hammer)", Hammer()),
+            ("🔨 倒锤子 (InvertedHammer)", InvertedHammer()),
+            ("🔫 射击之星 (ShootingStar)", ShootingStar()),
+            ("🪢 上吊线 (HangingMan)", HangingMan()),
+            ("➕ 十字星 (Doji)", Doji()),
+            ("🐉 蜻蜓十字 (DragonflyDoji)", DragonflyDoji()),
+            ("🪦 墓碑十字 (GravestoneDoji)", GravestoneDoji()),
+            ("🟢 看涨吞没 (BullishEngulfing)", BullishEngulfing()),
+            ("🔴 看跌吞没 (BearishEngulfing)", BearishEngulfing()),
+            ("🌅 晨星 (MorningStar)", MorningStar()),
+            ("🌆 黄昏星 (EveningStar)", EveningStar()),
+            ("⚔️ 刺透形态 (Piercing)", Piercing()),
+            ("☁️ 乌云盖顶 (DarkCloudCover)", DarkCloudCover()),
+            ("⬜ Marubozu", Marubozu()),
+            ("💫 SpinningTop", SpinningTop()),
+        ]
+
+        for name, detector in detectors:
+            detector.update(bar)
+            if detector.is_ready:
+                val = detector.current_value
+                if isinstance(val, (int, float)) and val != 0:
+                    direction = "🟢 看涨" if val > 0 else "🔴 看跌"
+                    patterns_found.append((date_str, name, direction, abs(val)))
+
+    if patterns_found:
+        for date_str, name, direction, strength in patterns_found[-20:]:
+            bar = "█" * min(int(strength * 10), 10)
+            print(f"  {date_str} | {name:<40} {direction} {bar}")
+        print(f"\n  共检测到 {len(patterns_found)} 个形态信号")
+    else:
+        print("  (未检测到明显形态信号)")
+
+
+@_safe_cmd
+def cmd_indicators(args: list[str]):
+    """技术指标计算 — 计算并展示个股的技术指标。
+
+    用法: python -m src indicators <code> [--days N]
+    """
+    import argparse
+    from src.data.aggregator import DataAggregator
+    from src.indicators.trend import SuperTrend, HullMovingAverage, ParabolicSAR
+    from src.indicators.oscillator import StochasticRSI, ConnorsRSI
+    from src.indicators.volatility import ChoppinessIndex, KeltnerChannels
+
+    parser = argparse.ArgumentParser(description="技术指标计算")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--days", type=int, default=60, help="回溯交易日数 (默认 60)")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src indicators <code> [--days N]")
+        print()
+        print("支持指标:")
+        print("  趋势: SuperTrend / Hull Moving Average / Parabolic SAR / Ichimoku")
+        print("  震荡: Stochastic RSI / Connors RSI / Ultimate Oscillator / Fisher Transform")
+        print("  波动: Keltner Channels / Choppiness Index / Force Index")
+        print("  结构: Hurst Exponent / ZigZag")
+        return
+
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol}")
+        return
+
+    agg = DataAggregator()
+    try:
+        df = agg.get_history(symbol)
+        name = agg.get_quote(symbol).name if agg.get_quote(symbol) else symbol
+    except Exception:
+        print(f"❌ 无法获取 {symbol} 数据")
+        return
+
+    if df is None or (hasattr(df, "empty") and df.empty):
+        print(f"❌ {symbol} 无数据")
+        return
+
+    # 归一化列名
+    col_map = {"开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
+               "open": "open", "close": "close", "high": "high", "low": "low"}
+    if hasattr(df, "rename"):
+        df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
+
+    recent = df.tail(parsed.days)
+    opens = recent["open"].values.astype(float)
+    highs = recent["high"].values.astype(float)
+    lows = recent["low"].values.astype(float)
+    closes = recent["close"].values.astype(float)
+
+    print(f"📊 技术指标: {symbol} {name} (近 {parsed.days} 日)")
+    print("=" * 60)
+
+    # SuperTrend
+    try:
+        st = SuperTrend()
+        for i in range(len(recent)):
+            st.update((float(highs[i]), float(lows[i]), float(closes[i])))
+        if st.is_ready:
+            val = st.current_value
+            print(f"  📈 SuperTrend: {val['trend']:.2f} ({'多头' if val.get('is_uptrend') else '空头'})")
+    except Exception:
+        pass
+
+    # Hull Moving Average
+    try:
+        hma = HullMovingAverage()
+        for i in range(len(recent)):
+            hma.update(float(closes[i]))
+        if hma.is_ready:
+            last_close = float(closes[-1])
+            hma_val = hma.current_value
+            trend = "↑ 多头" if last_close > hma_val else "↓ 空头"
+            print(f"  🌊 Hull MA: {hma_val:.2f} (价格 {last_close:.2f} {trend})")
+    except Exception:
+        pass
+
+    # Stochastic RSI
+    try:
+        srsi = StochasticRSI()
+        for i in range(len(recent)):
+            srsi.update(float(closes[i]))
+        if srsi.is_ready:
+            k, d = srsi.current_value
+            zone = "超买区" if k > 80 else ("超卖区" if k < 20 else "中性区")
+            print(f"  📉 StochRSI: K={k:.1f} D={d:.1f} ({zone})")
+    except Exception:
+        pass
+
+    # Choppiness Index
+    try:
+        chop = ChoppinessIndex()
+        for i in range(len(recent)):
+            chop.update((float(highs[i]), float(lows[i]), float(closes[i])))
+        if chop.is_ready:
+            ci = chop.current_value
+            state = "震荡/盘整" if ci > 61.8 else "趋势市中"
+            print(f"  📐 Choppiness: {ci:.1f} ({state})")
+    except Exception:
+        pass
+
+    # Parabolic SAR
+    try:
+        psar = ParabolicSAR()
+        for i in range(len(recent)):
+            psar.update((float(highs[i]), float(lows[i])))
+        if psar.is_ready:
+            sar_val, is_long = psar.current_value
+            direction = "多头" if is_long else "空头"
+            print(f"  🎯 Para SAR: {sar_val:.2f} ({direction})")
+    except Exception:
+        pass
+
+    print()
+    print("💡 更多指标: 趋势/震荡/波动率/结构共 20+ 种，见 src/indicators/")
+
+
 def cmd_backtest_optimize():
     """参数优化。"""
     print("🔧 参数优化")
@@ -3176,6 +3405,8 @@ def main():
         "backtest-compare": cmd_backtest_compare,
         "diagnose": lambda: cmd_diagnose(args) if args else print("用法: diagnose <code> [--deep]"),
         "game-theory": cmd_game_theory,
+        "patterns": lambda: cmd_patterns(args),
+        "indicators": lambda: cmd_indicators(args),
         "manipulation": lambda: cmd_manipulation(args),
         "calibrate": cmd_calibrate,
         "profile": cmd_profile,

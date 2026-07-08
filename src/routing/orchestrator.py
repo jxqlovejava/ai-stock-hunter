@@ -664,7 +664,15 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Scenario valuation failed for %s: %s", symbol, e)
 
-        # Step 5: 仓位调度
+        # Step 5: 置信门控 (pipeline.ConfidenceGate)
+        try:
+            from src.pipeline import ConfidenceGate
+            for citation in getattr(verdict, "source_citations", []) or []:
+                ConfidenceGate.check(citation, context=f"verdict:{symbol}")
+        except Exception:
+            pass  # 门控失败不阻塞管道
+
+        # Step 6: 仓位调度
         effective_macro_cap = 0.80 * risk_mult
         signal = self.positioning.generate_signal(
             verdict,
