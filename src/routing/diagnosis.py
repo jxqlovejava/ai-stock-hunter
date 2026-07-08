@@ -492,6 +492,9 @@ class DiagnosisEngine:
 
         results: list[tuple[str, DiagnosisReport, float]] = []
         for c in candidates[:100]:  # 最多扫描 100 只
+            # 兼容 dict 和 Pydantic BaseModel (Quote)
+            if hasattr(c, "model_dump"):
+                c = c.model_dump()
             symbol = c.get("symbol", "")
             name = c.get("name", "")
             quote = c.get("quote") or {}
