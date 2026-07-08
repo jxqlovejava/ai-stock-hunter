@@ -3360,6 +3360,76 @@ def _print_command_detail(cmd: str) -> None:
 
 
 @_safe_cmd
+def cmd_health():
+    """系统能力自检 — 验证所有模块和命令的健康状态。"""
+    import importlib
+
+    print("🏥 白泽系统能力自检")
+    print("=" * 60)
+
+    # 数据源
+    print("\n📡 数据源:")
+    try:
+        from src.data.aggregator import DataAggregator
+        agg = DataAggregator()
+        status = agg.source_status()
+        for src, state in status.items():
+            icon = "✅" if "✅" in str(state) else "❌"
+            print(f"  {icon} {src}: {state}")
+    except Exception as e:
+        print(f"  ❌ 数据聚合器: {e}")
+
+    # 模块
+    print("\n📦 核心模块:")
+    modules = [
+        ("routing.orchestrator", "管道编排"),
+        ("routing.diagnosis", "多维诊断"),
+        ("routing.verdict", "综合裁决"),
+        ("routing.positioning", "仓位调度"),
+        ("routing.risk_control", "风控执行"),
+        ("routing.attribution", "涨跌归因"),
+        ("game_theory.manipulation", "庄家操纵检测"),
+        ("game_theory.playbooks", "操盘手法库"),
+        ("sentiment.signals", "情绪检测"),
+        ("sentiment.panic_arb", "恐慌套利"),
+        ("macro.monetary_credit", "宏观货币信用"),
+        ("indicators.candlestick", "K线形态识别"),
+        ("backtest.runner", "策略回测"),
+        ("learner.calibrator", "置信度校准"),
+        ("cron.executor", "定时任务"),
+        ("pipeline.confidence_gate", "置信门控"),
+        ("profile", "用户画像"),
+        ("memory.store", "记忆系统"),
+        ("reporting.memo_renderer", "投资备忘录"),
+        ("finance.meta_tool", "财务查询"),
+    ]
+    for mod_path, desc in modules:
+        try:
+            importlib.import_module(f"src.{mod_path}")
+            print(f"  ✅ {desc} ({mod_path})")
+        except Exception as e:
+            print(f"  ❌ {desc} ({mod_path}): {e}")
+
+    # CLI 命令
+    print("\n🔧 CLI 命令:")
+    cmd_count = len([c for c in dir(sys.modules[__name__]) if c.startswith("cmd_")])
+    print(f"  总计 {cmd_count} 个命令已注册")
+
+    # cron
+    print("\n⏰ 主动任务:")
+    try:
+        from src.cron.executor import JobExecutor
+        builtins = JobExecutor.list_builtins()
+        for name, cmd in builtins.items():
+            print(f"  📋 {name}: {cmd}")
+        if not builtins:
+            print("  (无)")
+    except Exception as e:
+        print(f"  ❌ {e}")
+
+    print(f"\n✅ 自检完成")
+
+
 def cmd_start(args: list[str]) -> None:
     """新手引导 — 交互式导览系统功能。"""
     steps = [
@@ -3583,6 +3653,7 @@ def main():
         return
 
     commands = {
+        "health": cmd_health,
         "start": lambda: cmd_start(args),
         "scan": lambda: cmd_scan(args),
         "analyze": lambda: cmd_analyze(args) if args else print("用法: analyze <code> [--deep]"),

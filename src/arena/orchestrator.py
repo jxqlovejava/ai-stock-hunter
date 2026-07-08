@@ -309,6 +309,16 @@ class ArenaOrchestrator:
         # Step 6: 持久化
         self._save(session, config)
 
+        # Step 7: 通知 evolution 管道 (竞技场优胜者可自动进入进化流水线)
+        try:
+            from src.evolution.lifecycle import LifecycleManager
+            lm = LifecycleManager()
+            for entry in (session.leaderboard or [])[:1]:  # 仅第一名
+                if hasattr(lm, "promote_from_arena"):
+                    lm.promote_from_arena(entry.strategy_name, entry.composite_score)
+        except Exception:
+            pass
+
         return session
 
     # ------------------------------------------------------------------

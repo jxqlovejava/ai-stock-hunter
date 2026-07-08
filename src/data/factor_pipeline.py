@@ -228,7 +228,7 @@ def compute_earnings_growth_factor(df: pd.DataFrame) -> pd.Series:
 # 复合因子计算
 # ---------------------------------------------------------------------------
 
-def compute_all_factors(df: pd.DataFrame, use_registry: bool = False) -> pd.DataFrame:
+def compute_all_factors(df: pd.DataFrame, use_registry: bool = True) -> pd.DataFrame:
     """对 DataFrame 计算所有因子，添加因子列。
 
     Args:
