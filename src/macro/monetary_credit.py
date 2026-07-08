@@ -222,31 +222,192 @@ class MonetaryCreditAnalyzer:
     # ------------------------------------------------------------------
 
     def _get_social_financing_growth(self) -> Optional[float]:
-        """Fetch 社融同比增速 via AKShare."""
+        """Fetch 社融同比增速 via AKShare → 东财直连 → 国信。
+
+        三层降级：AKShare → 东方财富API → 国信券商API
+        对 AKShare 的 SSL 错误做降级重试（商务部网站 TLS 过时）。
+        """
         cache_key = "sf_growth"
+        # 检查缓存（实例级 + 静态 fallback）
         cached = self._cache_get(cache_key)
+        if cached is None:
+            cached = MonetaryCreditAnalyzer._cache_get_static(cache_key)
         if cached is not None:
             return cached
 
-        try:
-            import akshare as ak
-            # Try social financing flow data
-            df = ak.macro_china_shrzgm()
-            if df is not None and len(df) > 0:
-                # Look for latest YoY growth figure
-                for col in ["社会融资规模存量同比增长", "社融存量同比", "同比增长"]:
-                    if col in df.columns:
-                        val = float(df[col].iloc[-1])
-                        self._cache_set(cache_key, val)
-                        return val
-        except Exception as e:
-            logger.warning("AKShare social financing fetch failed: %s", e)
+        # 1. 尝试 AKShare（带 SSL 降级重试）
+        val = self._try_akshare_sf(cache_key)
+        if val is not None:
+            return val
 
-        # Fallback: try Guosen macro
+        # 2. 尝试东方财富直连
+        val = self._try_eastmoney_sf(cache_key)
+        if val is not None:
+            return val
+
+        # 3. Fallback: 国信券商 API
         val = self._query_guosen("社会融资规模增速")
         if val is not None:
             self._cache_set(cache_key, val)
         return val
+
+    @staticmethod
+    def _try_akshare_sf(cache_key: str) -> Optional[float]:
+        """通过 AKShare 获取社融数据，SSL 错误时降级重试。"""
+        try:
+            import akshare as ak
+            df = ak.macro_china_shrzgm()
+            if df is not None and len(df) > 0:
+                for col in ["社会融资规模存量同比增长", "社融存量同比", "同比增长"]:
+                    if col in df.columns:
+                        val = float(df[col].iloc[-1])
+                        MonetaryCreditAnalyzer._cache_set_static(cache_key, val)
+                        return val
+        except Exception as e:
+            err = str(e)
+            # SSL 错误 → 降级重试（商务部服务器 TLS 1.0/1.1）
+            if "SSL" in err or "Cipher" in err or "cipher" in err or "handshake" in err.lower():
+                try:
+                    return MonetaryCreditAnalyzer._try_akshare_sf_legacy_tls(cache_key)
+                except Exception as e2:
+                    logger.debug("AKShare SF legacy TLS retry also failed: %s", e2)
+            else:
+                logger.debug("AKShare SF fetch failed: %s", e)
+        return None
+
+    @staticmethod
+    def _try_akshare_sf_legacy_tls(cache_key: str) -> Optional[float]:
+        """绕过 AKShare 直连商务部 API 获取社融月度增量。
+
+        data.mofcom.gov.cn 使用过时的 TLS / 密码套件，
+        用 urllib + 宽松 SSL 上下文 + POST 直接获取 JSON。
+        按月增量计算近 12 个月累计 → 同比增速。
+        """
+        import json
+        import ssl
+        import urllib.request
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+        ctx.set_ciphers("ALL:COMPLEMENTOFALL")
+
+        body = json.dumps({"pageSize": 24, "pageNumber": 1}).encode()
+        req = urllib.request.Request(
+            "https://data.mofcom.gov.cn/datamofcom/front/gnmy/shrzgmQuery",
+            data=body,
+            headers={
+                "Content-Type": "application/json;charset=UTF-8",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+                rows = json.loads(resp.read())
+        except Exception as exc:
+            logger.debug("Direct mofcom SF query failed: %s", exc)
+            return None
+
+        if not rows or not isinstance(rows, list):
+            return None
+
+        # rows 按 date (YYYYMM) 降序。tiosfs = 社会融资规模当月增量(亿元)
+        # 计算近 12 个月累计同比增速
+        # (最近12个月累计 / 去年同期12个月累计 - 1) × 100
+        current_year_total = 0.0
+        prev_year_total = 0.0
+        latest_date = rows[0].get("date", "")
+
+        for row in rows:
+            d = row.get("date", "")
+            val = row.get("tiosfs")
+            if val is None:
+                continue
+            try:
+                val_f = float(val)
+            except (TypeError, ValueError):
+                continue
+
+            if not d or len(d) < 6:
+                continue
+
+            year = int(d[:4])
+            month = int(d[4:6])
+            latest_year = int(latest_date[:4]) if latest_date else 0
+            latest_month = int(latest_date[4:6]) if latest_date else 0
+
+            # 同月对比：当前年 vs 去年
+            if year == latest_year and month <= latest_month:
+                current_year_total += val_f
+            elif year == latest_year - 1 and month <= latest_month:
+                prev_year_total += val_f
+
+        if prev_year_total > 0 and current_year_total > 0:
+            yoy_growth = (current_year_total / prev_year_total - 1.0) * 100.0
+            MonetaryCreditAnalyzer._cache_set_static(cache_key, yoy_growth)
+            logger.info("社融增速 via mofcom 直连: %.2f%% (累计 %d月)", yoy_growth, latest_month)
+            return yoy_growth
+
+        # fallback: 如果累计对比不够，用最新月单月对比
+        if len(rows) >= 13:
+            try:
+                current_month = float(rows[0].get("tiosfs", 0) or 0)
+                prev_year_month = float(rows[12].get("tiosfs", 0) or 0)
+                if prev_year_month > 0:
+                    yoy = (current_month / prev_year_month - 1.0) * 100.0
+                    MonetaryCreditAnalyzer._cache_set_static(cache_key, yoy)
+                    logger.info("社融增速 via mofcom (单月同比): %.2f%%", yoy)
+                    return yoy
+            except (TypeError, ValueError, IndexError):
+                pass
+
+        return None
+
+    @staticmethod
+    def _try_eastmoney_sf(cache_key: str) -> Optional[float]:
+        """通过东方财富 API 获取社融数据。"""
+        try:
+            import requests
+            url = (
+                "https://datacenter-web.eastmoney.com/api/data/v1/get"
+                "?reportName=RPT_ECONOMY_SOCIAL_FINANCING"
+                "&columns=REPORT_DATE,INDICATOR_NAME,ACTUAL"
+                "&sortColumns=REPORT_DATE&sortTypes=-1"
+                "&pageSize=10&pageNumber=1&source=WEB&client=WEB"
+            )
+            r = requests.get(url, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("success") and data.get("result", {}).get("data"):
+                    rows = data["result"]["data"]
+                    # 找最新一条包含"同比"或"增速"的指标
+                    for row in rows:
+                        name = row.get("INDICATOR_NAME", "")
+                        if "同比" in name or "增速" in name:
+                            val = float(row["ACTUAL"])
+                            MonetaryCreditAnalyzer._cache_set_static(cache_key, val)
+                            logger.info("社融增速 via 东财: %.2f%%", val)
+                            return val
+        except Exception as e:
+            logger.debug("Eastmoney SF fetch failed: %s", e)
+        return None
+
+    @staticmethod
+    def _cache_set_static(cache_key: str, val: float) -> None:
+        """静态缓存写入（供 static 方法使用）。"""
+        # 通过 MonetaryCreditAnalyzer 实例的缓存机制
+        # 这里简化：直接存类级别 dict
+        if not hasattr(MonetaryCreditAnalyzer, "_static_cache"):
+            MonetaryCreditAnalyzer._static_cache = {}
+        MonetaryCreditAnalyzer._static_cache[cache_key] = val
+
+    @staticmethod
+    def _cache_get_static(cache_key: str) -> Optional[float]:
+        if hasattr(MonetaryCreditAnalyzer, "_static_cache"):
+            return MonetaryCreditAnalyzer._static_cache.get(cache_key)
+        return None
 
     def _get_m1_m2_gap(self) -> Optional[float]:
         """Fetch M1-M2剪刀差 via AKShare."""

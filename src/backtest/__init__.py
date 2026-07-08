@@ -4,6 +4,17 @@
 from .comparator import StrategyComparator, StrategyRanking
 from .competitor_benchmark import BenchmarkResult, CompetitorAnalyzer, CompetitorProfile, PKReport
 from .engine import BacktestEngine, BacktestResult
+from .intraday_engine import (
+    Holding,
+    IntradayEngine,
+    IntradayResult,
+    IntradayStrategy,
+    Order,
+    OrderDirection,
+    OrderHandler,
+    OrderStatus,
+    Portfolio,
+)
 from .mvp1_strategy import MVP1Strategy
 from .optimizer import (
     BayesianOptimizer,
@@ -40,4 +51,14 @@ __all__ = [
     "TradeReviewer",
     "TradeReview",
     "ReviewStats",
+    # 日内回测
+    "IntradayEngine",
+    "IntradayResult",
+    "IntradayStrategy",
+    "Portfolio",
+    "Holding",
+    "Order",
+    "OrderDirection",
+    "OrderStatus",
+    "OrderHandler",
 ]

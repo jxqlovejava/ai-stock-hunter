@@ -17,16 +17,26 @@
 """
 
 from .attribution import AlphaAttribution, AttributionReport
+from .decay_tracker import AlphaDecay, AlphaDecayTracker
+from .factor_backtest import FactorBacktestEngine
+from .factor_synthesizer import FactorSynthesizer
 from .lens import AlphaLens
 from .monitor import AlphaMonitor
+from .ranking_engine import RankingEngine
 from .schema import (
     AlphaDecayStatus,
     AlphaProfile,
     AlphaSource,
+    AlphaSynthesis,
     ConsensusGap,
+    FactorBacktestResult,
+    FactorScanResult,
     NarrativeLifecycle,
     NarrativeStage,
+    RankedStock,
+    RankingResult,
     SourceTier,
+    SynthesisMethod,
 )
 
 __all__ = [
@@ -38,9 +48,20 @@ __all__ = [
     "ConsensusGap",
     "NarrativeStage",
     "AlphaProfile",
+    "FactorBacktestResult",
+    "FactorScanResult",
+    "AlphaSynthesis",
+    "SynthesisMethod",
+    "RankedStock",
+    "RankingResult",
     # Engine
     "AlphaLens",
     "AlphaMonitor",
+    "FactorBacktestEngine",
+    "AlphaDecayTracker",
+    "AlphaDecay",
+    "FactorSynthesizer",
+    "RankingEngine",
     # Attribution
     "AlphaAttribution",
     "AttributionReport",

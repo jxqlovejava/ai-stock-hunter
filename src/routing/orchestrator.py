@@ -85,6 +85,10 @@ class OrchestratorResult:
     cross_validated: bool = False
     # CogAlpha: 多 Agent 质量审查报告
     quality_report: Optional[dict] = None
+    # Phase 7: 行业深度研究 (mode="full")
+    sector_research: Optional[dict] = None
+    # Phase 8: 公司深度研究 (mode="full")
+    company_deep_research: Optional[dict] = None
     # 军规审查结果 (Phase 0)
     doctrine_result: Optional[dict] = None
     # 投资者画像状态
@@ -136,6 +140,40 @@ class Orchestrator:
         self.anti_bias_engine = AntiBiasEngine()
         self.verdict_enforcer = VerdictEnforcer()
         self.mental_model_matcher = MentalModelMatcher()
+        # Phase 7: 行业深度研究 (mode="full") — 懒初始化
+        self._sector_classifier = None
+        self._competition_analyzer = None
+        self._sector_valuation = None
+        self._supply_chain_mapper = None
+        self._moat_analyzer = None
+        self._red_flag_detector = None
+        self._dcf_valuator = None
+        self._management_evaluator = None
+        self._report_aggregator = None
+
+    def _init_deep_research_engines(self):
+        """懒初始化深度研究引擎，避免导入失败阻断主流程。"""
+        try:
+            from src.industry.classifier import SectorClassifier
+            from src.industry.competition import CompetitionAnalyzer
+            from src.industry.valuation import SectorValuationFramework
+            from src.industry.supply_chain import SupplyChainDeepMapper
+            from src.fundamental.moat import MoatAnalyzer
+            from src.fundamental.red_flags import RedFlagDetector
+            from src.fundamental.dcf import DCFValuator
+            from src.fundamental.management import ManagementEvaluator
+            from src.fundamental.report_aggregator import ReportAggregator
+            self._sector_classifier = SectorClassifier()
+            self._competition_analyzer = CompetitionAnalyzer()
+            self._sector_valuation = SectorValuationFramework()
+            self._supply_chain_mapper = SupplyChainDeepMapper()
+            self._moat_analyzer = MoatAnalyzer()
+            self._red_flag_detector = RedFlagDetector()
+            self._dcf_valuator = DCFValuator()
+            self._management_evaluator = ManagementEvaluator()
+            self._report_aggregator = ReportAggregator()
+        except Exception as exc:
+            logger.warning("Deep research engines unavailable: %s", exc)
 
     def run(
         self,
@@ -146,8 +184,13 @@ class Orchestrator:
         portfolio: Optional[dict] = None,
         strategy_version: str = "",
         strategy_params: Optional[dict] = None,
+        mode: str = "daily",
     ) -> OrchestratorResult:
-        """执行全链路分析。"""
+        """执行全链路分析。
+
+        Args:
+            mode: "daily"=日常持仓监控(轻量), "full"=选股分析(含行业+公司深度研究)
+        """
         result = OrchestratorResult(
             symbol=symbol, name=name,
             strategy_version=strategy_version,
@@ -472,6 +515,10 @@ class Orchestrator:
                 confidence=0.65,
             ))
 
+        # ---- Phase 7 & 8: 行业+公司深度研究 (仅 mode="full") ----
+        if mode in ("full", "selection", "deep"):
+            self._run_deep_research(symbol, name, result, report, quote_dict, fin_list)
+
         # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
         quality_report = self.quality_checker.check(report)
         if not quality_report.passed:
@@ -660,6 +707,244 @@ class Orchestrator:
 
         result.passed = True
         return result
+
+    # ------------------------------------------------------------------
+    # Phase 7 & 8: Deep Research (mode="full")
+    # ------------------------------------------------------------------
+
+    def _run_deep_research(
+        self,
+        symbol: str,
+        name: str,
+        result: OrchestratorResult,
+        report,
+        quote_dict: dict,
+        fin_list: list,
+    ) -> None:
+        """运行行业深度研究 + 公司深度研究。
+
+        所有异常静默处理，不阻断主流程。
+        """
+        self._init_deep_research_engines()
+
+        # 提取上下文数据
+        current_pe = quote_dict.get("pe") if quote_dict else None
+        current_price = quote_dict.get("price", 0) or quote_dict.get("close", 0) if quote_dict else 0
+
+        # ---- Phase 7: 行业深度研究 ----
+        sector_data = {}
+        try:
+            sector_data = self._run_sector_research(symbol, name, current_pe)
+            result.sector_research = sector_data
+            report.source_citations.append(make_citation(
+                provider="sector_research", field="industry_deep",
+                data_type="analyst_report",
+                source_tier="T2", nature="interpretation", confidence=0.65,
+            ))
+        except Exception as exc:
+            logger.debug("Sector research failed for %s: %s", symbol, exc)
+            result.data_gaps.append("[DATA_GAP] 行业深度研究不可用")
+
+        # ---- Phase 8: 公司深度研究 ----
+        company_data = {}
+        try:
+            company_data = self._run_company_deep_research(
+                symbol, name, current_price, fin_list
+            )
+            result.company_deep_research = company_data
+            report.source_citations.append(make_citation(
+                provider="company_deep_research", field="company_deep",
+                data_type="analyst_report",
+                source_tier="T2", nature="interpretation", confidence=0.60,
+            ))
+        except Exception as exc:
+            logger.debug("Company deep research failed for %s: %s", symbol, exc)
+            result.data_gaps.append("[DATA_GAP] 公司深度研究不可用")
+
+    def _run_sector_research(self, symbol: str, name: str, current_pe=None) -> dict:
+        """Phase 7: 行业深度研究。"""
+        if not self._sector_classifier:
+            return {}
+
+        sector_class = self._sector_classifier.classify(symbol, name)
+        sector_name = sector_class.sw1_name
+        if sector_name == "未分类":
+            return {"sector_name": "未分类", "message": "行业分类数据不可用"}
+
+        competition = self._competition_analyzer.analyze(sector_name)
+        valuation_fw = self._sector_valuation.valuate(sector_name, current_pe)
+        supply_chain = self._supply_chain_mapper.analyze(symbol)
+
+        return {
+            "sector_name": sector_name,
+            "sw2_name": sector_class.sw2_name,
+            "benchmark_index": sector_class.benchmark_index,
+            "competition": {
+                "cr5": competition.cr5,
+                "hhi": competition.hhi,
+                "concentration": competition.concentration_label,
+                "barrier": competition.entry_barrier.value,
+                "barrier_factors": competition.barrier_factors[:3],
+                "intensity": round(competition.competition_intensity, 1),
+                "moat_potential": round(competition.moat_potential, 1),
+            },
+            "valuation": {
+                "primary_method": valuation_fw.primary_method.value,
+                "secondary_methods": [m.value for m in valuation_fw.secondary_methods],
+                "pe_median": valuation_fw.historical_pe_median,
+                "pe_p25": valuation_fw.historical_pe_p25,
+                "pe_p75": valuation_fw.historical_pe_p75,
+                "pe_percentile": round(valuation_fw.current_pe_percentile, 1),
+                "attractiveness": round(valuation_fw.valuation_score, 1),
+            },
+            "supply_chain": supply_chain,
+        }
+
+    def _run_company_deep_research(
+        self, symbol: str, name: str, current_price: float = 0, fin_list: list = None
+    ) -> dict:
+        """Phase 8: 公司深度研究。"""
+        if not self._moat_analyzer:
+            return {}
+
+        moat = self._moat_analyzer.analyze(symbol, name)
+
+        # 财务红旗 — 需要财务数据
+        red_flags_result = None
+        if fin_list and self._red_flag_detector:
+            try:
+                fin_dict = self._financials_to_dict(fin_list)
+                red_flags_result = self._red_flag_detector.detect(symbol, name, fin_dict)
+            except Exception:
+                pass
+
+        # 管理层
+        management = self._management_evaluator.evaluate(symbol, name)
+
+        # 一致预期
+        consensus = self._report_aggregator.aggregate(symbol, name)
+
+        # DCF — 尝试从财务数据提取 FCF
+        dcf_result = None
+        if self._dcf_valuator and fin_list:
+            try:
+                fcf = self._extract_fcf(fin_list)
+                if fcf > 0 and current_price > 0:
+                    dcf_result = self._dcf_valuator.valuate(
+                        symbol, name, free_cashflow=fcf, current_price=current_price,
+                    )
+            except Exception:
+                pass
+
+        # 综合评分
+        overall = self._calc_deep_overall(moat, red_flags_result, dcf_result, management)
+
+        result = {
+            "moat": {
+                "width": moat.overall_width.value,
+                "score": round(moat.moat_score, 1),
+                "dimensions": moat.dimensions,
+                "trend": moat.moat_trend,
+                "evidence": moat.key_evidence[:3],
+                "threats": moat.threats[:3],
+            },
+            "management": {
+                "overall": round(management.overall_score, 1),
+                "capital_allocation": management.capital_allocation,
+                "integrity": management.integrity_score,
+                "competency": management.competency_score,
+                "incentive": management.incentive_alignment,
+                "insider_ownership": management.insider_ownership_pct,
+            },
+            "overall_score": round(overall, 1),
+        }
+
+        if red_flags_result:
+            result["red_flags"] = {
+                "risk": red_flags_result.overall_risk,
+                "total_flags": red_flags_result.total_flags,
+                "critical_flags": red_flags_result.critical_flags,
+                "m_score": red_flags_result.m_score,
+                "m_score_label": red_flags_result.m_score_risk,
+                "f_score": red_flags_result.f_score,
+                "f_score_label": red_flags_result.f_score_quality,
+            }
+
+        if dcf_result and dcf_result.fair_value > 0:
+            result["dcf"] = {
+                "fair_value": round(dcf_result.fair_value, 2),
+                "upside_pct": round(dcf_result.upside_pct * 100, 1),
+                "margin_of_safety": round(dcf_result.margin_of_safety * 100, 1),
+                "bear_case": round(dcf_result.bear_case, 2),
+                "base_case": round(dcf_result.base_case, 2),
+                "bull_case": round(dcf_result.bull_case, 2),
+                "wacc": dcf_result.wacc,
+                "terminal_growth": dcf_result.terminal_growth,
+            }
+
+        if consensus.n_analysts > 0:
+            result["consensus"] = {
+                "n_analysts": consensus.n_analysts,
+                "rating": consensus.consensus_rating,
+                "buy": consensus.buy_count, "hold": consensus.hold_count, "sell": consensus.sell_count,
+                "target_mean": consensus.target_price_mean,
+                "target_high": consensus.target_price_high,
+                "target_low": consensus.target_price_low,
+                "trend": consensus.rating_trend,
+                "eps_trend": consensus.eps_revision_trend,
+            }
+
+        return result
+
+    @staticmethod
+    def _financials_to_dict(fin_list: list) -> dict:
+        """将财务数据列表转为 dict。"""
+        if not fin_list:
+            return {}
+        latest = fin_list[0] if isinstance(fin_list[0], dict) else {}
+        if hasattr(latest, '__dict__'):
+            latest = latest.__dict__
+        return {
+            "net_profit": latest.get("net_profit") or latest.get("净利润"),
+            "operating_cashflow": latest.get("operating_cashflow") or latest.get("经营现金流"),
+            "total_assets": latest.get("total_assets") or latest.get("总资产"),
+            "revenue_growth": latest.get("revenue_growth") or latest.get("revenue_yoy"),
+            "gross_margin": latest.get("gross_margin") or latest.get("毛利率"),
+            "debt_to_asset": latest.get("debt_to_asset") or latest.get("资产负债率"),
+            "roe": latest.get("roe"),
+        }
+
+    @staticmethod
+    def _extract_fcf(fin_list: list) -> float:
+        """从财务数据提取自由现金流。"""
+        fin = Orchestrator._financials_to_dict(fin_list)
+        ocf = fin.get("operating_cashflow", 0) or 0
+        # 简化：FCF ≈ OCF（缺少 CAPEX 数据）
+        return float(ocf)
+
+    @staticmethod
+    def _calc_deep_overall(moat, red_flags, dcf, management) -> float:
+        """公司深度研究综合评分。"""
+        scores = []
+        if moat:
+            scores.append((moat.moat_score, 0.35))
+        if red_flags:
+            penalty = min(100, red_flags.total_flags * 15)
+            scores.append((100 - penalty, 0.20))
+        else:
+            scores.append((50, 0.20))
+        if dcf and dcf.margin_of_safety is not None:
+            val_score = min(100, 50 + dcf.margin_of_safety * 100)
+            scores.append((val_score, 0.25))
+        else:
+            scores.append((50, 0.25))
+        if management:
+            scores.append((management.overall_score, 0.20))
+        else:
+            scores.append((50, 0.20))
+
+        total_w = sum(w for _, w in scores)
+        return sum(s * w for s, w in scores) / total_w if total_w > 0 else 50.0
 
     def quick_check(self, symbol: str, name: str = "") -> OrchestratorResult:
         """快速检查（仅军规 + 准入检查，不做完整分析）。"""

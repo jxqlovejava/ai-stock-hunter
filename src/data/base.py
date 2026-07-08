@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from .schema import Financials, FundamentalMetrics, Quote
+from .schema import Bar, Financials, FundamentalMetrics, Quote, Resolution
 
 
 class DataProvider(ABC):
@@ -33,6 +33,17 @@ class DataProvider(ABC):
     ) -> list[Financials]:
         """获取财务报表（最近 N 期）。"""
         ...
+
+    def get_bars(
+        self, symbol: str, resolution: Resolution,
+        start: str = "", end: str = "", market: str = "SH",
+    ) -> list[Bar]:
+        """获取历史 K 线（日线/分钟线）。
+
+        默认实现返回空列表，子类按需覆盖。
+        分钟级数据需子类主动支持（如 mootdx 已支持 1min/5min）。
+        """
+        return []
 
     def health_check(self) -> bool:
         """快速连通性检查。默认返回 True，子类可覆盖。"""

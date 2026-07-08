@@ -265,3 +265,131 @@ class AlphaProfile:
             f"[叙事: {self.narrative.stage.value}] "
             f"[衰减: {self.decay_status.value}]"
         )
+
+
+# ---------------------------------------------------------------------------
+# Factor Backtest DTOs — 因子回测结果
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FactorBacktestResult:
+    """单因子回测结果。
+
+    包含 IC 分析、分层收益、换手率等核心指标。
+    """
+    alpha_id: str
+    start_date: str
+    end_date: str
+    n_periods: int = 0
+    n_stocks_avg: float = 0.0
+
+    # IC 分析
+    ic_mean: float = 0.0                # Rank IC 均值
+    ic_std: float = 0.0                 # Rank IC 标准差
+    icir: float = 0.0                   # IC / IC_std (信息比率)
+    ic_positive_ratio: float = 0.0      # IC > 0 的比例
+    ic_t_stat: float = 0.0             # IC t 统计量
+
+    # 分层收益（5 分位）
+    top_quintile_return: float = 0.0    # Top 20% 年化收益
+    bottom_quintile_return: float = 0.0 # Bottom 20% 年化收益
+    long_short_return: float = 0.0      # Top - Bottom 年化收益
+    long_short_sharpe: float = 0.0      # 多空夏普
+
+    # 换手率
+    avg_turnover: float = 0.0           # 平均月度换手率
+    max_turnover: float = 0.0           # 最大月度换手率
+
+    # 稳定性
+    ic_decay_20d: float = 0.0           # 20 日 IC 衰减率
+    stability_score: float = 0.0        # 综合稳定性 0-100
+
+    # 元信息
+    category: str = ""
+    warnings: list[str] = field(default_factory=list)
+    source_citations: list = field(default_factory=list)
+
+    @property
+    def is_effective(self) -> bool:
+        """因子是否有效（ICIR ≥ 0.3 且 IC 均值 > 0）。"""
+        return self.icir >= 0.3 and self.ic_mean > 0
+
+    @property
+    def summary(self) -> str:
+        if self.n_periods < 3:
+            return f"{self.alpha_id}: 数据不足 ({self.n_periods} 期)"
+        return (
+            f"{self.alpha_id}: IC={self.ic_mean:+.3f}±{self.ic_std:.3f} "
+            f"ICIR={self.icir:.2f} LS={self.long_short_return:+.1%} "
+            f"Turnover={self.avg_turnover:.1%} "
+            f"[{'✓' if self.is_effective else '✗'}]"
+        )
+
+
+@dataclass
+class FactorScanResult:
+    """多因子扫描汇总。"""
+    results: list[FactorBacktestResult] = field(default_factory=list)
+    top_by_icir: list[str] = field(default_factory=list)
+    top_by_sharpe: list[str] = field(default_factory=list)
+    scan_timestamp: datetime = field(default_factory=datetime.now)
+
+
+# ---------------------------------------------------------------------------
+# Alpha Synthesis DTO — 多因子合成
+# ---------------------------------------------------------------------------
+
+
+class SynthesisMethod(Enum):
+    """多因子合成方法。"""
+    EQUAL_WEIGHT = "equal_weight"
+    ICIR_WEIGHT = "icir_weight"
+    OPTIMIZED = "optimized"       # 协方差约束最优化
+
+
+@dataclass
+class AlphaSynthesis:
+    """多因子合成结果。"""
+    method: SynthesisMethod = SynthesisMethod.ICIR_WEIGHT
+    alpha_ids: list[str] = field(default_factory=list)
+    weights: dict[str, float] = field(default_factory=dict)
+    combined_score_mean: float = 0.0
+    combined_score_std: float = 0.0
+    expected_icir: float = 0.0
+    factor_contributions: dict[str, float] = field(default_factory=dict)
+    correlation_matrix: dict[str, dict[str, float]] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+
+    @property
+    def is_valid(self) -> bool:
+        return len(self.weights) >= 2 and self.expected_icir > 0
+
+
+# ---------------------------------------------------------------------------
+# Ranking DTO — 全市场排名
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RankedStock:
+    """排名结果中的单只股票。"""
+    symbol: str
+    name: str = ""
+    rank: int = 0
+    composite_score: float = 50.0
+    factor_scores: dict[str, float] = field(default_factory=dict)
+    market_cap: float = 0.0
+    sector: str = ""
+
+
+@dataclass
+class RankingResult:
+    """全市场 Alpha 排名结果。"""
+    synthesis: Optional[AlphaSynthesis] = None
+    stocks: list[RankedStock] = field(default_factory=list)
+    total_scanned: int = 0
+    total_passed: int = 0
+    data_gaps: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)

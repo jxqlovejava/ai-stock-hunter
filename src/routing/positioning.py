@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 
+from .signal import Direction, PortfolioTarget, Signal, signal_from_verdict, target_from_signal
 from .verdict import Verdict
 from src.utils.decimal_utils import D, safe_divide
 
@@ -16,7 +17,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradeSignal:
-    """交易信号。"""
+    """交易信号。
+
+    .. deprecated::
+       Use ``Signal`` + ``PortfolioTarget`` from :mod:`src.routing.signal` instead.
+       ``Signal`` separates the prediction (direction/confidence/source) from the
+       position-sizing decision (``PortfolioTarget``), matching the LEAN Insight
+       pattern.  This class remains for backward compatibility and will be removed
+       in a future release.
+    """
     symbol: str
     action: str            # OPEN / ADD / HOLD / REDUCE / CLOSE
     target_weight: float   # 目标仓位占比 (0.0 - 1.0)
@@ -84,6 +93,13 @@ class PositioningEngine:
         timing_result=None,  # Phase 7: EntryExitEngine.TimingResult
     ) -> TradeSignal:
         """生成交易信号。
+
+        .. deprecated::
+           Use :meth:`generate_signal_from_verdict` which returns a
+           :class:`Signal` (prediction) and then call :meth:`signal_to_target`
+           to obtain a :class:`PortfolioTarget` (execution).  This method
+           returns the old monolithic ``TradeSignal`` and will be removed in a
+           future release.
 
         Args:
             verdict: L2 裁决结果
@@ -192,6 +208,53 @@ class PositioningEngine:
             target_1=target_1,
             target_2=target_2,
         )
+
+    # ------------------------------------------------------------------
+    # Phase 8: Signal + PortfolioTarget (LEAN Insight pattern)
+    # ------------------------------------------------------------------
+
+    def generate_signal_from_verdict(
+        self,
+        verdict: Verdict,
+        time_horizon: str = "medium",
+    ) -> Signal:
+        """Convert a Verdict into a prediction Signal (LEAN Insight pattern).
+
+        This is the new, methodologically clean path — separate the *what*
+        (Signal) from the *how much* (PortfolioTarget).
+
+        Args:
+            verdict: L2 Verdict from VerdictEngine.
+            time_horizon: Prediction horizon ("short" / "medium" / "long").
+
+        Returns:
+            A Signal carrying direction, confidence, and audit metadata.
+        """
+        return signal_from_verdict(verdict, source_model="verdict_engine", time_horizon=time_horizon)
+
+    @staticmethod
+    def signal_to_target(
+        signal: Signal,
+        portfolio_value: float,
+        current_price: float,
+        max_weight: float = 1.0,
+    ) -> PortfolioTarget:
+        """Convert a Signal into an executable PortfolioTarget.
+
+        This is the *how much* step — it takes the pure prediction from a
+        Signal and, given the current portfolio value and market price,
+        produces a concrete position target.
+
+        Args:
+            signal: The source Signal (prediction).
+            portfolio_value: Total portfolio value.
+            current_price: Current market price of the asset.
+            max_weight: Maximum allowed allocation (0.0–1.0).
+
+        Returns:
+            A PortfolioTarget ready for execution / risk-control checks.
+        """
+        return target_from_signal(signal, portfolio_value, current_price, max_weight=max_weight)
 
     # ------------------------------------------------------------------
     # Phase 5: 凯利 + 线性

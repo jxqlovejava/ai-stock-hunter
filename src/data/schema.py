@@ -10,11 +10,81 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from src.data.source_citation import SourceCitation
+
+
+# ---------------------------------------------------------------------------
+# 时间分辨率
+# ---------------------------------------------------------------------------
+
+
+class Resolution(str, Enum):
+    """K 线时间分辨率。
+
+    参考 LEAN Resolution enum，适配 A 股实际数据源能力:
+      - mootdx: 1min(8), 5min(0), daily(9), weekly(5), monthly(6)
+      - 腾讯: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly
+      - AKShare: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly
+    """
+
+    TICK = "tick"
+    MIN_1 = "1min"
+    MIN_5 = "5min"
+    MIN_15 = "15min"
+    MIN_30 = "30min"
+    HOUR = "1hour"
+    DAY = "daily"
+    WEEK = "weekly"
+    MONTH = "monthly"
+
+    @property
+    def total_minutes(self) -> int | None:
+        """返回该分辨率对应的分钟数。tick 返回 None。"""
+        _map = {
+            Resolution.TICK: None,
+            Resolution.MIN_1: 1,
+            Resolution.MIN_5: 5,
+            Resolution.MIN_15: 15,
+            Resolution.MIN_30: 30,
+            Resolution.HOUR: 60,
+            Resolution.DAY: 240,
+            Resolution.WEEK: 1200,
+            Resolution.MONTH: 4800,
+        }
+        return _map[self]
+
+    @property
+    def is_intraday(self) -> bool:
+        """是否为日内分辨率（分钟/小时/tick）。"""
+        return self in (
+            Resolution.TICK,
+            Resolution.MIN_1,
+            Resolution.MIN_5,
+            Resolution.MIN_15,
+            Resolution.MIN_30,
+            Resolution.HOUR,
+        )
+
+    @property
+    def pandas_freq(self) -> str | None:
+        """pandas resample 对应的频率字符串。tick 返回 None。"""
+        _map = {
+            Resolution.TICK: None,
+            Resolution.MIN_1: "1min",
+            Resolution.MIN_5: "5min",
+            Resolution.MIN_15: "15min",
+            Resolution.MIN_30: "30min",
+            Resolution.HOUR: "1h",
+            Resolution.DAY: "1D",
+            Resolution.WEEK: "1W",
+            Resolution.MONTH: "1ME",
+        }
+        return _map[self]
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +122,114 @@ class Quote(BaseModel):
     citation: Optional[SourceCitation] = Field(default=None, description="数据溯源引用")
 
     model_config = {"arbitrary_types_allowed": True}
+
+
+class Bar(BaseModel):
+    """单根 OHLCV K 线 — 时间序列的基本元素。
+
+    与 Quote（实时快照，单时间点）不同，Bar 携带一个时间段内的
+    开/高/低/收/量/额，是技术指标计算和回测的最小数据单元。
+
+    参考 LEAN TradeBar / QuoteBar 模型。
+    """
+
+    symbol: str = Field(..., description="6 位股票代码")
+    timestamp: datetime = Field(..., description="Bar 起始时间")
+    resolution: Resolution = Field(..., description="时间分辨率")
+    open: float = Field(..., description="开盘价")
+    high: float = Field(..., description="最高价")
+    low: float = Field(..., description="最低价")
+    close: float = Field(..., description="收盘价")
+    volume: int = Field(default=0, description="成交量（股）")
+    amount: float = Field(default=0.0, description="成交额（元）")
+    source: str = Field(default="", description="数据来源")
+
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
+
+    @property
+    def typical_price(self) -> float:
+        """典型价格 (H+L+C)/3。"""
+        return (self.high + self.low + self.close) / 3
+
+    @property
+    def weighted_close(self) -> float:
+        """加权收盘价 (H+L+2*C)/4。"""
+        return (self.high + self.low + 2 * self.close) / 4
+
+    @property
+    def is_rising(self) -> bool:
+        """阳线。"""
+        return self.close >= self.open
+
+    @property
+    def body_pct(self) -> float:
+        """实体占比 (close-open)/open * 100。"""
+        if self.open == 0:
+            return 0.0
+        return (self.close - self.open) / self.open * 100
+
+    @property
+    def upper_shadow_pct(self) -> float:
+        """上影线占比。"""
+        if self.open == 0:
+            return 0.0
+        body_high = max(self.open, self.close)
+        return (self.high - body_high) / self.open * 100 if self.high > body_high else 0.0
+
+    @property
+    def lower_shadow_pct(self) -> float:
+        """下影线占比。"""
+        if self.open == 0:
+            return 0.0
+        body_low = min(self.open, self.close)
+        return (body_low - self.low) / self.open * 100 if body_low > self.low else 0.0
+
+    def to_dict(self) -> dict:
+        """转为 dict，timestamp 格式化为 ISO 字符串。"""
+        return {
+            "symbol": self.symbol,
+            "timestamp": self.timestamp.isoformat(),
+            "resolution": self.resolution.value,
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "amount": self.amount,
+            "source": self.source,
+        }
+
+
+class TickData(BaseModel):
+    """单笔分笔/tick 数据 — 最小粒度行情单元。
+
+    A 股 tick 数据通常 3 秒一个快照（不是每笔成交），
+    包含当时的价格、累计成交量和买卖方向。
+
+    参考 LEAN Tick / TradeBar 输入源。
+    """
+
+    symbol: str = Field(..., description="6 位股票代码")
+    timestamp: datetime = Field(..., description="Tick 时间戳")
+    price: float = Field(..., description="成交价")
+    volume: int = Field(default=0, description="本笔成交量（股）")
+    cumulative_volume: int = Field(default=0, description="累计成交量（股）")
+    amount: float = Field(default=0.0, description="本笔成交额（元）")
+    cumulative_amount: float = Field(default=0.0, description="累计成交额（元）")
+    direction: str = Field(default="NEUTRAL", description="买卖方向: BUY/SELL/NEUTRAL")
+    source: str = Field(default="", description="数据来源")
+
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
+
+    @property
+    def is_buy(self) -> bool:
+        """主动性买盘。"""
+        return self.direction == "BUY"
+
+    @property
+    def is_sell(self) -> bool:
+        """主动性卖盘。"""
+        return self.direction == "SELL"
 
 
 # ---------------------------------------------------------------------------

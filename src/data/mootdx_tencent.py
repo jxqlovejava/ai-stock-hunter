@@ -19,7 +19,7 @@ from typing import Optional
 import pandas as pd
 
 from .base import DataProvider
-from .schema import Financials, Quote
+from .schema import Bar, Financials, Quote, Resolution
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,127 @@ class MootdxTencentProvider(DataProvider):
     def get_all_quotes(self) -> list[Quote]:
         """全市场扫描 — mootdx 不支持，返回空列表（走 AKShare 降级）。"""
         return []
+
+    # ------------------------------------------------------------------
+    # Bars — 日线 + 分钟线 (Resolution→Bar 结构化输出)
+    # ------------------------------------------------------------------
+
+    # mootdx frequency codes: 0=5min, 2=15min, 4=30min, 5=60min, 8=1min, 9=daily
+    _RESOLUTION_TO_TDX_FREQ: dict[Resolution, int] = {
+        Resolution.MIN_1: 8,
+        Resolution.MIN_5: 0,
+        Resolution.DAY: 9,
+        Resolution.WEEK: 5,
+        Resolution.MONTH: 6,
+    }
+
+    # 分钟数据日系数 ≈ 每日交易分钟数
+    _INTRADAY_BARS_PER_DAY: dict[Resolution, int] = {
+        Resolution.MIN_1: 240,
+        Resolution.MIN_5: 48,
+    }
+
+    def get_bars(
+        self, symbol: str, resolution: Resolution,
+        start: str = "", end: str = "", market: str = "SH",
+    ) -> list[Bar]:
+        """获取历史 Bar 列表（结构化输出）。
+
+        Args:
+            symbol: 6 位股票代码
+            resolution: 时间分辨率
+            start: 起始日期 YYYYMMDD
+            end: 结束日期 YYYYMMDD
+            market: 市场 SH/SZ
+
+        Returns:
+            Bar 列表，按 timestamp 升序排列
+        """
+        freq = self._RESOLUTION_TO_TDX_FREQ.get(resolution)
+        if freq is None:
+            logger.warning("mootdx 不支持分辨率 %s", resolution)
+            return []
+
+        client = self._get_tdx_client()
+        if client is None:
+            return []
+
+        # 计算 offset
+        offset = self._calc_offset(resolution, start)
+
+        try:
+            raw = client.bars(symbol=symbol, frequency=freq, offset=offset)
+            if raw is None or len(raw) == 0:
+                return []
+        except Exception as e:
+            logger.debug("mootdx bars failed for %s (%s): %s", symbol, resolution.value, e)
+            return []
+
+        return self._parse_bars(raw, symbol, resolution, start, end)
+
+    def _calc_offset(self, resolution: Resolution, start_date: str) -> int:
+        """计算 mootdx bars 需要的 offset 参数。
+
+        分钟数据 offset 基于日数 × 每日 bar 数（避免拉不够），
+        日线 offset 基于日数 + buffer。
+        """
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, "%Y%m%d")
+                days_diff = (datetime.now() - start_dt).days
+            except ValueError:
+                days_diff = 30
+        else:
+            days_diff = 30
+
+        if resolution.is_intraday:
+            bars_per_day = self._INTRADAY_BARS_PER_DAY.get(resolution, 240)
+            return min(days_diff * bars_per_day, 800)
+        return min(days_diff + 50, 2000)
+
+    def _parse_bars(
+        self, raw, symbol: str, resolution: Resolution,
+        start_date: str, end_date: str,
+    ) -> list[Bar]:
+        """mootdx 原始 DataFrame → Bar 列表。"""
+        df = pd.DataFrame(raw)
+
+        # 列名映射: mootdx 返回列名因 frequency 而异
+        col_map = {
+            "datetime": "timestamp", "open": "open", "close": "close",
+            "high": "high", "low": "low", "vol": "volume",
+            "amount": "amount",
+        }
+        df = df.rename(columns={
+            k: v for k, v in col_map.items() if k in df.columns
+        })
+
+        # 过滤日期范围
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            if start_date:
+                start_dt = datetime.strptime(start_date, "%Y%m%d")
+                df = df[df["timestamp"] >= start_dt]
+            if end_date:
+                end_dt = datetime.strptime(end_date, "%Y%m%d") + pd.Timedelta(days=1)
+                df = df[df["timestamp"] < end_dt]
+            df = df.sort_values("timestamp")
+
+        bars = []
+        for _, row in df.iterrows():
+            bars.append(Bar(
+                symbol=symbol,
+                timestamp=row["timestamp"].to_pydatetime() if hasattr(row["timestamp"], "to_pydatetime") else row["timestamp"],
+                resolution=resolution,
+                open=float(row.get("open", 0)),
+                high=float(row.get("high", 0)),
+                low=float(row.get("low", 0)),
+                close=float(row.get("close", 0)),
+                volume=int(row.get("volume", 0)),
+                amount=float(row.get("amount", 0)),
+                source=self.source_name,
+            ))
+        return bars
 
     # ------------------------------------------------------------------
     # Internal: 腾讯财经

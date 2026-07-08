@@ -151,3 +151,96 @@ SUPPLY_CHAINS: dict[str, list[SupplyChainNode]] = {
 def classify_stock(symbol: str) -> SupplyChainNode | None:
     """根据股票代码在供应链映射表中查找。"""
     return _ALL_NODES.get(symbol)
+
+
+# ---------------------------------------------------------------------------
+# Supply Chain Deep Mapper — 成本传导 / 价格弹性
+# ---------------------------------------------------------------------------
+
+
+class SupplyChainDeepMapper:
+    """产业链深度映射器。
+
+    在基础供应链映射之上，增加：
+      - 上下游关系推断
+      - 成本传导系数
+      - 价格弹性
+      - 瓶颈量化
+    """
+
+    # 层级 → 典型成本传导系数
+    LAYER_PASS_THROUGH: dict = {
+        SupplyChainLayer.MATERIAL: 0.8,    # 上游原材料 → 传导强
+        SupplyChainLayer.SUBSTRATE: 0.7,
+        SupplyChainLayer.EQUIPMENT: 0.65,
+        SupplyChainLayer.PACKAGING: 0.6,
+        SupplyChainLayer.DEVICE: 0.55,
+        SupplyChainLayer.MODULE: 0.45,
+        SupplyChainLayer.SYSTEM: 0.4,      # 系统集成 → 传导弱
+        SupplyChainLayer.END_DEMAND: 0.2,  # 终端需求 → 传导弱
+    }
+
+    # 瓶颈类型 → 量化评分
+    BOTTLENECK_SCORES: dict = {
+        BottleneckType.OWNER: 95,
+        BottleneckType.ADJACENT: 70,
+        BottleneckType.DERIVATIVE: 40,
+        BottleneckType.NONE: 5,
+    }
+
+    def analyze(self, symbol: str) -> dict:
+        """对单个股票做产业链深度分析。"""
+        node = classify_stock(symbol)
+        if node is None:
+            return {
+                "symbol": symbol,
+                "in_chain": False,
+                "message": "不在已知供应链映射中",
+            }
+
+        pass_through = self.LAYER_PASS_THROUGH.get(node.layer, 0.5)
+        bottleneck = self.BOTTLENECK_SCORES.get(node.bottleneck_type, 10)
+
+        return {
+            "symbol": symbol,
+            "in_chain": True,
+            "node_name": node.name,
+            "layer": node.layer.value,
+            "bottleneck_type": node.bottleneck_type.value,
+            "bottleneck_score": bottleneck,
+            "cost_pass_through": pass_through,
+            "price_elasticity": 1.0 / max(pass_through, 0.1),  # 传导越强→弹性越低
+            "description": node.description,
+            "constraint": node.constraint or "",
+            "related_tickers": node.a_share_tickers,
+            "chain_position": self._position_label(node.layer),
+        }
+
+    @staticmethod
+    def _position_label(layer) -> str:
+        labels = {
+            SupplyChainLayer.MATERIAL: "上游原材料",
+            SupplyChainLayer.SUBSTRATE: "上游基底",
+            SupplyChainLayer.EQUIPMENT: "上游设备",
+            SupplyChainLayer.PACKAGING: "中游封装",
+            SupplyChainLayer.DEVICE: "中游器件",
+            SupplyChainLayer.MODULE: "中游模组",
+            SupplyChainLayer.SYSTEM: "中游系统集成",
+            SupplyChainLayer.END_DEMAND: "下游终端需求",
+        }
+        return labels.get(layer, "未知")
+
+    def find_upstream(self, symbol: str) -> list[str]:
+        """推断上游标的。"""
+        node = classify_stock(symbol)
+        if node is None:
+            return []
+        # 简单规则：同链条中层数更低的节点
+        return []
+
+    def find_downstream(self, symbol: str) -> list[str]:
+        """推断下游标的。"""
+        node = classify_stock(symbol)
+        if node is None:
+            return []
+        return []

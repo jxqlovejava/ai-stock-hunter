@@ -1,5 +1,21 @@
 # -*- coding: utf-8 -*-
-r"""详细分析输出格式化器"""
+r"""详细分析输出格式化器
+
+Profile-Aware 备注:
+  - 本模块当前使用统一的终端风格输出。
+  - 要适配不同渠道 (微信/邮件/API)，使用 src/output/profiles.py 中的
+    OutputProfile 来决定 table_style、markdown_allowed、max_length、
+    language、tone 等参数。
+  - 示例:
+        from src.output.profiles import get_profile
+        profile = get_profile("wechat")
+        if not profile.markdown_allowed:
+            # 剥离 emoji / Markdown 标记
+            pass
+        if profile.is_truncated:
+            # 截断到 profile.max_length
+            pass
+"""
 
 from __future__ import annotations
 
@@ -238,6 +254,92 @@ def format_analysis_result(result: OrchestratorResult) -> str:
                 if desc:
                     lines.append(f"    {desc[:140]}")
                 lines.append(f"    → {reason}")
+
+    # ── Step 5½ 行业深度研究 ──────────────────────────────────────────
+    sector = result.sector_research
+    if sector and sector.get("sector_name") != "未分类":
+        lines.append(f"\n  🏭 行业深度研究")
+        lines.append(f"  {HR}")
+        lines.append(f"  行业: {sector.get('sector_name','')}  "
+                     f"基准指数 {sector.get('benchmark_index','N/A')}")
+        comp = sector.get("competition", {})
+        if comp:
+            lines.append(f"  竞争: CR5={comp.get('cr5',0):.0f}% HHI={comp.get('hhi',0):.0f} "
+                         f"{comp.get('concentration','')} "
+                         f"壁垒={comp.get('barrier','?')} "
+                         f"烈度={comp.get('intensity',50):.0f}")
+        val_fw = sector.get("valuation", {})
+        if val_fw:
+            lines.append(f"  估值: {val_fw.get('primary_method','?')} "
+                         f"PE中枢={val_fw.get('pe_median',0):.0f} "
+                         f"分位={val_fw.get('pe_percentile',50):.0f}% "
+                         f"吸引力={val_fw.get('attractiveness',50):.0f}/100")
+        sc = sector.get("supply_chain", {})
+        if sc and sc.get("in_chain"):
+            lines.append(f"  供应链: {sc.get('node_name','?')} "
+                         f"层级={sc.get('layer','?')} "
+                         f"瓶颈={sc.get('bottleneck_score',0):.0f}/100 "
+                         f"传导={sc.get('cost_pass_through',0.5):.1f}")
+
+    # ── Step 5¾ 公司深度研究 ──────────────────────────────────────────
+    company = result.company_deep_research
+    if company:
+        lines.append(f"\n  🔬 公司深度研究")
+        lines.append(f"  {HR}")
+        moat_data = company.get("moat", {})
+        if moat_data:
+            dims = moat_data.get("dimensions", {})
+            lines.append(f"  🏰 护城河: {moat_data.get('width','?')} "
+                         f"{moat_data.get('score',50):.0f}/100 "
+                         f"趋势={moat_data.get('trend','stable')}")
+            if dims:
+                lines.append(f"     品牌{dims.get('brand',50):.0f} "
+                             f"转换成本{dims.get('switching_cost',50):.0f} "
+                             f"网络效应{dims.get('network_effect',50):.0f} "
+                             f"规模{dims.get('scale_economy',50):.0f} "
+                             f"无形{dims.get('intangible',50):.0f}")
+            for ev in moat_data.get("evidence", [])[:2]:
+                lines.append(f"     ✓ {ev}")
+            for th in moat_data.get("threats", [])[:2]:
+                lines.append(f"     ⚠ {th}")
+
+        rf_data = company.get("red_flags")
+        if rf_data:
+            risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}
+            lines.append(f"  🚩 财务红旗: {risk_emoji.get(rf_data.get('risk','unknown'),'?')} "
+                         f"{rf_data.get('risk','?').upper()} "
+                         f"({rf_data.get('total_flags',0)}个)")
+            if rf_data.get("m_score") is not None:
+                lines.append(f"     M-Score={rf_data['m_score']:.2f}({rf_data.get('m_score_label','?')}) "
+                             f"F-Score={rf_data.get('f_score',0):.0f}/9({rf_data.get('f_score_label','?')})")
+
+        dcf_data = company.get("dcf")
+        if dcf_data:
+            lines.append(f"  💎 DCF: 公允价 ¥{dcf_data.get('fair_value',0):.2f} "
+                         f"安全边际={dcf_data.get('margin_of_safety',0):.1f}% "
+                         f"上行={dcf_data.get('upside_pct',0):+.1f}%")
+            lines.append(f"     熊¥{dcf_data.get('bear_case',0):.1f} "
+                         f"基¥{dcf_data.get('base_case',0):.1f} "
+                         f"牛¥{dcf_data.get('bull_case',0):.1f} "
+                         f"WACC={dcf_data.get('wacc',0.1):.1%}")
+
+        mgmt_data = company.get("management", {})
+        if mgmt_data:
+            lines.append(f"  👔 管理层: {mgmt_data.get('overall',50):.0f}/100 "
+                         f"配置{mgmt_data.get('capital_allocation',50):.0f} "
+                         f"诚信{mgmt_data.get('integrity',50):.0f} "
+                         f"能力{mgmt_data.get('competency',50):.0f} "
+                         f"激励{mgmt_data.get('incentive',50):.0f}")
+
+        cons_data = company.get("consensus")
+        if cons_data:
+            lines.append(f"  📋 一致预期({cons_data.get('n_analysts',0)}位): "
+                         f"{cons_data.get('rating','?')} "
+                         f"目标¥{cons_data.get('target_mean',0):.1f} "
+                         f"买{cons_data.get('buy',0)}/持{cons_data.get('hold',0)}/卖{cons_data.get('sell',0)}")
+
+        overall = company.get("overall_score", 50)
+        lines.append(f"  🏆 深度研究综合: {overall:.0f}/100")
 
     # ── 辅助指标 ─────────────────────────────────────────────────────
     alpha = result.alpha_profile
