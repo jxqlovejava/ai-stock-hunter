@@ -123,7 +123,7 @@ class TestSentiment:
             advance_decline=0.2, limit_down=60,
             volume_ratio=2.5, northbound=-8.0, margin_change=-50
         )
-        assert sentiment.level.value in ("PANIC", "EXTREME")
+        assert sentiment.level.value in ("PANIC", "EXTREME_PANIC")
 
     def test_normal_market(self):
         from src.sentiment.signals import SentimentDetector

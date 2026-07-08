@@ -2108,7 +2108,7 @@ class Orchestrator:
             }
         except Exception as e:
             logger.debug("Sentiment detection unavailable: %s", e)
-        return {"level": "NORMAL"}
+        return {"level": "NORMAL", "score": 50}
 
     @staticmethod
     def _get_fiscal_regime():
