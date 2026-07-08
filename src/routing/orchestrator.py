@@ -98,6 +98,10 @@ class OrchestratorResult:
     # 仓位调度/风控执行 详情
     sizing_detail: Optional[dict] = None  # 仓位计算方法 + 凯利参数
     position_limits_summary: Optional[dict] = None  # 仓位约束摘要
+    # T+0 日内时机分析
+    t0_result: Optional[dict] = None
+    # 宏观事件因果链分析
+    macro_event: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -185,11 +189,15 @@ class Orchestrator:
         strategy_version: str = "",
         strategy_params: Optional[dict] = None,
         mode: str = "daily",
+        macro_event_desc: str = "",
+        macro_event_category: str = "",
     ) -> OrchestratorResult:
         """执行全链路分析。
 
         Args:
             mode: "daily"=日常持仓监控(轻量), "full"=选股分析(含行业+公司深度研究)
+            macro_event_desc: 当日重大宏观事件描述（如有），触发因果链分析
+            macro_event_category: 事件类型 hint (monetary/geopolitical/trade_policy/...)
         """
         result = OrchestratorResult(
             symbol=symbol, name=name,
@@ -312,6 +320,20 @@ class Orchestrator:
             result.passed = False
             result.blocked_by = gate_result.flags
             return result
+
+        # ---- Phase 2.5: 宏观事件因果链分析 ----
+        if macro_event_desc:
+            try:
+                event_result = self.run_macro_event(
+                    event_description=macro_event_desc,
+                    category=macro_event_category,
+                    stock_symbol=symbol,
+                    stock_sector="",  # 由 diagnosis 阶段补充
+                )
+                if event_result is not None:
+                    result.macro_event = event_result
+            except Exception as e:
+                logger.debug("Macro event analysis failed: %s", e)
 
         # ---- Phase 3: 增强上下文 ----
         macro_regime = self._get_macro_regime()
@@ -706,6 +728,16 @@ class Orchestrator:
         result.violations.extend(l4_violations)
 
         result.passed = True
+
+        # Phase 9: T+0 日内时机分析（并行，不阻塞主流程）
+        try:
+            t0 = self.run_t0(symbol, market, name)
+            if t0 is not None:
+                result.t0_result = t0
+                result.t0_available = True
+        except Exception as e:
+            logger.debug("T+0 analysis failed for %s: %s", symbol, e)
+
         return result
 
     # ------------------------------------------------------------------
@@ -1217,6 +1249,174 @@ class Orchestrator:
             "signal": signal,
             "risk": risk,
             "violations": all_violations,
+        }
+
+    def run_t0(
+        self, symbol: str, market: str = "SH", name: str = "",
+    ) -> Optional[dict]:
+        """执行 T+0 日内时机分析（日线+分钟线双维度）。
+
+        独立于主工作流，聚焦"何时操作"的时机判断。
+        在主工作流的战略方向确定后，调用此方法获取战术时机。
+
+        Returns:
+            dict 含 action / score / signals / suggested_price 等字段，
+            数据不足时返回 None。
+        """
+        try:
+            from src.analysis.t0_decision import T0DecisionEngine
+            from src.data.schema import Resolution
+        except ImportError:
+            return None
+
+        # 拉取日线数据 (近 20 根)
+        try:
+            daily_bars = self.data.mootdx.get_bars(
+                symbol, Resolution.DAY, start="", end="",
+            )
+            daily_bars = [b for b in daily_bars if b is not None]
+            if len(daily_bars) < 5:
+                logger.warning("T+0: 日线数据不足 (%d 根)", len(daily_bars))
+                return None
+            daily_bars = daily_bars[-20:]  # 取最近 20 根
+        except Exception as e:
+            logger.debug("T+0: 日线数据获取失败: %s", e)
+            return None
+
+        # 拉取今日分钟数据
+        try:
+            from datetime import datetime
+            today_str = datetime.now().strftime("%Y%m%d")
+            minute_bars = self.data.mootdx.get_bars(
+                symbol, Resolution.MIN_1, start=today_str, end=today_str,
+            )
+            # 过滤到今天+截止当前时间
+            now = datetime.now()
+            today_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            minute_bars = [
+                b for b in minute_bars
+                if b is not None and b.timestamp.date() == today_dt.date()
+                and b.timestamp <= now
+            ]
+        except Exception as e:
+            logger.debug("T+0: 分钟数据获取失败: %s", e)
+            minute_bars = []
+
+        # 获取昨日收盘
+        prev_close = 0.0
+        if len(daily_bars) >= 2:
+            prev_close = daily_bars[-2].close
+
+        engine = T0DecisionEngine()
+        result = engine.analyze(
+            symbol=symbol,
+            daily_bars=daily_bars,
+            minute_bars=minute_bars,
+            prev_close=prev_close,
+            name=name,
+        )
+
+        # 转为 dict 返回
+        return {
+            "action": result.action.value,
+            "score": result.score,
+            "ma5": result.ma5,
+            "ma10": result.ma10,
+            "ma20": result.ma20,
+            "resistance": result.resistance,
+            "support_1": result.support_1,
+            "vwap": result.vwap,
+            "day_high": result.day_high,
+            "day_low": result.day_low,
+            "day_low_time": result.day_low_time,
+            "amplitude": result.amplitude,
+            "rebound_from_low": result.rebound_from_low,
+            "total_vol": result.total_vol,
+            "total_amount": result.total_amount,
+            "rebound_quality": result.rebound_quality,
+            "large_sell_count": result.large_sell_count,
+            "large_buy_count": result.large_buy_count,
+            "daily_patterns": result.daily_patterns,
+            "intraday_pattern": result.intraday_pattern,
+            "signals_bull": [s.description for s in result.signals_bull],
+            "signals_bear": [s.description for s in result.signals_bear],
+            "suggested_price": result.suggested_price,
+            "stop_loss": result.stop_loss,
+            "trigger_condition": result.trigger_condition,
+            "summary": result.to_summary(),
+        }
+
+    def run_macro_event(
+        self,
+        event_description: str,
+        *,
+        category: str = "",
+        title: str = "",
+        source: str = "",
+        stock_symbol: str = "",
+        stock_sector: str = "",
+    ) -> Optional[dict]:
+        """分析宏观事件对A股的因果链影响。
+
+        在股票分析前先搞清楚"发生了什么大事"→"怎么传导到A股/个股"。
+        参考 AI Gold Miner ScenarioAnalyzer 的因果链推演模式。
+
+        Returns:
+            dict 含 summary / channels / impact / strategy 等字段
+        """
+        try:
+            from src.macro.event_analyzer import EventAnalyzer
+        except ImportError:
+            return None
+
+        analyzer = EventAnalyzer()
+        report = analyzer.analyze(
+            event_description=event_description,
+            category_hint=category,
+            title=title,
+            source=source,
+            stock_symbol=stock_symbol,
+            stock_sector=stock_sector,
+        )
+
+        return {
+            "title": report.event.title,
+            "category": report.event.category.value,
+            "summary": report.summary,
+            "net_bullish_score": report.net_bullish_score,
+            "channels": [
+                {
+                    "channel": ch.channel,
+                    "direction": ch.direction.value,
+                    "magnitude": ch.magnitude.value,
+                    "description": ch.description,
+                    "timeframe": ch.timeframe.value,
+                    "affected_sectors": ch.affected_sectors,
+                }
+                for ch in report.transmission_channels
+            ],
+            "impact": {
+                "direction": report.impact.direction.value if report.impact else "neutral",
+                "base_case": report.impact.base_case_change_pct if report.impact else 0.0,
+                "bullish_case": report.impact.bullish_case_change_pct if report.impact else 0.0,
+                "bearish_case": report.impact.bearish_case_change_pct if report.impact else 0.0,
+                "peak_days": report.impact.peak_impact_days if report.impact else 0,
+                "confidence": report.impact.confidence if report.impact else 0.5,
+                "reasoning": report.impact.reasoning if report.impact else "",
+            },
+            "analogs": [
+                {"name": a.event_name, "period": a.period, "similarity": a.similarity_score}
+                for a in report.historical_analogs
+            ],
+            "strategy": {
+                "position": report.strategy.overall_position,
+                "action": report.strategy.suggested_action,
+                "hedging": report.strategy.hedging_suggestions,
+                "indicators": report.strategy.monitoring_indicators,
+                "sizing": report.strategy.position_sizing,
+            },
+            "risk_factors": report.risk_factors,
+            "stock_impact": report.stock_impact_summary,
         }
 
     def _run_pipeline_parallel(
