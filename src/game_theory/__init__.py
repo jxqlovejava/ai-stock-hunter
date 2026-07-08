@@ -32,6 +32,20 @@ from .rules import (
 )
 from .seats import SeatActivity, SeatInfo, SeatTracker
 from .manipulation import ManipulationDetector, ManipulationResult, ManipulationSignal
+from .manipulation.history import (
+    ManipulationHistoryStore,
+    ManipulationRecord,
+    StockManipulationProfile,
+    get_manipulation_risk_rating,
+    log_manipulation_event,
+)
+from .manipulation.sentiment_nexus import SentimentManipulationContext, SentimentManipulationNexus
+from .manipulation.sizing import (
+    ManipulationSizingEngine,
+    ManipulationSizingResult,
+    ManipulationStopStrategy,
+    quick_sizing,
+)
 from .chip_concentration import (
     ChipConcentrationAnalyzer,
     ChipConcentrationResult,
@@ -109,6 +123,14 @@ __all__ = [
     "MARKET_COMPARISONS", "compare_markets", "asymmetry_report",
     # Manipulation Detection (Phase 10)
     "ManipulationDetector", "ManipulationResult", "ManipulationSignal",
+    # Manipulation History (Phase 11)
+    "ManipulationRecord", "StockManipulationProfile", "ManipulationHistoryStore",
+    "log_manipulation_event", "get_manipulation_risk_rating",
+    # Sentiment-Nexus (Phase 11)
+    "SentimentManipulationContext", "SentimentManipulationNexus",
+    # Manipulation Sizing (Phase 11)
+    "ManipulationStopStrategy", "ManipulationSizingResult", "ManipulationSizingEngine",
+    "quick_sizing",
     # Chip Concentration (Phase 11: 反操纵本土化强化)
     "ChipConcentrationAnalyzer", "ChipConcentrationResult",
     "get_chip_risk_from_context",

@@ -99,6 +99,17 @@ class DoctrineChecker:
         if rule.id == "r012":
             return ctx.get("is_limit_up", False)
 
+        # 利好出尽是利空：重大利好 + 5 日涨幅 > 15%
+        if rule.id == "r014":
+            has_news = ctx.get("has_major_positive_news", False)
+            rise_5 = ctx.get("rise_5day_pct", 0.0) or 0.0
+            return has_news and rise_5 > 15.0
+
+        # 追涨熔断：5 日涨幅 > 20%（不论消息面）
+        if rule.id == "r014b":
+            rise_5 = ctx.get("rise_5day_pct", 0.0) or 0.0
+            return rise_5 > 20.0
+
         # 财报窗口检查
         if rule.id == "r015":
             return ctx.get("is_earnings_window", False)

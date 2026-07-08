@@ -8,6 +8,14 @@ from .positioning import PositioningEngine, TradeSignal
 from .risk_control import RiskControlEngine, RiskCheck
 from .risk_state import RiskState  # Phase 8: 风控状态机
 from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
+from .position_state import (  # Phase 12: 实时持仓 HWM + 动态止盈止损
+    PositionState,
+    PositionStateManager,
+    DynamicStopCalculator,
+    StopAlert,
+    StopStage,
+    AlertType,
+)
 from .orchestrator import Orchestrator
 from .signal import (
     Direction,
@@ -45,6 +53,10 @@ __all__ = [
     "PositioningEngine", "TradeSignal",
     "RiskControlEngine", "RiskCheck",
     "RiskState",  # Phase 8: 风控状态机
+    "PositionMonitor", "PositionSnapshot", "MonitorResult",  # Phase 11
+    # -- Phase 12: 实时持仓 HWM + 动态止盈止损 --
+    "PositionState", "PositionStateManager", "DynamicStopCalculator",
+    "StopAlert", "StopStage", "AlertType",
     # -- Signal + PortfolioTarget (LEAN Insight pattern) --
     "Direction",
     "Signal",

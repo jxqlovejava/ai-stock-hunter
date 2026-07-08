@@ -72,6 +72,7 @@ MILITARY_RULES: list[Rule] = [
     Rule("r012", RuleCategory.TRADING, "不追涨停", Severity.BLOCK, "当日涨停板不挂买单"),
     Rule("r013", RuleCategory.TRADING, "不接飞刀", Severity.WARN, "连续 3 日跌幅 > 15% 且无基本面改善 → 等止跌确认"),
     Rule("r014", RuleCategory.TRADING, "利好出尽是利空", Severity.WARN, "重大利好+股价 5 日内已涨 > 15% → 置信度 -0.15"),
+    Rule("r014b", RuleCategory.TRADING, "追涨熔断", Severity.WARN, "5 日涨幅 > 20%（不论消息面）→ 评分上限 HOLD（55），强制标注追涨风险"),
     Rule("r015", RuleCategory.TRADING, "不赌财报", Severity.BLOCK, "财报公布前 2 个交易日不新建仓"),
     Rule("r016", RuleCategory.TRADING, "分批建仓", Severity.WARN, "新建仓分 ≥ 2 批，间隔 ≥ 5 个交易日"),
 
@@ -115,5 +116,22 @@ MILITARY_RULES: list[Rule] = [
         "r034", RuleCategory.SELECTION, "分红门槛",
         Severity.INFO,
         "近 3 年累计分红/净利润 > 30%，否则标注铁公鸡风险（不分红/少分红）",
+    ),
+
+    # ── 反操纵军规 ──
+    Rule(
+        "R032", RuleCategory.RISK, "筹码集中度风险",
+        Severity.WARN,
+        "前十大流通股东持股>60%或股东户数连续下降>15%→筹码高度集中，操纵风险升高，仓位上限降低30%",
+    ),
+    Rule(
+        "R033", RuleCategory.RISK, "操纵历史警戒",
+        Severity.WARN,
+        "个股12个月内出现≥3次操纵嫌疑→标记为惯犯，永久提高操纵检测敏感度，仓位上限降低50%",
+    ),
+    Rule(
+        "R034", RuleCategory.RISK, "资金背离预警",
+        Severity.WARN,
+        "主力资金连续5日流出但价格不跌或上涨→诱多出货嫌疑，延迟入场1-2日",
     ),
 ]

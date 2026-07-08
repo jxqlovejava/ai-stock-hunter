@@ -61,6 +61,12 @@ class DiagnosisReport:
     debate_result: Optional[object] = None
     # Phase 6+: Munger 思维模型匹配
     mental_models: list[dict] = field(default_factory=list)
+    # 反追高因子（低位启动 vs 高位加速）
+    ma_deviation_pct: float = 0.0           # (price - MA60)/MA60 * 100
+    price_ma_zone: str = "NEUTRAL"           # LOW_BASE / NEUTRAL / HIGH_ACCEL
+    momentum_direction_discount: float = 1.0  # 方向质量折扣 0.5-1.0
+    surge_risk: bool = False                 # 短期飙升熔断标记
+    surge_5day_pct: float = 0.0              # 5 日涨跌幅 %
 
 
 class DiagnosisEngine:
@@ -102,7 +108,11 @@ class DiagnosisEngine:
         if quote and financials:
             report.value_score = self._score_value(quote, valuation_result)
             report.quality_score = self._score_quality(financials, earnings_factor)
-            report.momentum_score = self._score_momentum(quote, northbound_profile)
+            mom = self._score_momentum(quote, northbound_profile)
+            report.momentum_score = mom["score"]
+            report.price_ma_zone = mom["zone"]
+            report.momentum_direction_discount = mom["discount"]
+            report.ma_deviation_pct = mom["deviation"]
         else:
             # 财务数据不可用 — 标记 DATA_GAP，使用中性默认值
             if not financials:
@@ -110,7 +120,11 @@ class DiagnosisEngine:
                 report.data_gaps.append("[DATA_GAP] 财务数据不可用 — 价值/质量/动量评分使用中性值 50，置信度大幅下调")
             if quote and not financials:
                 # 仅有行情无财务：只能算动量
-                report.momentum_score = self._score_momentum(quote, northbound_profile)
+                mom = self._score_momentum(quote, northbound_profile)
+                report.momentum_score = mom["score"]
+                report.price_ma_zone = mom["zone"]
+                report.momentum_direction_discount = mom["discount"]
+                report.ma_deviation_pct = mom["deviation"]
 
         # Phase 5: 估值评分（独立于 value_score）
         report.valuation_score = self._score_valuation(valuation_result)
@@ -189,6 +203,41 @@ class DiagnosisEngine:
                 )
                 manip_discount = 1.0 - (manip_overall / 300)
                 report.momentum_score = self._apply_weight(report.momentum_score, manip_discount)
+
+        # ── 反追高：MA 绝对偏离折扣 ──
+        # 方向感知折扣已通过 _score_momentum → _calc_price_ma_zone 应用。
+        # 此处对绝对偏离做二次惩罚：即使不在 HIGH_ACCEL 区域，偏离过大本身也是风险。
+        if quote and quote.get("ma60") is not None:
+            dev = report.ma_deviation_pct
+            if dev > 50.0:
+                report.momentum_score = self._apply_weight(report.momentum_score, 0.4)
+                report.value_score = self._apply_weight(report.value_score, 0.8)
+                report.confidence = max(0.3, report.confidence - 0.1)
+                report.data_gaps.append(
+                    f"[WARN] 价格偏离 MA60 {dev:.0f}% > 50% — 技术性超买，动量-60%，价值-20%"
+                )
+            elif dev > 30.0:
+                report.momentum_score = self._apply_weight(report.momentum_score, 0.6)
+                report.value_score = self._apply_weight(report.value_score, 0.8)
+                report.confidence = max(0.3, report.confidence - 0.05)
+                report.data_gaps.append(
+                    f"[WARN] 价格偏离 MA60 {dev:.0f}% > 30% — 动量-40%，价值-20%"
+                )
+
+        # ── 反追高：短期飙升熔断 ──
+        close_series = quote.get("close_series", []) if quote else []
+        if len(close_series) >= 6:
+            latest = close_series[-1]
+            five_days_ago = close_series[-6]
+            if five_days_ago and five_days_ago > 0:
+                report.surge_5day_pct = round(
+                    (latest - five_days_ago) / five_days_ago * 100.0, 2
+                )
+                if report.surge_5day_pct > 20.0:
+                    report.surge_risk = True
+                    report.data_gaps.append(
+                        f"[WARN] 短期飙升 {report.surge_5day_pct:.0f}%/5日 — 追涨熔断触发"
+                    )
 
         # Phase 1: 填充数据溯源和信心度
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
@@ -434,8 +483,15 @@ class DiagnosisEngine:
 
         return roe_score
 
-    def _score_momentum(self, quote: dict, northbound_profile: Optional[object] = None) -> float:
-        """动量评分：北向资金(市场级) + 个股涨跌幅(个股级) 混合。"""
+    def _score_momentum(self, quote: dict, northbound_profile: Optional[object] = None) -> dict:
+        """动量评分：北向资金(市场级) + 方向感知个股动量 + MA 偏离折扣。
+
+        返回 dict:
+          - score: 最终动量评分 0-100
+          - zone: 价格-MA 区域 (LOW_BASE / NEUTRAL / HIGH_ACCEL)
+          - discount: 方向质量折扣 0.5-1.0
+          - deviation: MA60 偏离百分比
+        """
         nb_score = 50.0
         if northbound_profile is not None:
             nb_score = float(getattr(northbound_profile, "score", 50.0))
@@ -444,8 +500,58 @@ class DiagnosisEngine:
         change_pct = quote.get("change_pct", 0) or 0.0
         stock_momentum = 50.0 + min(max(change_pct * 5, -30), 30)
 
-        # 50% 市场北向 + 50% 个股涨跌 — 确保个股间有区分度
-        return nb_score * 0.5 + stock_momentum * 0.5
+        # 方向感知：区分低位启动 vs 高位加速
+        ma20 = quote.get("ma20")
+        ma60 = quote.get("ma60")
+        current_price = quote.get("price", 0) or quote.get("close", 0) or 0.0
+        zone, discount, deviation = self._calc_price_ma_zone(current_price, ma20, ma60)
+
+        # 方向折扣：将动量向 50 中性拉回
+        adjusted_stock = 50.0 + (stock_momentum - 50.0) * discount
+        final_score = nb_score * 0.5 + adjusted_stock * 0.5
+
+        return {
+            "score": round(final_score, 1),
+            "zone": zone,
+            "discount": round(discount, 2),
+            "deviation": round(deviation, 1),
+        }
+
+    @staticmethod
+    def _calc_price_ma_zone(
+        current_price: float,
+        ma20: Optional[float],
+        ma60: Optional[float],
+    ) -> tuple[str, float, float]:
+        """确定价格-MA 区域和动量质量折扣。
+
+        区域:
+          LOW_BASE   — 价格接近或低于 MA（MA20+10% 内 或 低于 MA60）→ 真实突破，不惩罚
+          NEUTRAL    — 中等偏离
+          HIGH_ACCEL — 价格远高于 MA（偏离 MA20>20% 且 MA60>30%）→ 追高嫌疑，打折
+
+        Returns:
+          (zone, discount, deviation_pct)
+          其中 discount 应用于动量评分以惩罚追高行为（LOW_BASE=1.0, HIGH_ACCEL=0.5-0.7）
+        """
+        if current_price <= 0 or ma20 is None or ma60 is None or ma60 <= 0:
+            return "NEUTRAL", 1.0, 0.0
+
+        dev_ma20 = (current_price - ma20) / ma20 * 100.0
+        dev_ma60 = (current_price - ma60) / ma60 * 100.0
+
+        # 低位启动：价格在 MA20 附近 10% 内或低于 MA60 → 真实动量，不惩罚
+        if current_price <= ma20 * 1.10 or current_price <= ma60:
+            return "LOW_BASE", 1.0, round(dev_ma60, 1)
+
+        # 高位加速：偏离 MA20>20% 且 MA60>30% → 追高嫌疑
+        if dev_ma20 > 20.0 and dev_ma60 > 30.0:
+            # 偏离越大折扣越狠，下限 0.50
+            excess = min(dev_ma60, 100.0)
+            discount = max(0.50, 1.0 - (excess - 30.0) / 150.0)
+            return "HIGH_ACCEL", round(discount, 2), round(dev_ma60, 1)
+
+        return "NEUTRAL", 1.0, round(dev_ma60, 1)
 
     @staticmethod
     def _get_revision_score(earnings_factor: object) -> float:

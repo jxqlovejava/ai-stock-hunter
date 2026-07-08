@@ -222,6 +222,18 @@ class VerdictEngine:
         risks.extend(mm_bias_flags)
         risks.extend(mm_warnings)
 
+        # ── 反追高：MA 偏离与短期飙升风险 ──
+        if report.ma_deviation_pct > 50.0:
+            risks.append(
+                f"价格偏离 MA60 {report.ma_deviation_pct:.0f}% — 技术超买显著"
+            )
+        if report.surge_risk:
+            risks.append(
+                f"短期飙升 {report.surge_5day_pct:.0f}%/5日 — 追涨风险，评分上限 HOLD"
+            )
+            score = min(score, 55.0)  # 追涨熔断：强制 HOLD 上限
+            rec = "HOLD" if rec in ("BUY", "ADD") else rec
+
         return Verdict(
             symbol=report.symbol,
             score=round(score, 1),

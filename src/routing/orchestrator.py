@@ -23,6 +23,9 @@ from src.alpha.lens import AlphaLens
 from src.kelly.tracker import TradeTracker
 from src.kelly.sizer import KellyPositionSizer
 from src.quality.checker import MultiAgentQualityChecker
+from src.game_theory.manipulation.history import ManipulationHistoryStore, log_manipulation_event
+from src.game_theory.manipulation.sizing import ManipulationSizingEngine
+from src.game_theory.manipulation.sentiment_nexus import SentimentManipulationNexus
 
 from .admission import AdmissionCheck
 from .diagnosis import DiagnosisReport, DiagnosisEngine
@@ -38,6 +41,7 @@ from .anti_bias import AntiBiasEngine
 from .verdict_enforcer import VerdictEnforcer
 from .mental_model_matcher import MentalModelMatcher
 from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
+from .position_state import PositionStateManager  # Phase 12: 实时持仓 HWM + 动态止盈止损
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +159,12 @@ class Orchestrator:
         self.mental_model_matcher = MentalModelMatcher()
         # Phase 11: 持仓持续跟踪
         self.position_monitor = PositionMonitor()
+        # Phase 12: 实时持仓 HWM + 动态止盈止损
+        self.position_state_mgr = PositionStateManager()
+        # P4/P5/P6: 反操纵增强
+        self._manip_history = ManipulationHistoryStore()
+        self._manipulation_sizer = ManipulationSizingEngine()
+        self._sentiment_nexus = SentimentManipulationNexus()
         # Phase 7: 行业深度研究 (mode="full") — 懒初始化
         self._sector_classifier = None
         self._competition_analyzer = None
@@ -241,6 +251,9 @@ class Orchestrator:
         quote_dict["cross_validated"] = cross_validated
         quote_dict["dispute"] = dispute
 
+        # 计算 MA20/MA60 + close_series 用于反追高检查
+        self._inject_ma_data(symbol, quote_dict)
+
         # 加载投资者偏好
         investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
         position_limits = None
@@ -287,6 +300,20 @@ class Orchestrator:
             ctx["tier"] = investor.tier.value
             ctx["max_single_pct"] = investor.position_limits.max_single_pct
             ctx["portfolio_drawdown_pct"] = investor.position_limits.portfolio_drawdown_pct
+
+        # 注入 r014/r014b 军规检查所需上下文
+        close_series = quote_dict.get("close_series", [])
+        rise_5day = 0.0
+        if len(close_series) >= 6:
+            latest = close_series[-1]
+            ago5 = close_series[-6]
+            if ago5 and ago5 > 0:
+                rise_5day = (latest - ago5) / ago5 * 100.0
+        ctx["rise_5day_pct"] = round(rise_5day, 2)
+        # 新闻上下文在更晚阶段获取，此处先安全默认为 False。
+        # r014b 不受影响（不依赖新闻）；r014 由后续 diagnosis.surge_risk 兜底。
+        ctx["has_major_positive_news"] = False
+
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             result.passed = False
@@ -394,6 +421,14 @@ class Orchestrator:
         related_parties = self._get_related_parties(symbol)
         executive = self._get_executive_context(symbol)
 
+        # 补充 r014 新闻检查 — 新闻数据在此处才可用
+        if _detect_major_positive_news(news_context) and ctx.get("rise_5day_pct", 0.0) > 15.0:
+            from src.doctrine.rules import MILITARY_RULES
+            r014 = next((r for r in MILITARY_RULES if r.id == "r014"), None)
+            if r014 is not None and r014.name not in result.warnings:
+                result.warnings.append(r014.name)
+                logger.info("r014 触发: %s 重大利好 + 5日涨 %.1f%%", symbol, ctx["rise_5day_pct"])
+
         # Phase: 财政政策 + 政策跟踪信号
         fiscal_regime = self._get_fiscal_regime()
         policy_signals = self._get_policy_signals()
@@ -491,6 +526,8 @@ class Orchestrator:
                 capital_divergence: float = 0.0
                 overall_risk: float = 0.0
                 recommendations: list = field(default_factory=list)
+                is_repeat_offender: bool = False
+                sentiment_nexus: list = field(default_factory=list)
 
             # 综合风险 = max(筹码风险, 日级操纵风险, 资金背离风险)
             overall = max(
@@ -513,6 +550,55 @@ class Orchestrator:
             )
         except Exception as e:
             logger.debug("Anti-manipulation scan failed: %s", e)
+
+        # P5: 记录操纵事件到历史数据库
+        if manipulation_scan is not None and manipulation_scan.overall_risk > 20:
+            try:
+                log_manipulation_event(
+                    self._manip_history, symbol, name,
+                    manipulation_type=manipulation_scan.daily_pattern or "unknown",
+                    source="daily" if manipulation_scan.daily_pattern else "unknown",
+                    confidence=manipulation_scan.pattern_confidence,
+                    risk_score=manipulation_scan.overall_risk,
+                    price=quote.price if quote else 0.0,
+                )
+            except Exception:
+                pass
+
+        # P5: 查询是否为惯犯
+        is_repeat = False
+        try:
+            is_repeat = self._manip_history.is_repeat_offender(symbol)
+        except Exception:
+            pass
+
+        # P6: 情绪-操纵联动 — 调整操纵信号置信度
+        sentiment_adjusted = None
+        try:
+            from src.sentiment.signals import SentimentDetector
+            sent = SentimentDetector()
+            market_sent = sent.get_snapshot()
+            if market_sent and manipulation_scan and manipulation_scan.pattern_confidence > 0:
+                nexus_ctx = self._sentiment_nexus.analyze(
+                    sentiment_level=market_sent.level.value if hasattr(market_sent.level, 'value') else str(market_sent.level),
+                    sentiment_score=market_sent.score,
+                    manipulation_signals=[{
+                        "playbook_id": manipulation_scan.daily_pattern,
+                        "playbook_name": manipulation_scan.daily_pattern,
+                        "confidence": manipulation_scan.pattern_confidence,
+                        "risk_level": "medium" if manipulation_scan.overall_risk > 30 else "low",
+                    }],
+                    panic_signals=market_sent.panic_signals,
+                    greed_signals=market_sent.greed_signals,
+                )
+                sentiment_adjusted = nexus_ctx
+        except Exception:
+            pass
+
+        # 更新 manipulation_scan 附加字段
+        if manipulation_scan is not None:
+            manipulation_scan.is_repeat_offender = is_repeat
+            manipulation_scan.sentiment_nexus = (sentiment_adjusted.nexus_patterns if sentiment_adjusted else [])
 
         # 存储操纵扫描结果
         if manipulation_scan is not None:
@@ -784,6 +870,26 @@ class Orchestrator:
         # Phase 11: 使用宏观象限调整后的仓位上限
         if regime_adjustments is not None:
             effective_macro_cap = getattr(regime_adjustments, "max_total_position", effective_macro_cap)
+        # P4: 使用 ManipulationSizingEngine 计算精细化仓位调整
+        sizing_result = None
+        try:
+            sizing_result = self._manipulation_sizer.calc(
+                manipulation_risk=manipulation_scan.overall_risk if manipulation_scan else 0.0,
+                manipulation_pattern=manipulation_scan.daily_pattern if manipulation_scan else "",
+                chip_concentration=manipulation_scan.chip_risk if manipulation_scan else 0.0,
+                fund_divergence=manipulation_scan.capital_divergence if manipulation_scan else 0.0,
+                is_repeat_offender=is_repeat,
+                base_kelly_f=0.0,
+                base_position_cap=effective_macro_cap,
+            )
+        except Exception:
+            sizing_result = None
+
+        # P4: 使用 ManipulationSizingEngine 调整后的仓位上限
+        _adj_manip_cap = getattr(manipulation_scan, "overall_risk", 0.0) if manipulation_scan else 0.0
+        if sizing_result is not None:
+            _adj_manip_cap = sizing_result.position_cap or (effective_macro_cap * sizing_result.kelly_discount)
+
         signal = self.positioning.generate_signal(
             verdict,
             macro_cap=effective_macro_cap,
@@ -791,7 +897,7 @@ class Orchestrator:
             risk_multiplier=risk_mult,
             name=name,
             extra=quote.dict() if quote else {},
-            manipulation_risk=getattr(manipulation_scan, "overall_risk", 0.0) if manipulation_scan else 0.0,
+            manipulation_risk=_adj_manip_cap,
         )
         result.signal = signal
         # 保存仓位计算详情供格式化器使用
@@ -841,6 +947,31 @@ class Orchestrator:
         if manipulation_scan is not None:
             enriched_portfolio["manipulation_risk_score"] = manipulation_scan.overall_risk
             enriched_portfolio["manipulation_pattern"] = manipulation_scan.daily_pattern
+        if sizing_result is not None:
+            enriched_portfolio["manipulation_stop_strategy"] = {
+                "type": sizing_result.stop_strategy.stop_type if sizing_result.stop_strategy else "normal",
+                "stop_loss_pct": sizing_result.stop_strategy.stop_loss_pct if sizing_result.stop_strategy else -0.02,
+                "urgency": sizing_result.stop_strategy.urgency if sizing_result.stop_strategy else "normal",
+            }
+            enriched_portfolio["manipulation_entry_rec"] = sizing_result.entry_recommendation
+
+        # Phase 12: 注入持仓 HWM → 风控移动止损获得真实峰值
+        existing_pos = self.position_state_mgr.get(symbol)
+        if existing_pos is not None:
+            if "peak_price" not in enriched_portfolio or enriched_portfolio.get("peak_price", 0) == 0:
+                enriched_portfolio["peak_price"] = existing_pos.high_price
+            else:
+                enriched_portfolio["peak_price"] = max(
+                    enriched_portfolio.get("peak_price", 0),
+                    existing_pos.high_price,
+                )
+            if "current_price" not in enriched_portfolio:
+                enriched_portfolio["current_price"] = existing_pos.last_price
+            enriched_portfolio["holding_days"] = max(
+                enriched_portfolio.get("holding_days", 0) or 0,
+                (datetime.now() - existing_pos.entry_date).days if existing_pos.entry_date else 0,
+            )
+            enriched_portfolio["position_state"] = existing_pos  # 完整状态供下游使用
 
         # Phase 8: 观测权益更新 HWM / 自动熔断
         eq = (enriched_portfolio or {}).get("total_equity", 0)
@@ -858,6 +989,44 @@ class Orchestrator:
         result.violations.extend(l4_violations)
 
         result.passed = True
+
+        # Phase 12: 更新持仓状态（开仓/平仓/价格观测）
+        if signal is not None and result.passed:
+            current_px = float(quote_dict.get("price", 0) or quote_dict.get("close", 0) or 0)
+            try:
+                if signal.action in ("OPEN", "ADD"):
+                    # 开仓/加仓 → 创建或更新持仓状态
+                    stop_cfg = {
+                        "initial_stop_pct": (
+                            -float(position_limits.get("single_stop_loss_pct", 0.02))
+                            if position_limits else -0.02
+                        ),
+                        "breakeven_trigger_pct": (
+                            float(position_limits.get("breakeven_trigger_pct", 0.20))
+                            if position_limits else 0.20
+                        ),
+                        "trailing_trigger_pct": (
+                            float(position_limits.get("trailing_trigger_pct", 0.30))
+                            if position_limits else 0.30
+                        ),
+                    }
+                    self.position_state_mgr.open(
+                        symbol=symbol, name=name,
+                        entry_price=current_px if current_px > 0 else float(signal.entry_zone_low or signal.suggested_stop or 0),
+                        stop_config=stop_cfg,
+                    )
+                elif signal.action in ("CLOSE",):
+                    self.position_state_mgr.close(symbol)
+                else:
+                    # HOLD / REDUCE → 观测当前价格更新 HWM
+                    if current_px > 0:
+                        _, alerts = self.position_state_mgr.update_price(symbol, current_px)
+                        for alert in alerts:
+                            logger.info(
+                                "持仓预警 [%s] %s: %s", alert.severity, alert.symbol, alert.message,
+                            )
+            except Exception as e:
+                logger.debug("Phase 12 position state update failed for %s: %s", symbol, e)
 
         # Phase 9: T+0 日内时机分析（中长期 Alpha 搜索可跳过，不阻塞主流程）
         if not skip_t0:
@@ -1123,6 +1292,37 @@ class Orchestrator:
         if not result.passed:
             result.blocked_by = gate_result.flags
         return result
+
+    def _inject_ma_data(self, symbol: str, quote_dict: dict) -> None:
+        """从历史 K 线计算 MA20/MA60 + close_series，注入 quote_dict 用于反追高检查。"""
+        try:
+            bars = self.data.get_history(symbol, start_date="", end_date="", period="daily")
+            if bars is not None and not bars.empty:
+                close_col = bars["close"] if "close" in bars.columns else None
+                if close_col is None and "收盘" in bars.columns:
+                    close_col = bars["收盘"]
+                if close_col is None:
+                    quote_dict["ma20"] = quote_dict["ma60"] = None
+                    quote_dict["close_series"] = []
+                    return
+                if len(close_col) >= 60:
+                    quote_dict["ma20"] = float(close_col.rolling(20).mean().iloc[-1])
+                    quote_dict["ma60"] = float(close_col.rolling(60).mean().iloc[-1])
+                    quote_dict["close_series"] = close_col.tail(10).tolist()
+                elif len(close_col) >= 20:
+                    quote_dict["ma20"] = float(close_col.rolling(20).mean().iloc[-1])
+                    quote_dict["ma60"] = None
+                    quote_dict["close_series"] = close_col.tail(10).tolist()
+                else:
+                    quote_dict["ma20"] = quote_dict["ma60"] = None
+                    quote_dict["close_series"] = close_col.tail(len(close_col)).tolist()
+            else:
+                quote_dict["ma20"] = quote_dict["ma60"] = None
+                quote_dict["close_series"] = []
+        except Exception:
+            logger.debug("MA calculation skipped for %s", symbol)
+            quote_dict["ma20"] = quote_dict["ma60"] = None
+            quote_dict["close_series"] = []
 
     @staticmethod
     def _quote_from_cache(symbol: str, market: str = "SH") -> Optional[Quote]:
@@ -1971,6 +2171,20 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Executive context unavailable for %s: %s", symbol, e)
         return ctx
+
+
+def _detect_major_positive_news(news_context: list | None) -> bool:
+    """检测新闻上下文中是否包含重大利好关键词（供 r014 军规使用）。"""
+    POSITIVE_KW = [
+        "重大合同", "中标", "业绩预增", "利润大增",
+        "资产注入", "重组", "借壳", "收购",
+        "重大突破", "获批", "政策利好",
+    ]
+    for item in news_context or []:
+        text = f"{item.get('title', '')} {item.get('content', '')}"
+        if any(kw in text for kw in POSITIVE_KW):
+            return True
+    return False
 
 
 def _perspective_to_dict(ps) -> dict:

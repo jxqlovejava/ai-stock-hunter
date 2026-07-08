@@ -12,9 +12,34 @@
 """
 
 from .detector import ManipulationDetector, ManipulationResult, ManipulationSignal
+from .history import (
+    ManipulationHistoryStore,
+    ManipulationRecord,
+    StockManipulationProfile,
+    get_manipulation_risk_rating,
+    log_manipulation_event,
+)
+from .sentiment_nexus import SentimentManipulationContext, SentimentManipulationNexus
+from .sizing import (
+    ManipulationSizingEngine,
+    ManipulationSizingResult,
+    ManipulationStopStrategy,
+    quick_sizing,
+)
 
 __all__ = [
     "ManipulationDetector",
+    "ManipulationHistoryStore",
+    "ManipulationRecord",
     "ManipulationResult",
     "ManipulationSignal",
+    "ManipulationSizingEngine",
+    "ManipulationSizingResult",
+    "ManipulationStopStrategy",
+    "SentimentManipulationContext",
+    "SentimentManipulationNexus",
+    "StockManipulationProfile",
+    "get_manipulation_risk_rating",
+    "log_manipulation_event",
+    "quick_sizing",
 ]
