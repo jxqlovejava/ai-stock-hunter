@@ -109,11 +109,12 @@ class PositionState:
     max_adversity_pct: float = 0.0         # 最大浮亏%
 
     # -- 配置快照（建仓时从 TimeHorizonConfig 冻结）--
-    initial_stop_pct: float = -0.02        # 固定止损%（负数，如 -0.02 = -2%）
-    atr_multiplier: float = 2.0
+    initial_stop_pct: float = -0.02        # 固定止损%（负数，回退用，ATR 优先）
+    atr_multiplier: float = 2.0            # 初始止损 ATR 倍率
+    trailing_atr_multiplier: float = 3.0   # 追踪止损 ATR 倍率（比初始更宽，给趋势空间）
     breakeven_trigger_pct: float = 0.20    # 军规 r019：浮盈>20%→保本
     trailing_trigger_pct: float = 0.30     # 军规 r028：浮盈>30%→ATR 移动止盈
-    trailing_stop_pct: float = -0.05       # 从 HWM 回撤%（负数）
+    trailing_stop_pct: float = -0.05       # 从 HWM 回撤%（负数，ATR 不可用时回退）
 
     def __post_init__(self):
         """强制精度: 价格字段用 float 但保持一致性。"""
@@ -193,6 +194,7 @@ class PositionState:
             "max_adversity_pct": self.max_adversity_pct,
             "initial_stop_pct": self.initial_stop_pct,
             "atr_multiplier": self.atr_multiplier,
+            "trailing_atr_multiplier": self.trailing_atr_multiplier,
             "breakeven_trigger_pct": self.breakeven_trigger_pct,
             "trailing_trigger_pct": self.trailing_trigger_pct,
             "trailing_stop_pct": self.trailing_stop_pct,
@@ -218,6 +220,7 @@ class PositionState:
             max_adversity_pct=float(d.get("max_adversity_pct", 0)),
             initial_stop_pct=float(d.get("initial_stop_pct", -0.02)),
             atr_multiplier=float(d.get("atr_multiplier", 2.0)),
+            trailing_atr_multiplier=float(d.get("trailing_atr_multiplier", 3.0)),
             breakeven_trigger_pct=float(d.get("breakeven_trigger_pct", 0.20)),
             trailing_trigger_pct=float(d.get("trailing_trigger_pct", 0.30)),
             trailing_stop_pct=float(d.get("trailing_stop_pct", -0.05)),
@@ -232,19 +235,21 @@ class PositionState:
         direction: str = "LONG",
         quantity: int = 0,
         stop_config: Optional[dict] = None,
+        atr_value: Optional[float] = None,
     ) -> PositionState:
         """创建新持仓的初始状态。
 
         Args:
             stop_config: 可选配置覆盖，键:
-                initial_stop_pct, atr_multiplier, breakeven_trigger_pct,
-                trailing_trigger_pct, trailing_stop_pct
+                initial_stop_pct, atr_multiplier, trailing_atr_multiplier,
+                breakeven_trigger_pct, trailing_trigger_pct, trailing_stop_pct
+            atr_value: 当前 ATR 值，提供时初始止损优先用 ATR
         """
         cfg = stop_config or {}
-        pct = cfg.get("initial_stop_pct", -0.02)
-        initial_stop = entry_price * (1.0 + pct) if entry_price > 0 else 0.0
+        atr_mult = cfg.get("atr_multiplier", 2.0)
 
-        return cls(
+        # 创建临时状态用于 DynamicStopCalculator 计算
+        temp = cls(
             symbol=symbol,
             name=name,
             direction=direction,
@@ -253,14 +258,22 @@ class PositionState:
             high_price=entry_price,
             low_price=entry_price,
             last_price=entry_price,
-            stop_stage=StopStage.INITIAL,
-            stop_price=round(initial_stop, 2),
-            stop_note="初始止损",
             initial_stop_pct=cfg.get("initial_stop_pct", -0.02),
-            atr_multiplier=cfg.get("atr_multiplier", 2.0),
+            atr_multiplier=atr_mult,
+            trailing_atr_multiplier=cfg.get("trailing_atr_multiplier", 3.0),
             breakeven_trigger_pct=cfg.get("breakeven_trigger_pct", 0.20),
             trailing_trigger_pct=cfg.get("trailing_trigger_pct", 0.30),
             trailing_stop_pct=cfg.get("trailing_stop_pct", -0.05),
+        )
+
+        initial_stop = DynamicStopCalculator.initial_stop(temp, atr_value=atr_value)
+        stop_note = f"初始止损 (ATR×{atr_mult})" if atr_value and atr_value > 0 else "初始止损 (固定%)"
+
+        return replace(
+            temp,
+            stop_stage=StopStage.INITIAL,
+            stop_price=round(initial_stop, 2),
+            stop_note=stop_note,
         )
 
 
@@ -300,22 +313,30 @@ class DynamicStopCalculator:
         return round(state.entry_price, 2)
 
     @staticmethod
-    def trailing_stop(state: PositionState) -> float:
-        """阶段 3 止损: HWM × (1 + trailing_stop_pct)。
+    def trailing_stop(state: PositionState, atr_value: Optional[float] = None) -> float:
+        """阶段 3 止损: ATR 优先 → HWM - ATR × trailing_atr_multiplier，回退到固定%。
 
-        trailing_stop_pct 为负数（如 -0.05 = HWM 回撤 5%）。
-        止损失只上移不下移：新止损 = max(旧止损, HWM - trail)。
+        ATR 可用时: stop = HWM - ATR × trailing_atr_multiplier
+        回退: stop = HWM × (1 + trailing_stop_pct)（trailing_stop_pct 为负数）
+        止损失只上移不下移：新止损 = max(旧止损, 计算值)。
         """
         if state.high_price <= 0:
             return state.stop_price
 
-        trail = state.high_price * (1.0 + state.trailing_stop_pct)
+        if atr_value and atr_value > 0 and state.trailing_atr_multiplier > 0:
+            trail = state.high_price - atr_value * state.trailing_atr_multiplier
+        else:
+            trail = state.high_price * (1.0 + state.trailing_stop_pct)
+
         # 止损失永不回落
         new_stop = max(trail, state.stop_price) if state.stop_price > 0 else trail
         return round(new_stop, 2)
 
     @staticmethod
-    def determine_stage(state: PositionState) -> tuple[StopStage, float, str]:
+    def determine_stage(
+        state: PositionState,
+        atr_value: Optional[float] = None,
+    ) -> tuple[StopStage, float, str]:
         """根据当前浮盈判断止损阶段。
 
         Returns:
@@ -325,13 +346,14 @@ class DynamicStopCalculator:
 
         # 已在 TRAILING 中 → 持续更新 trailing_stop
         if state.stop_stage == StopStage.TRAILING:
-            new_stop = DynamicStopCalculator.trailing_stop(state)
+            new_stop = DynamicStopCalculator.trailing_stop(state, atr_value=atr_value)
             return (StopStage.TRAILING, new_stop, "追踪更新 (TRAILING 持续)")
 
         # 浮盈 ≥ 30% → 跃迁到 TRAILING（军规 r028）
         if favor >= state.trailing_trigger_pct:
-            new_stop = DynamicStopCalculator.trailing_stop(state)
-            return (StopStage.TRAILING, new_stop, f"浮盈 {favor:.1%} ≥ {state.trailing_trigger_pct:.0%}，启动移动止盈 (r028)")
+            new_stop = DynamicStopCalculator.trailing_stop(state, atr_value=atr_value)
+            atr_note = "ATR追踪" if atr_value and atr_value > 0 else "固定%追踪"
+            return (StopStage.TRAILING, new_stop, f"浮盈 {favor:.1%} ≥ {state.trailing_trigger_pct:.0%}，启动{atr_note}止盈 (r028)")
 
         # 浮盈 ≥ 20% → 跃迁到 BREAKEVEN（军规 r019）
         if favor >= state.breakeven_trigger_pct:
@@ -383,6 +405,7 @@ class PositionStateManager:
         direction: str = "LONG",
         quantity: int = 0,
         stop_config: Optional[dict] = None,
+        atr_value: Optional[float] = None,
     ) -> PositionState:
         """创建新持仓状态。已存在则跳过不覆盖。"""
         if symbol in self._positions:
@@ -396,6 +419,7 @@ class PositionStateManager:
             direction=direction,
             quantity=quantity,
             stop_config=stop_config,
+            atr_value=atr_value,
         )
         self._positions[symbol] = state
         self._save()
@@ -441,8 +465,8 @@ class PositionStateManager:
                 severity="CRITICAL",
             ))
 
-        # 3. 检查阶段跃迁
-        new_stage, new_stop, reason = DynamicStopCalculator.determine_stage(pos2)
+        # 3. 检查阶段跃迁（传入 ATR 用于动态止损计算）
+        new_stage, new_stop, reason = DynamicStopCalculator.determine_stage(pos2, atr_value=atr_value)
         if new_stage != pos2.stop_stage:
             pos2 = pos2.with_stop(new_stage, new_stop, reason)
             alert_type = (

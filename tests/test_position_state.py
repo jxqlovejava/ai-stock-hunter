@@ -124,6 +124,23 @@ class TestPositionStateInitial:
         assert state.low_price == 50.0
         assert state.last_price == 50.0
 
+    def test_initial_atr_stop(self):
+        """提供 ATR 时初始止损使用 ATR。"""
+        state = PositionState.initial("000001", entry_price=100.0, atr_value=3.0)
+        # ATR=3, multiplier=2 → atr_stop=100-6=94, fixed=100*0.98=98 → max(94,98)=98
+        assert state.stop_price == pytest.approx(98.0)
+
+    def test_initial_atr_stop_wider(self):
+        """ATR 很大时取固定止损（更紧的）。"""
+        state = PositionState.initial("000001", entry_price=100.0, atr_value=10.0)
+        # ATR=10, multiplier=2 → atr_stop=80, fixed=98 → max(80,98)=98
+        assert state.stop_price == pytest.approx(98.0)
+
+    def test_initial_atr_stop_note(self):
+        """ATR 止损有明确标注。"""
+        state = PositionState.initial("000001", entry_price=100.0, atr_value=2.0)
+        assert "ATR" in state.stop_note
+
 
 # ---------------------------------------------------------------------------
 # 3. DynamicStopCalculator
@@ -182,6 +199,28 @@ class TestDynamicStopCalculator:
         stop = DynamicStopCalculator.trailing_stop(state2)
         assert stop == pytest.approx(114.0)  # 不下移
 
+    def test_trailing_stop_atr_based(self):
+        """ATR 可用时追踪止损使用 ATR。"""
+        state = PositionState.initial(
+            "000001", entry_price=100.0,
+            stop_config={"trailing_atr_multiplier": 3.0},
+        )
+        state = state.observe_price(130.0)  # HWM=130
+        # ATR=2, trailing_atr_multiplier=3 → stop = 130 - 2*3 = 124
+        stop = DynamicStopCalculator.trailing_stop(state, atr_value=2.0)
+        assert stop == pytest.approx(124.0)
+
+    def test_trailing_stop_atr_fallback_to_fixed(self):
+        """无 ATR 时回退到固定百分比。"""
+        state = PositionState.initial(
+            "000001", entry_price=100.0,
+            stop_config={"trailing_stop_pct": -0.05},
+        )
+        state = state.observe_price(130.0)
+        # 无 ATR → HWM * (1 - 0.05) = 130 * 0.95 = 123.5
+        stop = DynamicStopCalculator.trailing_stop(state, atr_value=None)
+        assert stop == pytest.approx(123.5)
+
 
 # ---------------------------------------------------------------------------
 # 4. DynamicStopCalculator.determine_stage()
@@ -238,6 +277,20 @@ class TestDetermineStage:
         state = state.observe_price(112.0)  # +12%
         stage, stop, reason = DynamicStopCalculator.determine_stage(state)
         assert stage == StopStage.BREAKEVEN  # 10% < 12% < 20%
+
+    def test_determine_stage_passes_atr_through(self):
+        """determine_stage 在 TRAILING 时使用 ATR 计算止损。"""
+        state = PositionState.initial(
+            "000001", entry_price=100.0,
+            stop_config={"trailing_atr_multiplier": 3.0},
+        )
+        state = state.observe_price(135.0)  # +35% → TRAILING
+        # 传入 ATR=2.0
+        stage, stop, reason = DynamicStopCalculator.determine_stage(state, atr_value=2.0)
+        assert stage == StopStage.TRAILING
+        # HWM=135, ATR=2, trailing_atr_multiplier=3 → 135-6=129
+        assert stop == pytest.approx(129.0)
+        assert "ATR追踪" in reason
 
 
 # ---------------------------------------------------------------------------
