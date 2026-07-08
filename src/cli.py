@@ -184,6 +184,15 @@ def cmd_analyze(args: list[str]):
 
     # 使用详细输出格式化器
     print(format_analysis_result(result))
+    # 生成投资备忘录
+    try:
+        from src.reporting.memo_renderer import MemoRenderer
+        memo = MemoRenderer()
+        memo_ctx = memo.render(result) if hasattr(memo, "render") else None
+        if memo_ctx:
+            print(f"\n📝 投资备忘录已生成")
+    except Exception:
+        pass  # memo 渲染失败不影响主流程
 
 
 def cmd_macro():
@@ -486,11 +495,29 @@ def cmd_indicators(args: list[str]):
 
 
 def cmd_backtest_optimize():
-    """参数优化。"""
-    print("🔧 参数优化")
-    from src.backtest import GridSearchOptimizer, StrategyRegistry
-    print("优化器已就绪。使用 GridSearchOptimizer 进行参数网格搜索。")
-    print("(需提供数据源和策略类以运行完整优化)")
+    """参数优化 — 对 MVP1 策略进行网格搜索参数优化。"""
+    from src.backtest.optimizer import GridSearchOptimizer
+    from src.backtest.runner import run_backtest
+
+    print("🔧 参数优化 (网格搜索)")
+    print("=" * 60)
+    try:
+        param_grid = {
+            "max_positions": [10, 15, 20],
+            "rebalance_days": [21, 63, 126],
+        }
+        optimizer = GridSearchOptimizer(
+            engine_factory=lambda: run_backtest(engine="legacy"),
+            param_grid=param_grid,
+        )
+        result = optimizer.optimize()
+        print(f"\n✅ 优化完成: {len(result.results)} 组参数")
+        if result.best_params:
+            print(f"   最优参数: {result.best_params}")
+            print(f"   最优夏普: {result.best_score:.2f}")
+    except Exception as e:
+        print(f"❌ 优化失败: {e}")
+        print("   (需完整数据源配置: python -m src backtest 先测试基本回测)")
 
 
 def cmd_backtest_compare():
@@ -720,9 +747,36 @@ def cmd_manipulation(args: list[str]):
 
 
 def cmd_calibrate():
-    """置信度校准报告。"""
+    """置信度校准报告 — 基于交易追踪数据验证系统预测准确度。"""
+    from src.learner.calibrator import Calibrator
+    from src.kelly.tracker import TradeTracker
+
     print("📐 置信度校准")
-    print("⏳ Phase 4: 样本量 < 20，不出报告。使用 trade-track add 录入交易后运行 calibrate。")
+    print("=" * 60)
+
+    cal = Calibrator()
+    try:
+        tracker = TradeTracker()
+        records = tracker.list_records() if hasattr(tracker, "list_records") else []
+        for r in records:
+            if hasattr(r, "confidence") and hasattr(r, "pnl"):
+                cal.record(r.confidence, r.pnl > 0)
+    except Exception:
+        pass
+
+    report = cal.generate_report()
+    print(f"   样本数: {report.total_predictions} (需要 ≥ {cal.MIN_SAMPLES})")
+    print(f"   样本充足: {'✅' if report.sample_sufficient else '❌'}")
+
+    if report.sample_sufficient:
+        print(f"\n   校准结果:")
+        for band, acc in report.band_accuracy.items() if hasattr(report, "band_accuracy") else []:
+            bar = "█" * int(acc * 20)
+            print(f"   置信度 {band}: {acc:.0%} {bar}")
+    else:
+        remaining = cal.MIN_SAMPLES - report.total_predictions
+        print(f"\n   ⚠️ 还需 {remaining} 条交易记录")
+        print(f"   使用 'python -m src trade-track add' 录入交易")
 
 
 @_safe_cmd
@@ -1035,6 +1089,57 @@ def cmd_learn(args: list[str]):
 # ------------------------------------------------------------------
 
 @_safe_cmd
+@_safe_cmd
+def cmd_finance(args: list[str]):
+    """财务数据查询 — NL 驱动的财务报表查询。
+
+    用法: python -m src finance <code> [statement]
+      statement: lrb(利润表) / fzb(资产负债表) / llb(现金流量表)
+    """
+    import argparse
+    from src.finance.meta_tool import MetaTool
+
+    parser = argparse.ArgumentParser(description="财务报表查询")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("statement", nargs="?", default="lrb", help="报表类型: lrb/fzb/llb")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src finance <code> [lrb|fzb|llb]")
+        print()
+        print("财务报表查询:")
+        print("  lrb — 利润表 (营业收入/净利润/EPS)")
+        print("  fzb — 资产负债表 (总资产/负债/净资产)")
+        print("  llb — 现金流量表 (经营/投资/筹资现金流)")
+        return
+
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol}")
+        return
+
+    stype_map = {"lrb": "利润表", "fzb": "资产负债表", "llb": "现金流量表"}
+    stype = parsed.statement
+    print(f"📊 {stype_map.get(stype, stype)}: {symbol}")
+    print("=" * 60)
+
+    try:
+        tool = MetaTool()
+        result = tool.query(symbol, stype) if hasattr(tool, "query") else None
+        if result:
+            print(result)
+        else:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            quote = agg.get_quote(symbol)
+            name = quote.name if quote else symbol
+            print(f"  标的: {name}")
+            print(f"  (详细财务数据需配置数据源: GS_API_KEY / AKShare)")
+            print(f"  可用 python -m src diagnose {symbol} 查看综合诊断")
+    except Exception as e:
+        print(f"  ⚠️ 财务查询暂不可用: {e}")
+
+
 def cmd_search_news(args: list[str]):
     """mx-search 金融资讯搜索。"""
     if not args:
@@ -3363,6 +3468,13 @@ def main():
         format="%(levelname)s [%(name)s] %(message)s",
     )
 
+    # 注册默认主动任务 (cron 系统)
+    try:
+        from src.cron.executor import register_default_jobs
+        register_default_jobs()
+    except Exception:
+        pass
+
     # 首次运行检测：无 .env 时提示
     _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     if not os.path.exists(_env_path):
@@ -3493,6 +3605,7 @@ def main():
         "evolve": cmd_evolve,
         "learn": lambda: cmd_learn(args),
         # V4 妙想 Skill 命令
+        "finance": lambda: cmd_finance(args),
         "search-news": lambda: cmd_search_news(args),
         "screen": lambda: cmd_screen(args),
         "related": lambda: cmd_related(args),

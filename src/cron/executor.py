@@ -128,3 +128,30 @@ class JobExecutor:
         _BUILTIN_COMMANDS[name] = command
 
 
+# ── 默认主动任务注册 ──
+
+def register_default_jobs():
+    """注册系统默认的主动执行任务（开盘前/盘中/收盘后）。
+
+    在 cli.py main() 启动时调用，确保 cron 有活跃任务。
+    """
+    # 1. 开盘前宏观快照 (每个交易日 09:15)
+    JobExecutor.register_builtin(
+        "pre_market_macro",
+        "python -m src macro"
+    )
+    # 2. 盘中扫雷 (每 30 分钟)
+    JobExecutor.register_builtin(
+        "intraday_sweep",
+        "python -m src sweep"
+    )
+    # 3. 收盘后情绪快照 (交易日 15:15)
+    JobExecutor.register_builtin(
+        "post_market_sentiment",
+        "python -m src sentiment"
+    )
+    # 4. 收盘后恐慌套利扫描
+    JobExecutor.register_builtin(
+        "post_market_panic",
+        "python -m src sweep --panic"
+    )

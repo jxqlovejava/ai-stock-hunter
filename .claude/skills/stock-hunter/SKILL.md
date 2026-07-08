@@ -100,3 +100,17 @@ user-invocable: true
 - 本系统不构成投资建议
 - 所有分析结果仅供参考
 - 实盘前请充分验证策略在回测中的表现
+
+## 执行 CHECKLIST (强制)
+
+在进行任何分析输出前，逐项确认：
+
+- [ ] 数据源状态已检查？(DataAggregator.source_status())
+- [ ] 军规检查已通过？(DoctrineChecker)
+- [ ] 准入检查已通过？(AdmissionCheck — ST/次新/流动性/涨跌停/停牌)
+- [ ] 所有数据点携带 source_citation? (tier + nature + freshness)
+- [ ] [UNSOURCED] / [DATA_GAP] / [STALE] / [SPECULATION] 已标记？
+- [ ] 关键盘面数据 ≥ 2 源交叉验证？
+- [ ] confidence 已计算且反映数据质量加权？
+- [ ] 禁止内容已检查？(无具体买卖建议/无内幕消息引用)
+- [ ] 输出格式符合 guardrails.md 强制要求？

@@ -198,6 +198,58 @@ feedback add       # 添加交易反馈
 
 结论：PE 对比产生的初步判断有 80% 的误判率。**必须跑完管道再下结论。**
 
+## 参考项目
+
+设计决策、架构模式、算法实现时，优先查阅以下两个本地参考项目。
+
+### 🛡️ RiskGuard — 风控层 (`~/Documents/workspace/riskguard`)
+
+券商无关的开源交易风控层，定位"量化五层积木（数据→研究→回测→风控→执行）中风控层缺失的标准件"。
+
+| 模块 | 路径 | 本项目映射 |
+|------|------|-----------|
+| 风控引擎 | `src/riskguard/engine.py` — `RiskEngine` | → `routing/risk_control.py` (L4 Risk) |
+| 规则系统 | `src/riskguard/rules/` — 5 条规则 | → `doctrine/` 31 条军规 |
+| 仓位算法 | `src/riskguard/sizing/` — Kelly / 波动率目标 / 固定比例 | → `routing/positioning.py` (L3 Trade) |
+| 配置预设 | `src/riskguard/presets.py` — 保守/均衡/激进 | → 投资者偏好 |
+| 审计追踪 | `src/riskguard/audit/` — JSONL + SQLite 哈希链防篡改 | → 信号日志 |
+| 实时监控 | `src/riskguard/monitor/daemon.py` | → 盯盘预警 |
+| 券商抽象 | `src/riskguard/brokers/` — Paper / Alpaca | → 模拟交易 |
+| 回测叠加 | `src/riskguard/backtest/overlay.py` | → `backtest/` |
+
+**核心设计模式（可借鉴）**：
+- 全量不可变 dataclass（`frozen=True, slots=True`），状态变更靠 `replace()` 返回新对象
+- `RiskConfig` 构造时校验所有参数区间，非法即抛 `ConfigError`
+- 引擎是唯一持有可变引用的"服务对象"，内部状态用 `threading.RLock` 保护
+- `check()` 与 `submit()` 在同一把锁内完成，消除"检查时没熔断、提交时已熔断"的竞态窗口
+- 拿不到价格直接拒单（fail-closed），绝不用猜测价放行
+- 减仓单永远放行（熔断后不拦截平仓）
+- 8 个 example 脚本可直接运行
+
+### 📊 VectorBT — 回测层 (`~/Documents/workspace/vectorbt`)
+
+矩阵化回测框架，"thinks in matrices, backtests at scale"。用 NumPy 数组打包数千组参数配置，Numba + Rust 加速热路径。
+
+| 模块 | 路径 | 本项目映射 |
+|------|------|-----------|
+| 组合回测 | `vectorbt/portfolio/base.py` | → `backtest/` |
+| 订单/交易 | `vectorbt/portfolio/orders.py` / `trades.py` | → 交易追踪 |
+| Numba 加速 | `vectorbt/portfolio/nb.py` | → 性能关键路径 |
+| 回撤分析 | `vectorbt/generic/drawdowns.py` | → 风控回撤计算 |
+| 指标工厂 | `vectorbt/indicators/factory.py` | → `data/factor_pipeline.py` |
+| 数据层 | `vectorbt/data/` — 多源 + 更新器 | → `data/aggregator.py` |
+| 绘图/统计 | `vectorbt/generic/plotting.py` / `stats_builder.py` | → 可视化输出 |
+
+**核心设计模式（可借鉴）**：
+- `array_wrapper.py` — 把 NumPy/Pandas 包装成统一接口
+- `column_grouper.py` — 多列批量操作（网格搜索多参数组合）
+- `combine_fns.py` — 可组合的 reduce/transform 函数
+- `accessors.py` — 通过 pandas accessor 扩展 DataFrame（`pd.DataFrame.vbt.xxx`）
+- `dispatch.py` — 根据输入类型自动分发到不同实现
+- 指标工厂模式：声明式配置 → 自动生成 TA-Lib / Pandas TA / 自定义实现
+- Rust 扩展（`rust/` 目录）用于最热路径加速
+- 完整的示例 notebooks（BTC DMAC / MACD Volume / Pairs Trading / Portfolio Optimization / Walk-Forward）
+
 ## 开发工作流
 
 - **测试**：`pytest tests/`（类级 Test* 命名 + 方法级 test_* 命名）
