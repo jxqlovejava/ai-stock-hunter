@@ -2525,6 +2525,72 @@ def cmd_timing(args: list[str]):
 
 
 @_safe_cmd
+def cmd_attribute(args: list[str]):
+    """个股涨跌归因 — Phase 1 自动并行数据搜集 + 质量预检。
+
+    用法: python -m src attribute <code> [--date YYYY-MM-DD]
+
+    Phase 1 (自动): AttributionEngine 并行搜集新闻/公告/行情/资金面/行业数据，
+                    自动生成 T0-T3 分级 + STALE/DATA_GAP 标记 + QualitySummary。
+    Phase 2/3 (AI): 由 AI 代理调用 macro-monitor/sector-research/sentiment-analysis
+                    等 skill 完成多维归因和因果推断。
+    """
+    import argparse
+    from datetime import datetime
+
+    from src.routing.attribution import AttributionEngine
+    from src.routing.attribution_formatter import format_attribution_result
+
+    parser = argparse.ArgumentParser(description="个股涨跌归因")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--date", type=str, default="", help="归因日期 YYYY-MM-DD (默认今天)")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src attribute <code> [--date YYYY-MM-DD]")
+        print()
+        print("示例:")
+        print("  python -m src attribute 600089")
+        print("  python -m src attribute 000063 --date 2026-07-01")
+        print()
+        print("Phase 1 自动搜集: 新闻/公告/行情/K线/龙虎榜/北向/融资融券/行业分类")
+        print("Phase 2/3 由 AI 代理完成: 多维归因 → 因果推断 → 强制格式输出")
+        return
+
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol} (需要 6 位数字)")
+        return
+
+    date = parsed.date or datetime.now().strftime("%Y-%m-%d")
+
+    print(f"🔍 个股涨跌归因: {symbol} ({date})")
+    print("=" * 60)
+    print()
+    print("📡 Phase 1 — 信息搜集 (并行)")
+    print("   ├→ 资讯/新闻")
+    print("   ├→ 公告 (巨潮)")
+    print("   ├→ 行情/K线 (腾讯 + mootdx)")
+    print("   ├→ 资金面 (龙虎榜/北向/融资融券)")
+    print("   └→ 行业分类 (东财)")
+    print()
+
+    engine = AttributionEngine()
+    result = engine.collect(symbol, date=date)
+
+    # 输出 Phase 1 结果
+    print(format_attribution_result(result))
+    print()
+    print("─" * 60)
+    print("📌 Phase 1 完成。请 AI 代理继续执行:")
+    print("   Phase 2: macro-monitor / sector-research / sentiment-analysis")
+    print("            / topic-manager / policy-tracker + 资金面+技术面")
+    print("   Phase 3: 信息源质量检查 → 因果链推导 → 主因排序")
+    print("   Skill:   stock-attribution (含完整 CHECKLIST)")
+    print("   CLI:     结果已在上方，可用 result.drivers / result.confidence 补充")
+
+
+@_safe_cmd
 def cmd_macro_event(args: list[str]):
     """宏观事件因果链分析 — 事件→A股传导路径→影响估计→策略建议。"""
     from src.macro.event_analyzer import EventAnalyzer
@@ -2832,6 +2898,7 @@ _NL_ROUTES: list[dict] = [
     {"keys": ["自选", "盯盘", "扫雷", "watchlist", "sweep", "预警", "alert"], "cmd": "sweep", "help": "python -m src sweep"},
     {"keys": ["进化", "学习", "策略进化", "论文", "evolution"], "cmd": "evolution list", "help": "python -m src evolution list"},
     {"keys": ["偏好", "设置", "配置", "profile", "preference", "风险偏好", "投资风格"], "cmd": "preference setup", "help": "python -m src preference setup"},
+    {"keys": ["为什么涨", "为什么跌", "涨停原因", "跌停原因", "大涨原因", "大跌原因", "涨跌原因", "归因", "attribute"], "cmd": "attribute", "help": "python -m src attribute <code>  # 需要股票代码"},
 ]
 
 
@@ -2954,6 +3021,9 @@ def main():
         print("  factor-scan             扫描所有因子绩效")
         print("  alpha-rank              全市场 Alpha 排名")
         print()
+        print("🔍 归因分析 (NEW):")
+        print("  attribute <code>         个股涨跌归因 (自动搜集+质量预检)")
+        print()
         print("🏭 深度研究 (NEW):")
         print("  sector-research <行业>   行业全景研究")
         print("  deep-research <code>     公司深度研究")
@@ -3024,6 +3094,7 @@ def main():
         "swing-scan": lambda: cmd_swing_scan(args),
         "timing": lambda: cmd_timing(args),
         "macro-event": lambda: cmd_macro_event(args),
+        "attribute": lambda: cmd_attribute(args),
         # 策略竞技场
         "arena": lambda: cmd_arena(args),
         # Phase 8: Alpha 挖掘管线
