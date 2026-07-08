@@ -444,5 +444,40 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if nc.get("speculation", 0):
             lines.append(f"  ⚠️ 含{nc['speculation']}处推测数据，仅供参考不参与评分")
 
+    # ── T+0 日内时机分析 ─────────────────────────────────────────
+    t0 = getattr(result, "t0_result", None)
+    if t0 and isinstance(t0, dict) and t0.get("score") is not None:
+        lines.append(f"\n  ⏱️  T+0 日内时机分析")
+        lines.append(f"  {HR}")
+        action_emoji = {"add": "🟢", "hold": "🟡", "reduce": "🟠", "cut": "🔴", "no_position": "⚪"}
+        action_text = {"add": "可以加仓", "hold": "观望等待", "reduce": "建议减仓", "cut": "坚决减仓", "no_position": "不建议建仓"}
+        emoji = action_emoji.get(t0.get("action", ""), "❓")
+        text = action_text.get(t0.get("action", ""), "未知")
+        lines.append(f"  {emoji} {text}  得分: {t0['score']}")
+        if t0.get("vwap", 0) > 0:
+            lines.append(f"  日内: VWAP={t0['vwap']:.2f} 振幅{t0.get('amplitude',0)}% 反弹{t0.get('rebound_from_low',0):+.1f}%")
+        lines.append(f"  日线: MA5={t0.get('ma5',0):.2f} MA10={t0.get('ma10',0):.2f} 支撑={t0.get('support_1',0)}")
+        if t0.get("rebound_quality"):
+            lines.append(f"  {t0['rebound_quality']}")
+        for s in t0.get("signals_bear", [])[:3]:
+            lines.append(f"  🔴 {s}")
+        for s in t0.get("signals_bull", [])[:2]:
+            lines.append(f"  🟢 {s}")
+        if t0.get("trigger_condition"):
+            lines.append(f"  📋 {t0['trigger_condition']}")
+
+    # ── 宏观事件分析 ────────────────────────────────────────────
+    evt = getattr(result, "macro_event", None)
+    if evt and isinstance(evt, dict) and evt.get("summary"):
+        lines.append(f"\n  🌍 宏观事件影响")
+        lines.append(f"  {HR}")
+        lines.append(f"  {evt['summary']}")
+        if evt.get("channels"):
+            for ch in evt["channels"][:3]:
+                d_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "➖"}.get(ch.get("direction",""), "➖")
+                lines.append(f"  {d_emoji} {ch.get('channel','')}: {ch.get('description','')[:50]}...")
+        if evt.get("strategy", {}).get("action"):
+            lines.append(f"  策略: {evt['strategy']['action']}")
+
     lines.append(f"\n  ⚠️ AI分析结果，不构成投资建议。投资有风险，入市需谨慎。\n")
     return "\n".join(lines)

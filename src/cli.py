@@ -154,6 +154,8 @@ def cmd_analyze(args: list[str]):
     parser = argparse.ArgumentParser(description="单只股票全链路分析")
     parser.add_argument("symbol", help="股票代码")
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
+    parser.add_argument("--event", type=str, default="", help="当日重大宏观事件描述（如: 美联储加息50bp）")
+    parser.add_argument("--event-category", type=str, default="", help="事件类型: monetary/geopolitical/trade_policy/tech_sanction/financial_crisis/commodity")
     parsed = parser.parse_args(args)
 
     symbol = parsed.symbol
@@ -166,7 +168,11 @@ def cmd_analyze(args: list[str]):
     label = "选股分析" if parsed.deep else "日常监控"
     print(f"📊 {label}: {symbol}")
     orch = Orchestrator()
-    result = orch.run(symbol, market=_infer_market(symbol), mode=mode)
+    result = orch.run(
+        symbol, market=_infer_market(symbol), mode=mode,
+        macro_event_desc=parsed.event,
+        macro_event_category=parsed.event_category,
+    )
 
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
