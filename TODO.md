@@ -173,6 +173,7 @@
 
 | 日期 | 内容 |
 |------|------|
+| 07-08 | 🔄 L0-L4 skill 目录重命名：l0-gate→admission, l1-analyze→diagnosis, l2-judge→verdict, l3-trade→positioning, l4-risk→risk-control；所有交叉引用同步更新 |
 | 07-08 | 🔒 信息源质量框架固化：sentiment-analysis SKILL.md 新增 Step 0.1-0.5 强制前置检查（T0-T3/时效性/STALE排除/交叉验证/A-B-C可得性）；stock-hunter SKILL.md 引用；guardrails.md 新增时效性校验规则+交叉验证要求+信息可得性分级+归因输出强制格式 |
 | 07-05 | 🏆 PK增强：白泽 82分(原77)。因子72→85(17因子)/NLP68→78(多源聚合)/基本面78→86(Piotroski+Beneish+FCF)。新建19模块+修改11文件。452测试通过 |
 | 07-04 | 回测引擎新增 `load_data()` AKShare 自动加载；因子管道 MVP 完成 6 个月 PE 快照；行业/策略/输出模块骨架创建；三大底层问题系统诊断→TODO 战略优化方向；8 新模块+5 文件修改+82 测试全通过 |
