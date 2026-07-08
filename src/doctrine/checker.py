@@ -131,6 +131,30 @@ class DoctrineChecker:
         if rule.id == "r031":
             return ctx.get("rolling_3m_winrate", 1.0) < 0.4
 
+        # ── 财务质量军规 ──
+        # ROE 连续性: 近 3 年 ROE 均 > 10% 且无年度亏损
+        if rule.id == "r032":
+            roe_history = ctx.get("roe_history", [])  # [year-2, year-1, year-0]
+            if not roe_history or len(roe_history) < 3:
+                return True  # 数据不足，触发警告
+            return any(r < 10.0 for r in roe_history) or any(r < 0 for r in roe_history)
+
+        # 现金流质量: 近 3 年累计 OCF/累计 NP > 0.8
+        if rule.id == "r033":
+            ocf = ctx.get("operating_cash_flow_3y", 0.0)   # 近 3 年累计经营现金流
+            np_ = ctx.get("net_profit_3y", 0.0)             # 近 3 年累计净利润
+            if np_ <= 0:
+                return True  # 净利润为负或为零，触发警告
+            return (ocf / np_) < 0.8
+
+        # 分红门槛: 近 3 年累计分红/净利润 > 30%
+        if rule.id == "r034":
+            dividend = ctx.get("dividend_3y", 0.0)
+            np_ = ctx.get("net_profit_3y", 0.0)
+            if np_ <= 0:
+                return False  # 亏损公司不触发分红警告（属于更严重的 r032 范畴）
+            return (dividend / np_) <= 0.30
+
         # 默认不触发
         return False
 

@@ -99,4 +99,21 @@ MILITARY_RULES: list[Rule] = [
 
     # ── 元风控 ──
     Rule("r031", RuleCategory.META, "系统级熔断", Severity.BLOCK, "系统整体建议滚动 3 月胜率 < 40% → 全局静默"),
+
+    # ── 财务质量军规（A股本土化强化）──
+    Rule(
+        "r032", RuleCategory.SELECTION, "ROE 连续性",
+        Severity.WARN,
+        "近 3 年 ROE 均 > 10% 且无年度亏损，否则标注盈利质量风险",
+    ),
+    Rule(
+        "r033", RuleCategory.SELECTION, "现金流质量",
+        Severity.WARN,
+        "近 3 年累计经营现金流/净利润 > 0.8，否则标注纸面利润风险",
+    ),
+    Rule(
+        "r034", RuleCategory.SELECTION, "分红门槛",
+        Severity.INFO,
+        "近 3 年累计分红/净利润 > 30%，否则标注铁公鸡风险（不分红/少分红）",
+    ),
 ]

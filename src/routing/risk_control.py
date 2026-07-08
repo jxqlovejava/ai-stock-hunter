@@ -274,6 +274,35 @@ class RiskControlEngine:
             if any("seat_distribution_sell" in v for v in gt_risks):
                 weight = D("0")
 
+        # Phase 11: 操纵感知止损策略
+        manip_pattern = (portfolio or {}).get("manipulation_pattern", "")
+        manip_risk = float((portfolio or {}).get("manipulation_risk_score", 0) or 0)
+        if manip_risk > 30 and manip_pattern:
+            position_loss = D((portfolio or {}).get("position_loss_pct", 0))
+            current_px = D((portfolio or {}).get("current_price", 0) or 0)
+            day_avg_price = D((portfolio or {}).get("day_avg_price", 0) or 0)
+
+            if manip_pattern in ("lure_bull_dump", "news_distribution"):
+                # 诱多出货 / 消息配合出货 → 跌破当日均价立即止损
+                if current_px > D("0") and day_avg_price > D("0") and current_px <= day_avg_price:
+                    violations.append(f"操纵感知止损: {manip_pattern} — 跌破均价{float(day_avg_price):.2f}，快速止损")
+                    weight = min(weight, D("0"))
+            elif manip_pattern == "shakeout":
+                # 洗盘震仓 → 放宽止损 2%，避免被洗出
+                if position_limits:
+                    wider_stop = D(position_limits.get("stop_loss", -0.02)) - D("0.02")
+                    position_limits["stop_loss"] = float(wider_stop)
+            elif manip_pattern == "fishing_line":
+                # 钓鱼线 → 立即止损
+                violations.append(f"操纵感知止损: fishing_line 钓鱼线 — 最高风险，立即止损")
+                weight = min(weight, D("0"))
+            elif manip_pattern in ("closing_pump", "closing_dump"):
+                # 尾盘操纵 → 次日开盘 15 分钟内未走强即止损
+                violations.append(f"操纵感知止损: {manip_pattern} — 次日开盘15分钟未走强建议止损")
+            elif manip_pattern == "wash_trade_pump":
+                # 对倒拉升 → 缩量即逃
+                violations.append(f"操纵感知止损: {manip_pattern} — 对倒拉升，缩量即逃")
+
         return RiskCheck(
             passed=len([v for v in violations if "熔断" in v or "止损" in v or "黑名单" in v]) == 0,
             violations=violations,

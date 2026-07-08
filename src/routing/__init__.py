@@ -7,6 +7,7 @@ from .verdict import VerdictEngine, Verdict
 from .positioning import PositioningEngine, TradeSignal
 from .risk_control import RiskControlEngine, RiskCheck
 from .risk_state import RiskState  # Phase 8: 风控状态机
+from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
 from .orchestrator import Orchestrator
 from .signal import (
     Direction,

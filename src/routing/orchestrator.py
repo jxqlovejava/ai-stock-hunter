@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""编排器 — 画像→军规→准入检查→多维诊断→综合裁决→仓位调度→风控执行 全链路。
+"""编排器 — 画像→宏观象限前置→军规→准入检查→反操纵扫描→多维诊断→综合裁决→仓位调度→风控执行→持仓监控 全链路。
 
 Phase 3: 注入 MacroRegime, NorthboundProfile, DominanceProfile,
          EarningsRevisionFactor, Topic 生命周期调整。
+Phase 11: 宏观象限前置 + 反操纵全链路联动 + 持仓持续跟踪。
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from .perspective_engine import PerspectiveAnalyzer
 from .anti_bias import AntiBiasEngine
 from .verdict_enforcer import VerdictEnforcer
 from .mental_model_matcher import MentalModelMatcher
+from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,10 @@ class OrchestratorResult:
     profile_missing: list[str] = field(default_factory=list)  # 画像缺失项
     # 仓位调度/风控执行 详情
     sizing_detail: Optional[dict] = None  # 仓位计算方法 + 凯利参数
+    # Phase 11: 反操纵扫描结果
+    manipulation_info: Optional[dict] = None
+    # Phase 11: 宏观象限调整
+    regime_adjustments_info: Optional[dict] = None
     position_limits_summary: Optional[dict] = None  # 仓位约束摘要
     # T+0 日内时机分析
     t0_result: Optional[dict] = None
@@ -147,6 +153,8 @@ class Orchestrator:
         self.anti_bias_engine = AntiBiasEngine()
         self.verdict_enforcer = VerdictEnforcer()
         self.mental_model_matcher = MentalModelMatcher()
+        # Phase 11: 持仓持续跟踪
+        self.position_monitor = PositionMonitor()
         # Phase 7: 行业深度研究 (mode="full") — 懒初始化
         self._sector_classifier = None
         self._competition_analyzer = None
@@ -346,6 +354,16 @@ class Orchestrator:
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = self._get_topic_adjustments()
 
+        # Phase 11: 宏观象限前置 — 计算各维度权重调整
+        regime_adjustments = None
+        if macro_regime is not None:
+            try:
+                from src.macro.monetary_credit import MonetaryCreditAnalyzer
+                mca = MonetaryCreditAnalyzer()
+                regime_adjustments = mca.get_regime_adjustments()
+            except Exception as e:
+                logger.debug("Regime adjustments computation failed: %s", e)
+
         if macro_regime is None:
             result.data_gaps.append("宏观数据不可用（如 AKShare 社融 SSL 失败）")
             report_source_citations_gap = make_data_gap_citation(
@@ -423,6 +441,90 @@ class Orchestrator:
         alpha_profile = self._get_alpha_profile(symbol, name, news_context)
         result.alpha_profile = alpha_profile
 
+        # Phase 11: 存储宏观象限调整信息
+        if regime_adjustments is not None:
+            result.regime_adjustments_info = {
+                "quadrant": getattr(regime_adjustments, "quadrant", None),
+                "style_preference": getattr(regime_adjustments, "style_preference", ""),
+                "aggressiveness": getattr(regime_adjustments, "aggressiveness", 0.5),
+                "position_cap": getattr(regime_adjustments, "position_cap", 0.20),
+            }
+
+        # Phase 11: 反操纵扫描 — 筹码集中度 + 日级操纵 + 资金背离
+        manipulation_scan = None
+        try:
+            from src.game_theory.chip_concentration import ChipConcentrationAnalyzer
+            from src.game_theory.daily_manipulation import DailyManipulationDetector
+            from src.game_theory.capital_flow import CapitalFlowAnalyzer
+
+            # 筹码集中度
+            chip_analyzer = ChipConcentrationAnalyzer()
+            chip_result = chip_analyzer.analyze_from_context(symbol, {
+                "shareholder_count": getattr(fundamental_metrics, "shareholder_count", None) if fundamental_metrics else None,
+                "top10_holding_pct": getattr(fundamental_metrics, "top10_holding_pct", 0.0) if fundamental_metrics else 0.0,
+                "top10_float_holding_pct": getattr(fundamental_metrics, "top10_float_holding_pct", 0.0) if fundamental_metrics else 0.0,
+            })
+
+            # 资金流分析
+            flow_analyzer = CapitalFlowAnalyzer()
+            flow_result = flow_analyzer.analyze(
+                symbol=symbol,
+                price_change_pct=quote.change_pct if quote else 0.0,
+            )
+
+            # 日级操纵检测
+            daily_detector = DailyManipulationDetector()
+            daily_bars = self.data.get_daily_bars(symbol, market, count=30) if hasattr(self.data, 'get_daily_bars') else None
+            daily_result = daily_detector.detect(
+                symbol=symbol,
+                daily_bars=daily_bars,
+                shareholder_change_pct=getattr(chip_result, "shareholder_change_pct", 0.0),
+            )
+
+            # 综合操纵扫描结果
+            from dataclasses import dataclass
+            @dataclass
+            class _ManipulationScan:
+                chip_risk: float = 0.0
+                daily_pattern: str = ""
+                pattern_confidence: float = 0.0
+                capital_divergence: float = 0.0
+                overall_risk: float = 0.0
+                recommendations: list = field(default_factory=list)
+
+            # 综合风险 = max(筹码风险, 日级操纵风险, 资金背离风险)
+            overall = max(
+                chip_result.manipulation_risk_score,
+                daily_result.risk_score,
+                flow_result.manipulation_risk_score,
+            )
+            all_recs = (
+                chip_result.recommendations
+                + daily_result.recommendations
+                + flow_result.recommendations
+            )
+            manipulation_scan = _ManipulationScan(
+                chip_risk=chip_result.manipulation_risk_score,
+                daily_pattern=daily_result.pattern_label,
+                pattern_confidence=daily_result.confidence,
+                capital_divergence=flow_result.divergence_score,
+                overall_risk=overall,
+                recommendations=all_recs,
+            )
+        except Exception as e:
+            logger.debug("Anti-manipulation scan failed: %s", e)
+
+        # 存储操纵扫描结果
+        if manipulation_scan is not None:
+            result.manipulation_info = {
+                "overall_risk": manipulation_scan.overall_risk,
+                "chip_risk": manipulation_scan.chip_risk,
+                "daily_pattern": manipulation_scan.daily_pattern,
+                "pattern_confidence": manipulation_scan.pattern_confidence,
+                "capital_divergence": manipulation_scan.capital_divergence,
+                "recommendations": manipulation_scan.recommendations,
+            }
+
         # Step 3: 多维诊断
         # 使用真实行情 + 财务数据
         fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
@@ -439,6 +541,8 @@ class Orchestrator:
             executive=executive,         # V4: 高管数据注入
             valuation_result=valuation_result,  # Phase 5: 估值结果
             cycle_analysis=cycle_analysis,      # Phase 5: 周期分析
+            regime_adjustments=regime_adjustments,     # Phase 11: 宏观象限权重
+            manipulation_scan=manipulation_scan,        # Phase 11: 反操纵扫描
         )
         result.report = report
         if report_source_citations_gap:
@@ -677,6 +781,9 @@ class Orchestrator:
 
         # Step 6: 仓位调度
         effective_macro_cap = 0.80 * risk_mult
+        # Phase 11: 使用宏观象限调整后的仓位上限
+        if regime_adjustments is not None:
+            effective_macro_cap = getattr(regime_adjustments, "max_total_position", effective_macro_cap)
         signal = self.positioning.generate_signal(
             verdict,
             macro_cap=effective_macro_cap,
@@ -684,6 +791,7 @@ class Orchestrator:
             risk_multiplier=risk_mult,
             name=name,
             extra=quote.dict() if quote else {},
+            manipulation_risk=getattr(manipulation_scan, "overall_risk", 0.0) if manipulation_scan else 0.0,
         )
         result.signal = signal
         # 保存仓位计算详情供格式化器使用
@@ -729,6 +837,10 @@ class Orchestrator:
         if imm_fit:
             enriched_portfolio["mental_model_bias_flags"] = imm_fit.bias_flags
             enriched_portfolio["mental_model_warnings"] = imm_fit.warnings
+        # Phase 11: 操纵信号注入风控 — 用于操纵感知止损
+        if manipulation_scan is not None:
+            enriched_portfolio["manipulation_risk_score"] = manipulation_scan.overall_risk
+            enriched_portfolio["manipulation_pattern"] = manipulation_scan.daily_pattern
 
         # Phase 8: 观测权益更新 HWM / 自动熔断
         eq = (enriched_portfolio or {}).get("total_equity", 0)

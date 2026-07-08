@@ -140,6 +140,20 @@ class VerdictEngine:
             mm_bias_flags = imm_fit.bias_flags
         score = max(0, min(100, score * gt_mult * mm_mult))
 
+        # Phase 11: 操纵风险折扣 — 高操纵风险直接降分降置信度
+        manip_risk = getattr(report, "manipulation_risk_score", 0.0) or 0.0
+        if manip_risk > 60:
+            manip_mult = 0.7  # 高操纵风险，评分打 7 折
+            confidence = max(0.3, confidence - 0.15)
+            risks.append(f"操纵风险 {manip_risk:.0f}/100 — 评分已打折")
+        elif manip_risk > 30:
+            manip_mult = 0.85
+            confidence = max(0.35, confidence - 0.07)
+            risks.append(f"操纵风险 {manip_risk:.0f}/100 — 保持警惕")
+        else:
+            manip_mult = 1.0
+        score = max(0, min(100, score * manip_mult))
+
         # 置信度 = 信息完整度的函数
         confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
         if gt_profile is not None:

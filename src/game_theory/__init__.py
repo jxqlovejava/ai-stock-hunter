@@ -32,6 +32,25 @@ from .rules import (
 )
 from .seats import SeatActivity, SeatInfo, SeatTracker
 from .manipulation import ManipulationDetector, ManipulationResult, ManipulationSignal
+from .chip_concentration import (
+    ChipConcentrationAnalyzer,
+    ChipConcentrationResult,
+    get_chip_risk_from_context,
+)
+from .daily_manipulation import (
+    DailyManipulationDetector,
+    DailyManipulationPattern,
+    DailyManipulationResult,
+    PATTERN_LABELS,
+)
+from .capital_flow import (
+    TOP_3_RULES,
+    RuleCapitalFlowModel,
+    CapitalFlowAnalyzer,
+    CapitalFlowResult,
+    DivergenceType,
+    get_capital_flow_risk,
+)
 
 
 def get_game_theory_summary() -> str:
@@ -90,6 +109,15 @@ __all__ = [
     "MARKET_COMPARISONS", "compare_markets", "asymmetry_report",
     # Manipulation Detection (Phase 10)
     "ManipulationDetector", "ManipulationResult", "ManipulationSignal",
+    # Chip Concentration (Phase 11: 反操纵本土化强化)
+    "ChipConcentrationAnalyzer", "ChipConcentrationResult",
+    "get_chip_risk_from_context",
+    # Daily Manipulation (Phase 11)
+    "DailyManipulationDetector", "DailyManipulationPattern",
+    "DailyManipulationResult", "PATTERN_LABELS",
+    # Capital Flow (Phase 11: 资金面深度追踪)
+    "CapitalFlowAnalyzer", "CapitalFlowResult", "DivergenceType",
+    "get_capital_flow_risk",
     # Summary
     "get_game_theory_summary",
 ]

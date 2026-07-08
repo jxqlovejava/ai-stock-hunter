@@ -23,6 +23,62 @@ class Quadrant(str, Enum):
 
 
 @dataclass
+class RegimeAdjustments:
+    """宏观象限对各诊断维度及仓位的动态调整系数。
+
+    所有系数默认 1.0（无调整）。> 1.0 = 该维度在当前象限中应获得更高权重。
+    """
+
+    quadrant: Quadrant
+    # 诊断维度权重调整
+    value_weight: float = 1.0       # 价值维度
+    quality_weight: float = 1.0     # 质量维度
+    momentum_weight: float = 1.0    # 动量维度
+    growth_weight: float = 1.0      # 成长维度
+    macro_weight: float = 1.0       # 宏观维度自身
+    sentiment_weight: float = 1.0   # 情绪维度
+    # 仓位约束
+    position_cap: float = 0.20      # 单票仓位上限（默认 20%）
+    max_total_position: float = 0.80  # 总仓位上限
+    # 板块方向
+    sector_favor: list[str] = field(default_factory=list)
+    sector_avoid: list[str] = field(default_factory=list)
+    # 风格偏好
+    style_preference: str = ""      # "value" / "growth" / "defensive" / "balanced"
+    # 总体进取度 0.0-1.0
+    aggressiveness: float = 0.5
+
+
+# Quadrant → default adjustments mapping
+_QUADRANT_ADJUSTMENTS: dict[Quadrant, dict] = {
+    Quadrant.EASY_MONEY_EASY_CREDIT: {
+        "value_weight": 0.8, "quality_weight": 0.9, "momentum_weight": 1.3,
+        "growth_weight": 1.4, "macro_weight": 0.8, "sentiment_weight": 1.2,
+        "position_cap": 0.25, "max_total_position": 0.90,
+        "style_preference": "growth", "aggressiveness": 0.8,
+    },
+    Quadrant.EASY_MONEY_TIGHT_CREDIT: {
+        "value_weight": 1.0, "quality_weight": 1.2, "momentum_weight": 0.9,
+        "growth_weight": 1.2, "macro_weight": 0.9, "sentiment_weight": 1.0,
+        "position_cap": 0.20, "max_total_position": 0.75,
+        "style_preference": "growth", "aggressiveness": 0.6,
+    },
+    Quadrant.TIGHT_MONEY_EASY_CREDIT: {
+        "value_weight": 1.3, "quality_weight": 1.2, "momentum_weight": 0.8,
+        "growth_weight": 0.8, "macro_weight": 1.1, "sentiment_weight": 0.9,
+        "position_cap": 0.15, "max_total_position": 0.70,
+        "style_preference": "value", "aggressiveness": 0.5,
+    },
+    Quadrant.TIGHT_MONEY_TIGHT_CREDIT: {
+        "value_weight": 1.1, "quality_weight": 1.4, "momentum_weight": 0.5,
+        "growth_weight": 0.5, "macro_weight": 1.3, "sentiment_weight": 0.6,
+        "position_cap": 0.10, "max_total_position": 0.50,
+        "style_preference": "defensive", "aggressiveness": 0.2,
+    },
+}
+
+
+@dataclass
 class MacroRegime:
     quadrant: Quadrant
     confidence: float  # 0.0-1.0
@@ -135,6 +191,33 @@ class MonetaryCreditAnalyzer:
             transition_signals=signals,
             recommended_sectors=recommended,
             avoid_sectors=avoid,
+        )
+
+    def get_regime_adjustments(self) -> RegimeAdjustments:
+        """返回当前宏观象限对各诊断维度的权重调整系数。
+
+        这是重构管道的核心方法——宏观象限判定先于一切，
+        其输出直接调整下游 diagnosis / verdict / positioning 的权重。
+        """
+        regime = self.analyze()
+        defaults = _QUADRANT_ADJUSTMENTS.get(regime.quadrant, {})
+        recommended, avoid = QUADRANT_SECTOR_MAP.get(
+            regime.quadrant, (["防御性消费", "现金"], ["券商", "周期"])
+        )
+        return RegimeAdjustments(
+            quadrant=regime.quadrant,
+            value_weight=defaults.get("value_weight", 1.0),
+            quality_weight=defaults.get("quality_weight", 1.0),
+            momentum_weight=defaults.get("momentum_weight", 1.0),
+            growth_weight=defaults.get("growth_weight", 1.0),
+            macro_weight=defaults.get("macro_weight", 1.0),
+            sentiment_weight=defaults.get("sentiment_weight", 1.0),
+            position_cap=defaults.get("position_cap", 0.20),
+            max_total_position=defaults.get("max_total_position", 0.80),
+            sector_favor=recommended,
+            sector_avoid=avoid,
+            style_preference=defaults.get("style_preference", "balanced"),
+            aggressiveness=defaults.get("aggressiveness", 0.5),
         )
 
     def get_sector_recommendations(self) -> tuple[list[str], list[str]]:

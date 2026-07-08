@@ -66,6 +66,15 @@ class DiagnosisReport:
 class DiagnosisEngine:
     """多维诊断引擎: 宏观/价值/质量/动量/估值/周期/情绪/高管 8+ 维度。"""
 
+    @staticmethod
+    def _apply_weight(score: float, weight: float) -> float:
+        """将权重系数应用到评分，输出保持在 0-100 范围。
+
+        公式: new_score = score * weight，钳制在 [0, 100]。
+        weight < 1.0 降权，weight > 1.0 加权。
+        """
+        return max(0.0, min(100.0, score * weight))
+
     def analyze(
         self,
         symbol: str,
@@ -82,6 +91,8 @@ class DiagnosisEngine:
         executive: Optional[dict] = None,              # V4: 高管数据
         valuation_result: Optional[object] = None,     # Phase 5: ValuationResult
         cycle_analysis: Optional[object] = None,       # Phase 5: CycleAnalysis
+        regime_adjustments: Optional[object] = None,   # Phase 11: RegimeAdjustments
+        manipulation_scan: Optional[object] = None,    # Phase 11: ManipulationScan
     ) -> DiagnosisReport:
         report = DiagnosisReport(symbol=symbol, name=name)
 
@@ -136,7 +147,7 @@ class DiagnosisEngine:
         report.bull_case = self._bull_case(name, quote, financials)
         report.bear_case = self._bear_case(name, quote, financials)
 
-        # Phase 10: 庄家操纵风险检测
+        # Phase 10: 庄家操纵风险检测（日内分钟级）
         try:
             from src.game_theory.manipulation import ManipulationDetector
             detector = ManipulationDetector()
@@ -144,6 +155,40 @@ class DiagnosisEngine:
             report.manipulation_risk_score = manip_result.risk_score
         except Exception:
             report.manipulation_risk_score = 0.0
+
+        # Phase 11: 宏观象限权重前置 + 反操纵扫描降权
+        if regime_adjustments is not None:
+            report.macro_score = self._apply_weight(
+                report.macro_score, getattr(regime_adjustments, "macro_weight", 1.0)
+            )
+            report.value_score = self._apply_weight(
+                report.value_score, getattr(regime_adjustments, "value_weight", 1.0)
+            )
+            report.quality_score = self._apply_weight(
+                report.quality_score, getattr(regime_adjustments, "quality_weight", 1.0)
+            )
+            report.momentum_score = self._apply_weight(
+                report.momentum_score, getattr(regime_adjustments, "momentum_weight", 1.0)
+            )
+
+        # 反操纵扫描降权
+        if manipulation_scan is not None:
+            manip_overall = getattr(manipulation_scan, "overall_risk", 0.0)
+            if manip_overall > 60:
+                report.manipulation_risk_score = max(
+                    report.manipulation_risk_score, manip_overall
+                )
+                manip_discount = 1.0 - (manip_overall / 200)  # 最大降权 50%
+                report.value_score = self._apply_weight(report.value_score, manip_discount)
+                report.quality_score = self._apply_weight(report.quality_score, manip_discount)
+                report.momentum_score = self._apply_weight(report.momentum_score, manip_discount)
+                report.confidence = max(0.3, report.confidence - 0.1)
+            elif manip_overall > 30:
+                report.manipulation_risk_score = max(
+                    report.manipulation_risk_score, manip_overall
+                )
+                manip_discount = 1.0 - (manip_overall / 300)
+                report.momentum_score = self._apply_weight(report.momentum_score, manip_discount)
 
         # Phase 1: 填充数据溯源和信心度
         report.source_citations = self._collect_citations(quote, financials, macro, executive)

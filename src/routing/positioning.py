@@ -91,6 +91,7 @@ class PositioningEngine:
         name: str = "",
         extra: Optional[dict] = None,
         timing_result=None,  # Phase 7: EntryExitEngine.TimingResult
+        manipulation_risk: float = 0.0,  # Phase 11: 操纵风险评分 0-100
     ) -> TradeSignal:
         """生成交易信号。
 
@@ -135,6 +136,17 @@ class PositioningEngine:
 
         # 风险偏好乘数
         target_d *= risk_mult_d
+
+        # Phase 11: 操纵风险仓位折扣
+        if manipulation_risk > 60:
+            manip_discount = D("0.3")  # 高风险 → 仓位 3 折
+        elif manipulation_risk > 30:
+            manip_discount = D("0.7")  # 中风险 → 仓位 7 折
+        elif manipulation_risk > 0:
+            manip_discount = D("0.9")  # 低风险 → 轻微折扣
+        else:
+            manip_discount = D("1.0")
+        target_d *= manip_discount
 
         # 双创折扣
         if is_gem:
