@@ -70,9 +70,11 @@ AnalysisReport(
 
 ## 护栏
 
-- **每个维度标注数据来源** (source_citations)
-- **confidence < 0.6 的结果标注低置信度**
+- **每个维度标注数据来源** (source_citations)，包含 `tier` + `nature` + `freshness`
+- **时效性校验**：各维度使用的数据必须通过时效性检查；新闻/事件类数据 > 12h 标记 `[STALE]`
+- **confidence < 0.6 的结果标注低置信度**，阻止进入 L3
 - **[UNSOURCED] 标记无法溯源的数据点**
+- **[DATA_GAP] 声明**：单源/缺失/间接转述数据显式标注
 - **多空双视角**: bull_case 和 bear_case 必须同时提供
 
 ## 引用

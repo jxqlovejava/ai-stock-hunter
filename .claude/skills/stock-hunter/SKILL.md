@@ -11,7 +11,7 @@ user-invocable: true
 ## 能力概览
 
 ### 1. 分析 (analyze)
-对单只股票执行全链路分析：军规门禁 → L0 保安 → L1 分析师 → L2 法官 → L3 交易员 → L4 风控官。
+对单只股票执行全链路分析：军规门禁 → L0 保安 → L1 分析师 → L2 法官 → L3 交易员 → L4 风控官。**全链路每个阶段必须标注数据来源（T0-T3/nature/freshness），详见 `guardrails.md`。**
 
 ```
 /stock-hunter analyze 600519
@@ -19,7 +19,7 @@ user-invocable: true
 ```
 
 ### 2. 诊断 (diagnose)
-一键诊断（小白入口）——先过军规，再做简要分析，输出三色信号。
+一键诊断（小白入口）——先过军规，再做简要分析，输出三色信号。**诊断中的关键数据点（PE/PB/ROE/涨跌幅）必须携带 source_citation。**
 
 ```
 /stock-hunter diagnose 600519
@@ -33,14 +33,14 @@ user-invocable: true
 ```
 
 ### 4. 情绪 (sentiment)
-检测当前 A 股大盘情绪（恐慌/贪婪/正常）。
+检测当前 A 股大盘情绪（恐慌/贪婪/正常）。**必须执行信息源质量前置检查**（T0-T3分级/时效性校验/交叉验证/STALE排除），详见 `sentiment-analysis` skill。
 
 ```
 /stock-hunter sentiment
 ```
 
 ### 5. 宏观 (macro)
-宏观环境快照。
+宏观环境快照。**必须标注所有宏观指标的数据来源与时效性，详见 `macro-monitor` skill。**
 
 ```
 /stock-hunter macro

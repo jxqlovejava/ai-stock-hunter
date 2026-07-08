@@ -54,8 +54,10 @@ confidence = 0.5 + 0.3 × (min(fundamental, macro, sector) / 50)
 ## 护栏
 
 - **confidence < 0.6 → 阻止进入 L3** (MIN_CONFIDENCE)
+- **数据质量加权**：按 L1 各维度 source_citation 的质量分对维度评分降权（T3 → ×0.70，非 fresh → ×0.70，speculation → 不进入评分）
 - **主题拥挤时降权 20%**
 - **主题消退时中性化行业评分**
+- **最终 confidence 必须反映最差维度的数据质量**
 
 ## 引用
 
