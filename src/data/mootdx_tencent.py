@@ -338,7 +338,7 @@ class MootdxTencentProvider(DataProvider):
         if start_date:
             try:
                 start_dt = datetime.strptime(start_date, "%Y%m%d")
-                days_diff = (datetime.now() - start_dt).days
+                days_diff = max((datetime.now() - start_dt).days, 1)
             except ValueError:
                 days_diff = 30
         else:
@@ -346,7 +346,8 @@ class MootdxTencentProvider(DataProvider):
 
         if resolution.is_intraday:
             bars_per_day = self._INTRADAY_BARS_PER_DAY.get(resolution, 240)
-            return min(days_diff * bars_per_day, 800)
+            # 最少拉一天的分钟数据，且不超过 mootdx 单次上限 800
+            return max(min(days_diff * bars_per_day, 800), bars_per_day)
         return min(days_diff + 50, 2000)
 
     def _parse_bars(
@@ -354,7 +355,9 @@ class MootdxTencentProvider(DataProvider):
         start_date: str, end_date: str,
     ) -> list[Bar]:
         """mootdx 原始 DataFrame → Bar 列表。"""
-        df = pd.DataFrame(raw)
+        import pandas as _pd
+        import numpy as _np
+        df = _pd.DataFrame(raw)
 
         # 列名映射: mootdx 返回列名因 frequency 而异
         col_map = {
@@ -368,14 +371,25 @@ class MootdxTencentProvider(DataProvider):
 
         # 过滤日期范围
         if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = _pd.to_datetime(df["timestamp"])
             if start_date:
                 start_dt = datetime.strptime(start_date, "%Y%m%d")
                 df = df[df["timestamp"] >= start_dt]
             if end_date:
-                end_dt = datetime.strptime(end_date, "%Y%m%d") + pd.Timedelta(days=1)
+                end_dt = datetime.strptime(end_date, "%Y%m%d") + _pd.Timedelta(days=1)
                 df = df[df["timestamp"] < end_dt]
             df = df.sort_values("timestamp")
+
+        # 安全读取列的函数 — 处理 pandas Series 和缺失列
+        cols = set(df.columns)
+        def _val(row, col_name, default=0.0):
+            if col_name not in cols:
+                return default
+            v = row[col_name]
+            try:
+                return float(v) if not _np.isnan(float(v)) else default
+            except (ValueError, TypeError):
+                return default
 
         bars = []
         for _, row in df.iterrows():
@@ -383,12 +397,12 @@ class MootdxTencentProvider(DataProvider):
                 symbol=symbol,
                 timestamp=row["timestamp"].to_pydatetime() if hasattr(row["timestamp"], "to_pydatetime") else row["timestamp"],
                 resolution=resolution,
-                open=float(row.get("open", 0)),
-                high=float(row.get("high", 0)),
-                low=float(row.get("low", 0)),
-                close=float(row.get("close", 0)),
-                volume=int(row.get("volume", 0)),
-                amount=float(row.get("amount", 0)),
+                open=_val(row, "open", 0.0),
+                high=_val(row, "high", 0.0),
+                low=_val(row, "low", 0.0),
+                close=_val(row, "close", 0.0),
+                volume=int(_val(row, "volume", 0.0)),
+                amount=_val(row, "amount", 0.0),
                 source=self.source_name,
             ))
         return bars
