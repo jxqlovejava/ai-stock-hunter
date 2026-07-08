@@ -16,7 +16,7 @@ def format_sentiment_report(sentiment: MarketSentiment) -> str:
 
     lines: list[str] = []
     lines.append("")
-    lines.append(f"  {level_emoji}  市场情绪: {sentiment.level.value}   |   评分: {sentiment.score}/100   |   置信度: {sentiment.confidence:.0%}")
+    lines.append(f"  {level_emoji}  市场情绪: {sentiment.level.value}   |   评分: {sentiment.score}/100   |   置信度: {sentiment.confidence:.0%}   |   历史分位数: {sentiment.percentile:.0f}%")
     lines.append(f"  {'─' * 60}")
     lines.append(f"  {sentiment.summary}")
     lines.append("")
@@ -29,7 +29,7 @@ def format_sentiment_report(sentiment: MarketSentiment) -> str:
         lines.append(f"  {'─' * 70}")
         for ind in sentiment.indicators:
             signal_icon = _signal_icon(ind.signal)
-            val_str = _fmt_value(ind.current_value)
+            val_str = _fmt_value(ind.current_value, ind.unit)
             lines.append(
                 f"  {ind.name:<12} {val_str:>10} {ind.unit:<6} {signal_icon:<14} {ind.description}"
             )
@@ -82,7 +82,7 @@ def format_sentiment_plain(sentiment: MarketSentiment) -> str:
 
     lines: list[str] = []
     lines.append("")
-    lines.append(f"  {level_emoji} 市场情绪: {sentiment.level.value}  |  评分: {sentiment.score}/100  |  置信度: {sentiment.confidence:.0%}")
+    lines.append(f"  {level_emoji} 市场情绪: {sentiment.level.value}  |  评分: {sentiment.score}/100  |  置信度: {sentiment.confidence:.0%}  |  历史分位数: {sentiment.percentile:.0f}%")
     lines.append(f"  {'─' * 60}")
     lines.append(f"  {sentiment.summary}")
     lines.append("")
@@ -91,7 +91,7 @@ def format_sentiment_plain(sentiment: MarketSentiment) -> str:
         lines.append("  📊 情绪指标明细:")
         for ind in sentiment.indicators:
             sig = _signal_icon(ind.signal)
-            lines.append(f"    {ind.name}: {_fmt_value(ind.current_value)}{ind.unit} {sig} — {ind.description}")
+            lines.append(f"    {ind.name}: {_fmt_value(ind.current_value, ind.unit)}{ind.unit} {sig} — {ind.description}")
 
     if sentiment.extreme_signals:
         lines.append("")
@@ -132,6 +132,7 @@ def format_sentiment_json(sentiment: MarketSentiment) -> dict:
         "level": sentiment.level.value,
         "score": sentiment.score,
         "confidence": sentiment.confidence,
+        "percentile": sentiment.percentile,
         "summary": sentiment.summary,
         "indicators": [
             {
@@ -182,12 +183,17 @@ def _signal_icon(signal: str) -> str:
     return icons.get(signal, "⚪")
 
 
-def _fmt_value(v: float) -> str:
-    """格式化为人类可读的字符串。"""
-    if abs(v) >= 1e8:
-        return f"{v/1e8:.1f}亿"
-    if abs(v) >= 1e4:
-        return f"{v/1e4:.1f}万"
+def _fmt_value(v: float, unit: str = "") -> str:
+    """格式化数值，当 unit 已含量级时不再自动添加亿/万后缀。
+
+    如果 unit 包含"亿"或"万"，视为已有量级标识，不做自动转换。
+    """
+    has_scale = "亿" in unit or "万" in unit
+    if not has_scale:
+        if abs(v) >= 1e8:
+            return f"{v/1e8:.1f}亿"
+        if abs(v) >= 1e4:
+            return f"{v/1e4:.1f}万"
     if v == int(v):
         return str(int(v))
     return f"{v:.2f}"
