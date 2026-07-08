@@ -2,30 +2,30 @@
 """CLI 统一入口 — 白泽 (Baize) A 股智能投资决策系统。
 
 用法:
-  python -m src.cli scan [--preset value]         # 全市场选股扫描
-  python -m src.cli analyze <code>                # 单只股票全链路分析
-  python -m src.cli diagnose <code>               # 一键诊断（小白入口）
-  python -m src.cli alpha <code>                  # Alpha Lens 三维评估
-  python -m src.cli alpha-scan [--limit N]        # 高 Alpha 股票扫描
-  python -m src.cli alpha-decay <code>            # Alpha 衰减追踪
-  python -m src.cli macro                         # 宏观快照
-  python -m src.cli sentiment                     # 情绪信号检测
-  python -m src.cli backtest                      # 运行回测
-  python -m src.cli backtest-optimize             # 参数优化
-  python -m src.cli backtest-compare              # 多策略对比
-  python -m src.cli game-theory                   # 博弈论知识摘要
-  python -m src.cli calibrate                     # 置信度校准报告
-  python -m src.cli profile                       # 用户能力画像
-  python -m src.cli preference <view|setup|edit|reset>  # 投资者偏好管理
-  python -m src.cli feedback <add|summary>        # 交易反馈
-  python -m src.cli learn report                  # 生成学习报告
-  python -m src.cli search-news <query>           # 金融资讯搜索
-  python -m src.cli screen <conditions>           # 条件选股
-  python -m src.cli related <symbol>              # 关联关系查询
-  python -m src.cli paper-trade <action>          # 模拟交易管理
-  python -m src.cli poster --title --text         # AI 社区发帖
-  python -m src.cli evolution <sub>               # 策略进化（论文驱动）
-  python -m src.cli trade-track <add|list|kelly>  # 交易追踪（凯利公式）
+  python -m src scan [--preset value]         # 全市场选股扫描
+  python -m src analyze <code>                # 单只股票全链路分析
+  python -m src diagnose <code>               # 一键诊断（小白入口）
+  python -m src alpha <code>                  # Alpha Lens 三维评估
+  python -m src alpha-scan [--limit N]        # 高 Alpha 股票扫描
+  python -m src alpha-decay <code>            # Alpha 衰减追踪
+  python -m src macro                         # 宏观快照
+  python -m src sentiment                     # 情绪信号检测
+  python -m src backtest                      # 运行回测
+  python -m src backtest-optimize             # 参数优化
+  python -m src backtest-compare              # 多策略对比
+  python -m src game-theory                   # 博弈论知识摘要
+  python -m src calibrate                     # 置信度校准报告
+  python -m src profile                       # 用户能力画像
+  python -m src preference <view|setup|edit|reset>  # 投资者偏好管理
+  python -m src feedback <add|summary>        # 交易反馈
+  python -m src learn report                  # 生成学习报告
+  python -m src search-news <query>           # 金融资讯搜索
+  python -m src screen <conditions>           # 条件选股
+  python -m src related <symbol>              # 关联关系查询
+  python -m src paper-trade <action>          # 模拟交易管理
+  python -m src poster --title --text         # AI 社区发帖
+  python -m src evolution <sub>               # 策略进化（论文驱动）
+  python -m src trade-track <add|list|kelly>  # 交易追踪（凯利公式）
 
 数据源: mootdx+腾讯 > 国信 > AKShare. 设置 MX_APIKEY 以启用妙想API.
 """
@@ -59,36 +59,36 @@ def _import_or_none(module_path: str, name: str) -> Any:
 
 
 def _validate_symbol(symbol: str) -> bool:
-    """验证 A 股股票代码格式 (6 位数字)。"""
+    """验证 A 股股票代码格式 (6 位数字) / Validate A-share stock code (6 digits)."""
     if not re.match(r"^\d{6}$", symbol):
-        print(f"❌ 无效股票代码: {symbol} (需要 6 位数字，如 600519)")
+        print(f"❌ 无效股票代码 / Invalid code: {symbol} (需要 6 位数字 / need 6 digits, e.g. 600519)")
         return False
     return True
 
 
 def _infer_market(symbol: str) -> str:
-    """根据股票代码前缀推断市场。"""
+    """根据股票代码前缀推断市场 / Infer market from stock code prefix."""
     if symbol.startswith(("600", "601", "603", "605", "688")):
         return "SH"
     return "SZ"
 
 
 def _safe_cmd(func: Callable) -> Callable:
-    """统一错误处理装饰器 — 捕获异常并打印友好消息。"""
+    """统一错误处理 — 捕获异常并打印双语消息 / Unified error handler with bilingual messages."""
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except ImportError as e:
-            print(f"⚠️ 缺少依赖: {e}")
-            print("   请运行: pip install -r requirements.txt")
+            print(f"⚠️ 缺少依赖 / Missing dependency: {e}")
+            print("   请运行 / Run: pip install -r requirements.txt")
         except Exception as e:
-            print(f"❌ 错误: {e}")
+            print(f"❌ 错误 / Error: {e}")
             if os.environ.get("DEBUG"):
                 traceback.print_exc()
             else:
-                print("   (设置 DEBUG=1 查看详细错误信息)")
+                print("   (设置 DEBUG=1 查看详细信息 / Set DEBUG=1 for full traceback)")
 
     return wrapper
 
@@ -148,16 +148,25 @@ def cmd_scan(args: list[str]):
 
 
 @_safe_cmd
-def cmd_analyze(symbol: str):
+def cmd_analyze(args: list[str]):
     """单只股票全链路分析。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="单只股票全链路分析")
+    parser.add_argument("symbol", help="股票代码")
+    parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
     if not _validate_symbol(symbol):
         return
     from src.routing.orchestrator import Orchestrator
     from src.output.formatter import format_analysis_result
 
-    print(f"📊 分析 {symbol}")
+    mode = "full" if parsed.deep else "daily"
+    label = "选股分析" if parsed.deep else "日常监控"
+    print(f"📊 {label}: {symbol}")
     orch = Orchestrator()
-    result = orch.run(symbol, market=_infer_market(symbol))
+    result = orch.run(symbol, market=_infer_market(symbol), mode=mode)
 
     if not result.passed:
         print(f"⛔ 不通过: {', '.join(result.blocked_by)}")
@@ -207,14 +216,18 @@ def cmd_macro():
 
 
 @_safe_cmd
+@_safe_cmd
 def cmd_sentiment():
-    """情绪信号检测。"""
+    """情绪信号检测 — 拉取实时数据并输出完整分析。"""
     from src.sentiment.signals import SentimentDetector
+    from src.sentiment.output import format_sentiment_plain
 
-    print("📈 情绪信号")
+    print("📈 情绪信号检测")
+    print("正在拉取实时市场数据...")
     detector = SentimentDetector()
     sentiment = detector.detect_market()
-    print(f"大盘情绪: {sentiment.level.value} (score={sentiment.score})")
+    report = format_sentiment_plain(sentiment)
+    print(report)
 
 
 def cmd_backtest():
@@ -246,8 +259,15 @@ def cmd_backtest_compare():
 
 
 @_safe_cmd
-def cmd_diagnose(symbol: str):
+def cmd_diagnose(args: list[str]):
     """一键诊断（小白入口）。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="一键诊断")
+    parser.add_argument("symbol", help="股票代码")
+    parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
     if not _validate_symbol(symbol):
         return
     from src.doctrine.checker import DoctrineChecker
@@ -259,7 +279,9 @@ def cmd_diagnose(symbol: str):
         print("✅ 军规通过 — 无硬阻断")
     else:
         print(f"⛔ 被拦截: {', '.join(r.name for r in result.blocked_by)}")
-    cmd_analyze(symbol)
+    # 传递 --deep flag
+    deep_args = [symbol, "--deep"] if parsed.deep else [symbol]
+    cmd_analyze(deep_args)
 
 
 @_safe_cmd
@@ -1026,6 +1048,360 @@ def cmd_alpha_decay(symbol: str):
 
     if ap.is_priced_in:
         print(f"\n💀 Alpha 已基本消失 — {ap.summary}")
+
+
+@_safe_cmd
+def cmd_factor_backtest(args: list[str]):
+    """单因子回测 — IC/IR/分层收益。"""
+    import argparse
+    from src.alpha.factor_backtest import FactorBacktestEngine
+    from src.factors.registry import get_default_registry
+
+    parser = argparse.ArgumentParser(description="单因子回测")
+    parser.add_argument("alpha_id", help="因子 ID（如 pb_factor）")
+    parser.add_argument("--start", default="2024-01-01", help="起始日 YYYY-MM-DD")
+    parser.add_argument("--end", default="2024-12-31", help="终止日 YYYY-MM-DD")
+    parser.add_argument("--symbols", nargs="*", help="股票池（默认全市场）")
+    parsed = parser.parse_args(args)
+
+    reg = get_default_registry()
+    available = reg.list()
+    if parsed.alpha_id not in available:
+        print(f"⚠️ 因子 '{parsed.alpha_id}' 不在注册表中")
+        print(f"可用因子 ({len(available)}): {', '.join(available[:10])}...")
+        return
+
+    print(f"🔬 因子回测: {parsed.alpha_id}")
+    print(f"   区间: {parsed.start} → {parsed.end}")
+    print("=" * 50)
+
+    engine = FactorBacktestEngine()
+    result = engine.run(
+        parsed.alpha_id,
+        parsed.start,
+        parsed.end,
+        symbols=parsed.symbols or None,
+    )
+
+    print(f"\n📊 回测结果 ({result.n_periods} 期, 均{result.n_stocks_avg:.0f}只):")
+    print(f"   Rank IC:      {result.ic_mean:+.4f} ± {result.ic_std:.4f}")
+    print(f"   ICIR:          {result.icir:.2f}")
+    print(f"   IC>0 比例:     {result.ic_positive_ratio:.1%}")
+    print(f"   t 统计量:      {result.ic_t_stat:.2f}")
+    print(f"   Top 分位年化:  {result.top_quintile_return:+.2%}")
+    print(f"   Bottom 分位年化:{result.bottom_quintile_return:+.2%}")
+    print(f"   多空年化:      {result.long_short_return:+.2%} (夏普 {result.long_short_sharpe:.2f})")
+    print(f"   平均换手率:    {result.avg_turnover:.1%}")
+    print(f"   IC 衰减(20d):  {result.ic_decay_20d:+.4f}")
+    print(f"   稳定性:        {result.stability_score:.0f}/100")
+    print(f"   分类:          {result.category}")
+    print(f"\n   结论: {'✅ 有效' if result.is_effective else '❌ 无效'} — {result.summary}")
+    if result.warnings:
+        print(f"   ⚠️ 警告: {'; '.join(result.warnings)}")
+
+
+@_safe_cmd
+def cmd_factor_scan(args: list[str]):
+    """扫描所有因子绩效 — 按 ICIR 排序。"""
+    import argparse
+    from src.alpha.factor_backtest import FactorBacktestEngine
+    from src.alpha.schema import FactorScanResult
+    from src.factors.registry import get_default_registry
+
+    parser = argparse.ArgumentParser(description="因子绩效扫描")
+    parser.add_argument("--min-icir", type=float, default=0.2, help="最低 ICIR 阈值")
+    parser.add_argument("--start", default="2024-01-01", help="起始日 YYYY-MM-DD")
+    parser.add_argument("--end", default="2024-12-31", help="终止日 YYYY-MM-DD")
+    parser.add_argument("--category", help="因子分类筛选 (value/quality/growth/technical/crowding/flow/volatility/reversal/expectation)")
+    parsed = parser.parse_args(args)
+
+    reg = get_default_registry()
+    all_alphas = reg.list()
+
+    if parsed.category:
+        all_alphas = [a for a in all_alphas if reg.get(a).meta.category == parsed.category]
+
+    print(f"🔍 因子绩效扫描 ({len(all_alphas)} 个因子)")
+    print(f"   区间: {parsed.start} → {parsed.end} | 最低 ICIR: {parsed.min_icir}")
+    if parsed.category:
+        print(f"   分类: {parsed.category}")
+    print("=" * 60)
+
+    engine = FactorBacktestEngine()
+    scan = FactorScanResult()
+
+    for alpha_id in all_alphas:
+        try:
+            r = engine.run(alpha_id, parsed.start, parsed.end)
+            scan.results.append(r)
+        except Exception as exc:
+            print(f"  ⚠️ {alpha_id}: 回测失败 ({exc})")
+
+    # 排序
+    scan.results.sort(key=lambda r: r.icir, reverse=True)
+    scan.top_by_icir = [r.alpha_id for r in scan.results[:5] if r.is_effective]
+    scan.top_by_sharpe = sorted(
+        [r for r in scan.results if r.is_effective],
+        key=lambda r: r.long_short_sharpe, reverse=True
+    )[:5]
+    scan.top_by_sharpe = [r.alpha_id for r in scan.top_by_sharpe]
+
+    print(f"\n{'排名':<4} {'因子ID':<30} {'IC均值':>8} {'ICIR':>6} {'多空收益':>10} {'换手率':>8} {'稳定性':>6} {'有效'}")
+    print("-" * 80)
+    for rank, r in enumerate(scan.results, 1):
+        if r.icir < parsed.min_icir:
+            continue
+        print(
+            f"{rank:<4} {r.alpha_id:<30} "
+            f"{r.ic_mean:>+7.4f} "
+            f"{r.icir:>6.2f} "
+            f"{r.long_short_return:>+9.2%} "
+            f"{r.avg_turnover:>7.1%} "
+            f"{r.stability_score:>5.0f} "
+            f"{'✅' if r.is_effective else '❌'}"
+        )
+
+    print(f"\n🏆 Top by ICIR: {', '.join(scan.top_by_icir) if scan.top_by_icir else '无'}")
+    print(f"🏆 Top by Sharpe: {', '.join(scan.top_by_sharpe) if scan.top_by_sharpe else '无'}")
+
+
+@_safe_cmd
+def cmd_alpha_rank(args: list[str]):
+    """全市场 Alpha 排名。"""
+    import argparse
+    from src.alpha.ranking_engine import RankingEngine
+    from src.alpha.schema import SynthesisMethod
+    from src.factors.registry import get_default_registry
+
+    parser = argparse.ArgumentParser(description="全市场 Alpha 排名")
+    parser.add_argument("--factors", nargs="+", help="因子列表（默认用所有有效因子）")
+    parser.add_argument("--method", choices=["equal_weight", "icir_weight", "optimized"],
+                        default="icir_weight", help="合成方法")
+    parser.add_argument("--limit", type=int, default=30, help="返回数量")
+    parsed = parser.parse_args(args)
+
+    # 默认因子列表
+    if parsed.factors:
+        alpha_ids = parsed.factors
+    else:
+        reg = get_default_registry()
+        alpha_ids = reg.list()
+        # 取各类别的代表性因子
+        preferred = [a for a in alpha_ids
+                     if reg.get(a).meta.category in ("value", "quality", "growth", "momentum",
+                                                      "reversal", "volatility", "flow")]
+        alpha_ids = preferred[:12] if preferred else alpha_ids[:12]
+
+    print(f"🏆 全市场 Alpha 排名")
+    print(f"   因子: {', '.join(alpha_ids[:8])}{'...' if len(alpha_ids) > 8 else ''}")
+    print(f"   方法: {parsed.method} | Top {parsed.limit}")
+    print("=" * 60)
+
+    engine = RankingEngine()
+    result = engine.rank_all(
+        alpha_ids,
+        limit=parsed.limit,
+        method=SynthesisMethod(parsed.method),
+    )
+
+    if result.synthesis:
+        print(f"\n📊 合成配置:")
+        print(f"   方法: {result.synthesis.method.value}")
+        print(f"   预期 ICIR: {result.synthesis.expected_icir:.2f}")
+        if result.synthesis.warnings:
+            print(f"   ⚠️ {', '.join(result.synthesis.warnings)}")
+
+    if result.data_gaps:
+        print(f"\n⚠️ 数据缺口: {'; '.join(result.data_gaps)}")
+        return
+
+    print(f"\n扫描 {result.total_scanned} 只 → 通过 {result.total_passed} 只\n")
+
+    if not result.stocks:
+        print("⚠️ 无股票通过筛选")
+        return
+
+    print(f"{'排名':<4} {'代码':<10} {'名称':<10} {'综合得分':>8} {'市值(亿)':>10}")
+    print("-" * 50)
+    for stock in result.stocks:
+        mcap_yi = stock.market_cap / 1e8 if stock.market_cap > 0 else 0
+        print(
+            f"{stock.rank:<4} {stock.symbol:<10} {stock.name:<10} "
+            f"{stock.composite_score:>8.1f} {mcap_yi:>10.1f}"
+        )
+
+
+@_safe_cmd
+def cmd_sector_research(args: list[str]):
+    """行业深度研究 — 全景研报（分类+竞争+估值+催化剂+供应链）。"""
+    import argparse
+    from src.industry.classifier import SectorClassifier
+    from src.industry.research import SectorResearchReporter
+
+    parser = argparse.ArgumentParser(description="行业深度研究")
+    parser.add_argument("sector", help="申万一级行业名称（如 食品饮料、半导体）")
+    parser.add_argument("--pe", type=float, help="当前行业 PE（可选）")
+    parsed = parser.parse_args(args)
+
+    classifier = SectorClassifier()
+    sectors = classifier.list_sectors()
+
+    # 模糊匹配
+    matched = [s for s in sectors if parsed.sector in s]
+    if not matched:
+        print(f"⚠️ 未找到行业 '{parsed.sector}'")
+        print(f"可用行业: {', '.join(sectors[:10])}...")
+        return
+
+    sector_name = matched[0] if len(matched) == 1 else parsed.sector
+    print(f"🏭 行业深度研究: {sector_name}")
+    print("=" * 60)
+
+    reporter = SectorResearchReporter()
+    report = reporter.generate(sector_name, current_pe=parsed.pe)
+
+    # 分类
+    print(f"\n📋 行业分类: {report.sector.sw1_name}")
+    print(f"   基准指数: {report.sector.benchmark_index}")
+
+    # 竞争格局
+    if report.competition:
+        c = report.competition
+        print(f"\n⚔️ 竞争格局:")
+        print(f"   CR5: {c.cr5:.0f}% | HHI: {c.hhi:.0f} | {c.concentration_label}")
+        print(f"   进入壁垒: {c.entry_barrier.value} ({', '.join(c.barrier_factors[:3])})")
+        print(f"   竞争烈度: {c.competition_intensity:.0f}/100")
+        print(f"   行业护城河潜力: {c.moat_potential:.0f}/100")
+
+    # 估值
+    if report.valuation:
+        v = report.valuation
+        print(f"\n💰 估值框架:")
+        print(f"   主要方法: {v.primary_method.value}")
+        if v.secondary_methods:
+            print(f"   辅助方法: {', '.join(m.value for m in v.secondary_methods)}")
+        print(f"   历史 PE 中枢: {v.historical_pe_median:.0f} (P25: {v.historical_pe_p25:.0f}, P75: {v.historical_pe_p75:.0f})")
+        if parsed.pe:
+            print(f"   当前 PE: {parsed.pe:.1f} (分位: {v.current_pe_percentile:.0f}%)")
+            print(f"   估值吸引力: {v.valuation_score:.0f}/100")
+
+    # 催化剂
+    print(f"\n🚀 催化剂 (强度: {report.catalyst_score:.0f}/100):")
+    for cat in report.catalysts[:5]:
+        print(f"   • {cat}")
+
+    # 政策
+    print(f"\n📜 政策影响: {report.policy_impact:+.0f}/100")
+    for note in report.policy_notes[:3]:
+        print(f"   • {note}")
+
+    # 代表标的
+    if report.representative_stocks:
+        print(f"\n📌 代表标的: {', '.join(report.representative_stocks[:5])}")
+
+    # 景气度
+    print(f"\n📊 行业景气度: {report.prosperity_score:.0f}/100 ({report.prosperity_trend})")
+
+    # 综合
+    print(f"\n{'='*60}")
+    print(f"🏆 综合行业评分: {report.overall_score:.0f}/100")
+    print(f"   置信度: {report.confidence:.2f}")
+    if report.data_gaps:
+        print(f"   ⚠️ {'; '.join(report.data_gaps)}")
+
+
+@_safe_cmd
+def cmd_deep_research(args: list[str]):
+    """公司深度研究 — 护城河+红旗+DCF+管理层+一致预期。"""
+    import argparse
+    from src.fundamental.research import CompanyDeepResearcher
+
+    parser = argparse.ArgumentParser(description="公司深度研究")
+    parser.add_argument("symbol", help="股票代码")
+    parser.add_argument("--name", default="", help="公司名称")
+    parser.add_argument("--fcf", type=float, default=0, help="自由现金流（亿元）")
+    parser.add_argument("--price", type=float, default=0, help="当前股价")
+    parser.add_argument("--growth", type=float, default=0.08, help="FCF 增长率")
+    parser.add_argument("--shares", type=float, default=None, help="总股本（亿股）")
+    parser.add_argument("--debt", type=float, default=0, help="净债务（亿元）")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    print(f"🔬 公司深度研究: {symbol} {parsed.name}")
+    print("=" * 60)
+
+    researcher = CompanyDeepResearcher()
+    report = researcher.generate(
+        symbol, name=parsed.name,
+        free_cashflow=parsed.fcf * 1e8 if parsed.fcf > 0 else 0,
+        current_price=parsed.price,
+        growth_rate=parsed.growth,
+        shares_outstanding=parsed.shares * 1e8 if parsed.shares else None,
+        net_debt=parsed.debt * 1e8 if parsed.debt > 0 else 0,
+    )
+
+    # 护城河
+    if report.moat:
+        m = report.moat
+        print(f"\n🏰 护城河: {m.overall_width.value} ({m.moat_score:.0f}/100)")
+        print(f"   品牌: {m.dimensions.get('brand', 50):.0f}  转换成本: {m.dimensions.get('switching_cost', 50):.0f}")
+        print(f"   网络效应: {m.dimensions.get('network_effect', 50):.0f}  规模经济: {m.dimensions.get('scale_economy', 50):.0f}")
+        print(f"   无形资产: {m.dimensions.get('intangible', 50):.0f}  趋势: {m.moat_trend}")
+        if m.key_evidence:
+            print(f"   关键证据: {'; '.join(m.key_evidence[:3])}")
+        if m.threats:
+            print(f"   威胁: {'; '.join(m.threats[:3])}")
+
+    # 财务红旗
+    if report.red_flags:
+        rf = report.red_flags
+        print(f"\n🚩 财务红旗: {rf.overall_risk.upper()} ({rf.total_flags} 个)")
+        if rf.m_score is not None:
+            print(f"   M-Score: {rf.m_score:.2f} ({rf.m_score_risk})")
+        if rf.f_score is not None:
+            print(f"   F-Score: {rf.f_score:.0f}/9 ({rf.f_score_quality})")
+        for flag in rf.flags[:5]:
+            print(f"   [{flag.severity.value}] {flag.name}: {flag.description}")
+
+    # DCF 估值
+    if report.dcf and report.dcf.fair_value > 0:
+        d = report.dcf
+        print(f"\n💎 DCF 估值:")
+        print(f"   公允价值: ¥{d.fair_value:.2f}")
+        if d.current_price > 0:
+            print(f"   当前价格: ¥{d.current_price:.2f}")
+            print(f"   上行空间: {d.upside_pct:+.1%}")
+            print(f"   安全边际: {d.margin_of_safety:.1%}")
+        print(f"   三情景: 熊¥{d.bear_case:.1f} / 基¥{d.base_case:.1f} / 牛¥{d.bull_case:.1f}")
+        print(f"   假设: WACC={d.wacc:.1%}, 终值增速={d.terminal_growth:.1%}, {d.projection_years}年")
+
+    # 管理层
+    if report.management:
+        mgmt = report.management
+        print(f"\n👔 管理层: {mgmt.overall_score:.0f}/100")
+        print(f"   资本配置: {mgmt.capital_allocation:.0f}  诚信: {mgmt.integrity_score:.0f}")
+        print(f"   专业能力: {mgmt.competency_score:.0f}  激励对齐: {mgmt.incentive_alignment:.0f}")
+        if mgmt.insider_ownership_pct > 0:
+            print(f"   内部人持股: {mgmt.insider_ownership_pct:.1f}%")
+
+    # 一致预期
+    if report.consensus and report.consensus.n_analysts > 0:
+        c = report.consensus
+        print(f"\n📋 分析师一致预期 ({c.n_analysts} 位):")
+        print(f"   评级: {c.consensus_rating} (买{c.buy_count}/持{c.hold_count}/卖{c.sell_count})")
+        print(f"   目标价: ¥{c.target_price_mean:.1f} (区间 ¥{c.target_price_low:.0f}-{c.target_price_high:.0f})")
+        print(f"   趋势: 评级{c.rating_trend} / EPS修正{c.eps_revision_trend}")
+
+    # 投资逻辑
+    print(f"\n💡 投资逻辑: {report.investment_thesis}")
+    if report.key_risks:
+        print(f"⚠️ 关键风险: {'; '.join(report.key_risks[:5])}")
+    if report.data_gaps:
+        print(f"⚠️ 数据缺口: {'; '.join(report.data_gaps)}")
+
+    # 综合
+    print(f"\n{'='*60}")
+    print(f"🏆 综合评分: {report.overall_score:.0f}/100 | 置信度: {report.confidence:.2f}")
 
 
 def cmd_trade_track(args: list[str]):
@@ -2110,6 +2486,150 @@ def cmd_swing_scan(args: list[str]):
             traceback.print_exc()
 
 
+# ---------------------------------------------------------------------------
+# 策略竞技场
+# ---------------------------------------------------------------------------
+
+@_safe_cmd
+def cmd_arena(args: list[str]):
+    """内部策略竞技场 — 多策略横向对比回测。"""
+    from src.arena.cli import arena_cli_handler
+    arena_cli_handler(args)
+
+
+def _print_command_detail(cmd: str) -> None:
+    """打印单个命令的详细帮助。"""
+    details = {
+        "start": ("python -m src start", "新手引导 — 交互式导览系统功能", []),
+        "analyze": ("python -m src analyze <code> [--deep]", "单只股票全链路分析（军规→准入→诊断→裁决→仓位→风控）", ["--deep: 启用深度分析模式（含辩论+思维模型）"]),
+        "diagnose": ("python -m src diagnose <code> [--deep]", "一键诊断（小白入口），适合首次使用", ["--deep: 启用深度诊断"]),
+        "alpha": ("python -m src alpha <code>", "Alpha Lens 三维评估（信息层级/共识缺口/叙事生命周期）", []),
+        "alpha-scan": ("python -m src alpha-scan [--limit N]", "扫描全市场高 Alpha 股票", ["--limit N: 返回前 N 只（默认 20）"]),
+        "scan": ("python -m src scan --preset <preset>", "全市场选股扫描", ["--preset value|growth|momentum|quality|dividend: 选股预设"]),
+        "macro": ("python -m src macro", "宏观货币信用快照（社融/DR007/M1-M2/LPR）", []),
+        "sentiment": ("python -m src sentiment", "市场情绪信号检测（恐慌/贪婪/极端）", []),
+        "backtest": ("python -m src backtest", "运行策略回测", []),
+        "technical": ("python -m src technical <code> [--name 名称]", "技术分析报告（六维评分 + 入场/出场时机）", ["--name: 股票名称（可选）"]),
+        "sweep": ("python -m src sweep", "自选股扫雷（检查所有自选股风险）", []),
+        "preference": ("python -m src preference <view|setup|edit|reset>", "投资者偏好管理", ["view: 查看当前配置", "setup: 交互式设置向导", "edit: 编辑配置", "reset: 重置为默认"]),
+    }
+
+    if cmd in details:
+        usage, desc, options = details[cmd]
+        print(f"📖 {cmd} — {desc}")
+        print()
+        print(f"   用法: {usage}")
+        if options:
+            print()
+            print("   选项:")
+            for opt in options:
+                print(f"     {opt}")
+    else:
+        print(f"📖 {cmd}")
+        print()
+        print(f"   运行 python -m src {cmd} 执行。")
+        print(f"   运行 python -m src 查看所有命令。")
+
+    print()
+
+
+@_safe_cmd
+def cmd_start(args: list[str]) -> None:
+    """新手引导 — 交互式导览系统功能。"""
+    steps = [
+        ("🦄 欢迎使用白泽 (Baize)！", "A 股智能投资决策系统"),
+        ("📊 了解系统能力", "白泽提供 5 层管道分析：\n"
+         "  军规(31条) → 准入检查 → 多维诊断 → 综合裁决 → 仓位调度 → 风控执行"),
+        ("🔑 数据源", "默认使用免费数据源（mootdx + 腾讯 + AKShare）。\n"
+         "  配置付费源可获更高质量数据，详见 SECRET.md。"),
+        ("🏥 第一种用法：一键诊断", "运行 python -m src diagnose <股票代码>\n"
+         "  例: python -m src diagnose 600519  # 分析贵州茅台"),
+        ("📊 第二种用法：全链路分析", "运行 python -m src analyze <股票代码>\n"
+         "  比 diagnose 更详细，包含博弈论和仓位建议"),
+        ("🔍 第三种用法：选股扫描", "运行 python -m src scan --preset value\n"
+         "  预设: value(价值) growth(成长) momentum(动量) quality(质量)"),
+        ("🌍 第四种用法：市场监控", "运行 python -m src macro    # 宏观快照\n"
+         "  运行 python -m src sentiment  # 情绪检测"),
+        ("⚡ 短线/技术分析", "运行 python -m src technical <股票代码>\n"
+         "  六维评分 + 入场/出场时机 + K线形态识别"),
+        ("👤 个性化配置", "运行 python -m src preference setup\n"
+         "  10 步交互式向导：风险偏好、投资风格、风控参数"),
+        ("✅ 下一步", "试试: python -m src diagnose 600519"),
+    ]
+
+    print()
+    i = 0
+    for title, content in steps:
+        i += 1
+        input(f"[{i}/{len(steps)}] {title} — 按 Enter 继续...")
+        print()
+        print(f"  {content}")
+        print()
+
+    print("🎉 引导完成！开始你的 A 股投资之旅吧！")
+    print()
+    print("💡 常用命令速查：")
+    print("   python -m src diagnose <code>   一键诊断")
+    print("   python -m src scan --preset value  价值选股")
+    print("   python -m src macro              宏观快照")
+    print("   python -m src --help             查看所有命令")
+
+
+# ------------------------------------------------------------------
+# 自然语言路由
+# ------------------------------------------------------------------
+
+# NL→命令 关键词映射 (key: 关键词列表, cmd: 命令, help: 示例)
+_NL_ROUTES: list[dict] = [
+    {"keys": ["情绪", "恐慌", "贪婪", "market sentiment", "市场气氛", "大盘情绪", "市场怎么样"], "cmd": "sentiment", "help": "python -m src sentiment"},
+    {"keys": ["宏观", "宏观快照", "货币", "信用", "社融", "利率", "macro", "lpr", "mlf", "降息", "降准"], "cmd": "macro", "help": "python -m src macro"},
+    {"keys": ["选股", "扫描", "筛选", "scan", "选股器", "找股票", "推荐股票", "有什么好股票", "找一些", "价值股", "成长股"], "cmd": "scan --preset value", "help": "python -m src scan --preset value"},
+    {"keys": ["回测", "backtest", "策略", "测试策略"], "cmd": "backtest", "help": "python -m src backtest"},
+    {"keys": ["分析", "诊断", "看看", "analyze", "diagnose", "怎么样", "如何"], "cmd": "diagnose", "help": "python -m src diagnose <code>  # 需要股票代码"},
+    {"keys": ["形态", "k线", "蜡烛", "candlestick", "技术形态"], "cmd": "patterns", "help": "python -m src patterns <code>  # 需要股票代码"},
+    {"keys": ["短线", "波段", "技术分析", "入场", "出场", "technical", "swing"], "cmd": "technical", "help": "python -m src technical <code>  # 需要股票代码"},
+    {"keys": ["新手", "引导", "入门", "开始", "帮助", "help", "start", "怎么用", "如何使用"], "cmd": "start", "help": "python -m src start"},
+    {"keys": ["自选", "盯盘", "扫雷", "watchlist", "sweep", "预警", "alert"], "cmd": "sweep", "help": "python -m src sweep"},
+    {"keys": ["进化", "学习", "策略进化", "论文", "evolution"], "cmd": "evolution list", "help": "python -m src evolution list"},
+    {"keys": ["偏好", "设置", "配置", "profile", "preference", "风险偏好", "投资风格"], "cmd": "preference setup", "help": "python -m src preference setup"},
+]
+
+
+def _route_nl(query: str) -> str | None:
+    """自然语言 → 命令路由。
+
+    根据关键词匹配返回对应的命令字符串。
+    多关键词命中时取匹配最多的那条。
+    返回 None 表示无法识别。
+    """
+    query_lower = query.lower().strip()
+    best_match = None
+    best_count = 0
+
+    for route in _NL_ROUTES:
+        hits = sum(1 for key in route["keys"] if key.lower() in query_lower)
+        if hits > best_count:
+            best_count = hits
+            best_match = route
+
+    if best_match and best_count >= 1:
+        return best_match
+    return None
+
+
+def _print_nl_help():
+    """打印自然语言查询帮助。"""
+    print()
+    print("🤖 自然语言查询 — 你可以这样问我：")
+    print()
+    print("  市场情绪:  \"当前A股市场情绪如何\"")
+    print("  宏观快照:  \"现在宏观环境怎么样\"")
+    print("  选股扫描:  \"帮我找一些价值股\"")
+    print("  新手引导:  \"我该怎么开始\"")
+    print("  分析股票:  \"分析贵州茅台\" → 需要代码: python -m src diagnose 600519")
+    print()
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -2120,14 +2640,30 @@ def main():
         format="%(levelname)s [%(name)s] %(message)s",
     )
 
-    if len(sys.argv) < 2:
+    # 首次运行检测：无 .env 时提示
+    _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if not os.path.exists(_env_path):
+        print("🦄 欢迎使用白泽 (Baize) — A 股智能投资决策系统！")
+        print()
+        print("⚠️  未检测到 .env 文件。建议运行安装脚本完成初始化：")
+        print()
+        print("     ./setup.sh")
+        print()
+        print("  或手动配置：")
+        print("     cp .env.example .env")
+        print("     # 编辑 .env，可选配置 AI 模型密钥和数据源密钥")
+        print("     # 不配置密钥也可使用——系统自动使用免费数据源")
+        print()
+
+    if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h", "help"):
         print("白泽 (Baize) — A 股智能投资决策系统 v0.1.0")
         print()
         print("用法: python -m src <command> [args]")
         print()
         print("📊 核心分析:")
-        print("  analyze <code>         单只股票全链路分析")
-        print("  diagnose <code>        一键诊断（小白入口）")
+        print("  start                   新手引导（5分钟了解系统）")
+        print("  analyze <code> [--deep] 单只股票全链路分析")
+        print("  diagnose <code> [--deep] 一键诊断（小白入口）")
         print("  alpha <code>           Alpha Lens 三维评估")
         print("  alpha-scan             高 Alpha 股票扫描")
         print("  alpha-decay <code>     Alpha 衰减追踪")
@@ -2159,6 +2695,10 @@ def main():
         print("  swing-scan              波段选股扫描")
         print("  monitor [start|once]    实时盯盘监控")
         print()
+        print("🕯️ K线形态 (NEW):")
+        print("  patterns <code>         K线形态识别 (63种)")
+        print("  indicators <code>       技术指标计算 (25种)")
+        print()
         print("🧬 学习 & 进化:")
         print("  evolution <sub>         策略进化（论文驱动）")
         print("  calibrate               置信度校准")
@@ -2167,10 +2707,27 @@ def main():
         print("  preference <view|setup|edit>  投资者偏好管理")
         print("  feedback <add|summary>  交易反馈")
         print()
+        print("🔬 Alpha 挖掘 (NEW):")
+        print("  factor-backtest <id>    单因子回测 IC/IR/分层")
+        print("  factor-scan             扫描所有因子绩效")
+        print("  alpha-rank              全市场 Alpha 排名")
+        print()
+        print("🏭 深度研究 (NEW):")
+        print("  sector-research <行业>   行业全景研究")
+        print("  deep-research <code>     公司深度研究")
+        print()
+        print("🏟️ 策略竞技场 (NEW):")
+        print("  arena run               运行策略竞技场对比")
+        print("  arena benchmark         快速基准测试（全部预置策略）")
+        print("  arena list              历史竞技场记录")
+        print("  arena show <id>         查看竞技场详情")
+        print("  arena compare <id1> <id2>  跨期对比")
+        print()
         print("📢 社交:")
         print("  poster --title --text   AI 社区发帖")
         print()
         print("💡 快速开始:")
+        print("  python -m src start                    新手引导（推荐首次使用）")
         print("  python -m src diagnose 600519    # 一键诊断茅台")
         print("  python -m src analyze 000001     # 全链路分析平安银行")
         print()
@@ -2179,15 +2736,22 @@ def main():
     cmd = sys.argv[1]
     args = sys.argv[2:]
 
+    # --help 子命令: python -m src diagnose --help
+    if "--help" in args or "-h" in args:
+        args = [a for a in args if a not in ("--help", "-h")]
+        _print_command_detail(cmd)
+        return
+
     commands = {
+        "start": lambda: cmd_start(args),
         "scan": lambda: cmd_scan(args),
-        "analyze": lambda: cmd_analyze(args[0]) if args else print("用法: analyze <code>"),
+        "analyze": lambda: cmd_analyze(args) if args else print("用法: analyze <code> [--deep]"),
         "macro": cmd_macro,
         "sentiment": cmd_sentiment,
         "backtest": cmd_backtest,
         "backtest-optimize": cmd_backtest_optimize,
         "backtest-compare": cmd_backtest_compare,
-        "diagnose": lambda: cmd_diagnose(args[0]) if args else print("用法: diagnose <code>"),
+        "diagnose": lambda: cmd_diagnose(args) if args else print("用法: diagnose <code> [--deep]"),
         "game-theory": cmd_game_theory,
         "calibrate": cmd_calibrate,
         "profile": cmd_profile,
@@ -2216,6 +2780,15 @@ def main():
         "monitor": lambda: cmd_monitor(args),
         "technical": lambda: cmd_technical(args),
         "swing-scan": lambda: cmd_swing_scan(args),
+        # 策略竞技场
+        "arena": lambda: cmd_arena(args),
+        # Phase 8: Alpha 挖掘管线
+        "factor-backtest": lambda: cmd_factor_backtest(args),
+        "factor-scan": lambda: cmd_factor_scan(args),
+        "alpha-rank": lambda: cmd_alpha_rank(args),
+        # Phase 9: 行业深度 + 公司深度研究
+        "sector-research": lambda: cmd_sector_research(args),
+        "deep-research": lambda: cmd_deep_research(args),
     }
 
     handler = commands.get(cmd)
@@ -2232,9 +2805,40 @@ def main():
             else:
                 print("   (设置 DEBUG=1 查看详细错误信息)")
     else:
-        print(f"未知命令: {cmd}")
-        print("可用命令: " + ", ".join(sorted(commands.keys())))
-        print("运行 python -m src 查看完整帮助。")
+        # ---- 自然语言路由 ----
+        nl_query = " ".join(sys.argv[1:])
+        nl_result = _route_nl(nl_query) if nl_query else None
+        if nl_result:
+            print(f"🤖 理解: \"{nl_query}\" → 路由到 {nl_result['cmd']}")
+            print(f"   等效命令: {nl_result['help']}")
+            print()
+            if nl_result["cmd"] == "sentiment":
+                cmd_sentiment()
+            elif nl_result["cmd"] == "macro":
+                cmd_macro()
+            elif nl_result["cmd"] == "backtest":
+                cmd_backtest()
+            elif nl_result["cmd"] == "sweep":
+                cmd_sweep(args)
+            elif nl_result["cmd"] == "start":
+                cmd_start(args)
+            elif nl_result["cmd"] in ("diagnose", "analyze", "technical", "patterns"):
+                print(f"⚠️  '{nl_result['cmd']}' 需要股票代码 / needs stock code")
+                print(f"   例: {nl_result['help']}")
+            elif "scan" in nl_result["cmd"]:
+                cmd_scan(args)
+            elif nl_result["cmd"] == "evolution list":
+                print("策略进化列表待实现 / evolution list TBD")
+            elif nl_result["cmd"] == "preference setup":
+                print("请运行 / Run: python -m src preference setup")
+            else:
+                print(f"   请使用 / Use: {nl_result['help']}")
+        else:
+            print(f"未知命令 / Unknown command: {cmd}")
+            print(f"可用命令 / Available: {', '.join(sorted(commands.keys()))}")
+            print(f"运行 / Run 'python -m src' 查看完整帮助 / for full help.")
+            print()
+            _print_nl_help()
 
 
 if __name__ == "__main__":

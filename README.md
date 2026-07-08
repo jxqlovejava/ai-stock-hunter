@@ -128,20 +128,56 @@ CLI → 军规(31条) → 准入检查 → 多维诊断 → 综合裁决 → 仓
 
 ## 🚀 快速开始
 
+> 要求 **Python 3.11+**。一行命令完成安装。
+
+### 🤖 自动安装（推荐）
+
 ```bash
 git clone https://github.com/jxqlovejava/ai-stock-hunter.git
 cd ai-stock-hunter
-pip install -r requirements.txt
+chmod +x setup.sh && ./setup.sh
 ```
+
+安装脚本自动完成：环境检查 → 依赖安装 → .env 配置 → API 密钥检测 → 连接测试。
+
+### 🔧 手动安装
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/jxqlovejava/ai-stock-hunter.git
+cd ai-stock-hunter
+
+# 2. 安装依赖（Python 3.11+）
+pip install -r requirements.txt
+
+# 3. 配置环境变量
+cp .env.example .env
+# 编辑 .env，至少配置一个 AI 模型密钥（Anthropic / OpenAI / DeepSeek 任选一）
+# 数据源密钥可选——不填则自动使用免费数据源（mootdx + 腾讯 + AKShare）
+
+# 4. 验证安装
+python -m src diagnose 600519
+```
+
+> 💡 **零成本即可使用**：mootdx、腾讯行情、AKShare 均为免费数据源，无需任何 API 密钥。详见 [SECRET.md](SECRET.md)。
+
+### 🆘 常见问题
+
+| 问题 | 解决 |
+|------|------|
+| `pip install` 失败 | 尝试 `pip install --upgrade pip` 或使用 `uv pip install -r requirements.txt` |
+| `mootdx` 连接超时 | 通达信服务器可能需要 VPN，系统会自动降级到腾讯行情 |
+| 诊断结果为空 | 检查 `.env` 中是否配置了 AI 模型密钥 |
+| 数据源全部失败 | 运行 `python -m src macro` 测试免费数据源是否可用 |
 
 ### 核心命令
 
 ```bash
+# 🏥 一键诊断（小白入口 — 从这里开始！）
+python -m src diagnose 000858
+
 # 📊 单只股票全链路分析
 python -m src analyze 600519
-
-# 🏥 一键诊断（小白入口）
-python -m src diagnose 000858
 
 # 🔍 Alpha 视角分析
 python -m src alpha 600519
