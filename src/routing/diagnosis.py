@@ -67,6 +67,10 @@ class DiagnosisReport:
     momentum_direction_discount: float = 1.0  # 方向质量折扣 0.5-1.0
     surge_risk: bool = False                 # 短期飙升熔断标记
     surge_5day_pct: float = 0.0              # 5 日涨跌幅 %
+    # Phase 12: 回调入场
+    pullback_score: float = 50.0             # 回调质量分 0-100
+    pullback_state: Optional[object] = None  # PullbackState (lazy import)
+    pullback_authentic: bool = True          # 回调是否通过反操纵验证
 
 
 class DiagnosisEngine:
@@ -239,11 +243,56 @@ class DiagnosisEngine:
                         f"[WARN] 短期飙升 {report.surge_5day_pct:.0f}%/5日 — 追涨熔断触发"
                     )
 
+        # Phase 12: 回调入场检测
+        report.pullback_score, report.pullback_state, report.pullback_authentic = (
+            self._detect_pullback(symbol, name, quote)
+        )
+        # 回调质量影响动量评分: momentum(0.6) + pullback(0.4)
+        report.momentum_score = self._apply_weight(
+            report.momentum_score,
+            0.6 + 0.4 * (report.pullback_score / 100.0),
+        )
+
         # Phase 1: 填充数据溯源和信心度
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
         report.confidence = self._calc_confidence(report, quote, financials)
         report.data_freshness = datetime.now()
         return report
+
+    @staticmethod
+    def _detect_pullback(
+        symbol: str, name: str, quote: dict | None,
+    ) -> tuple[float, object, bool]:
+        """Phase 12: 回调入场检测。
+
+        Returns:
+            (pullback_score, pullback_state, authentic)
+        """
+        if not quote:
+            return 50.0, None, True
+
+        try:
+            from src.analysis.pullback import PullbackDetector, AntiManipulationGate
+            from src.data.schema import Bar
+
+            daily_bars = quote.get("daily_bars", [])
+            if not daily_bars or len(daily_bars) < 30:
+                return 50.0, None, True
+
+            minute_data = quote.get("minute_data") if isinstance(quote, dict) else None
+
+            gate = AntiManipulationGate()
+            detector = PullbackDetector(anti_manipulation_gate=gate)
+            state = detector.detect(
+                symbol, daily_bars, name=name, minute_data=minute_data,
+            )
+            return state.pullback_score, state, state.authentic_pullback
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "回调检测跳过 [%s]: 依赖模块不可用或数据不足", symbol
+            )
+            return 50.0, None, True
 
     def _collect_citations(
         self,

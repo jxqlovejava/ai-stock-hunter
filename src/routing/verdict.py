@@ -154,6 +154,32 @@ class VerdictEngine:
             manip_mult = 1.0
         score = max(0, min(100, score * manip_mult))
 
+        # Phase 12: 回调入场 gate — 操纵陷阱强制降级
+        pullback_state = getattr(report, "pullback_state", None)
+        pullback_authentic = getattr(report, "pullback_authentic", True)
+        pullback_score_pb = getattr(report, "pullback_score", 50.0) or 50.0
+        if pullback_state is not None:
+            status = getattr(pullback_state, "status", None)
+            status_val = getattr(status, "value", "") if status else ""
+            if status_val == "PULLBACK_TRAP":
+                # 操纵陷阱: 强制降级，技术面权重归零
+                score = min(score, 50.0)
+                confidence = max(0.25, confidence - 0.20)
+                risks.append(
+                    "🔴 回调入场被反操纵门拦截 — 检测到操纵陷阱，禁止入场"
+                )
+            elif status_val == "PULLBACK_SETUP" and pullback_authentic:
+                # 真回调到位: 技术面加分
+                score += 5.0
+                risks.append(
+                    f"🟢 回调入场信号确认 — "
+                    f"回调质量分 {pullback_score_pb:.0f}/100"
+                )
+            elif status_val == "PULLBACK_ACTIVE":
+                risks.append(
+                    f"🟡 回调进行中 — 距支撑位尚有一段距离，建议等待"
+                )
+
         # 置信度 = 信息完整度的函数
         confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
         if gt_profile is not None:
