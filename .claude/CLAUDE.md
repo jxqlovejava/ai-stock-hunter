@@ -184,6 +184,20 @@ feedback add       # 添加交易反馈
 
 直接触发 `diagnose <code>`（默认含 T+0，建仓判断必须评估日内时机）。**禁止传 `--no-t0`**。
 
+### 场景五：持仓/自选股信息记录（强制）
+
+**触发词**: 我持有/买入/卖出/加仓/减仓了XX股票、我的持仓、我有XX股、成本价XX、自选股加了XX、我的股份
+
+**触发即执行，不等用户追问"记了吗"。**
+
+| 信息类型 | 写入目标 | 关键字段 |
+|---------|---------|------|
+| 持仓（代码+方向+数量+成本价） | `data/positions.json` | symbol, direction, entry_price, quantity, name, stop_price |
+| 自选股（代码+名称） | `data/watchlist.json` | symbol, name, stop_price, alert_above |
+| 能力圈变更（行业熟悉度变化） | `data/portfolio.yaml` | circle_of_competence |
+
+> ⚠️ **主动记录**：用户告知上述信息时，立即写入对应文件，不需要先问"要记录吗"。写入后简要告知写入了哪个文件。
+
 ### 管道验证教训（2026-07-08）
 
 对国产AI算力主题的5支候选标的，初步 PE 对比判断与管道评分出现了系统性偏差：

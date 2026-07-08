@@ -28,6 +28,7 @@ data/evolution_lifecycles.json
 # 用户个人数据 (每人一份，不进仓库)
 data/portfolio.yaml
 data/watchlist.json
+data/positions.json
 
 # Claude
 .claude/plans/
