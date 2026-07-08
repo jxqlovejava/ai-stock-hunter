@@ -34,6 +34,17 @@ class LifecycleStage(str, Enum):
     CROWDED = "crowded"
     FADING = "fading"
 
+    @property
+    def display_cn(self) -> str:
+        _map = {
+            "emerging": "萌芽期",
+            "spreading": "扩散期",
+            "consensus": "共识期",
+            "crowded": "拥挤期",
+            "fading": "消退期",
+        }
+        return _map.get(self.value, self.value)
+
 
 class SourceType(str, Enum):
     """信源类型。用于适配器分类和可信度加权。"""

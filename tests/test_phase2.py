@@ -9,9 +9,9 @@ import pytest
 # ── Doctrine ──
 
 class TestDoctrine:
-    def test_all_30_rules(self):
+    def test_all_38_rules(self):
         from src.doctrine.rules import MILITARY_RULES
-        assert len(MILITARY_RULES) == 31  # r001-r031
+        assert len(MILITARY_RULES) == 38
 
     def test_rule_categories(self):
         from src.doctrine.rules import MILITARY_RULES, Severity
@@ -157,9 +157,9 @@ class TestPanicArb:
 # ── Game Theory: Players ──
 
 class TestPlayers:
-    def test_six_profiles(self):
+    def test_seven_profiles(self):
         from src.game_theory.players import PLAYER_PROFILES
-        assert len(PLAYER_PROFILES) == 6
+        assert len(PLAYER_PROFILES) == 7
 
     def test_all_have_patterns(self):
         from src.game_theory.players import PLAYER_PROFILES

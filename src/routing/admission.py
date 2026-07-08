@@ -12,8 +12,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class GateStatus(str, Enum):
@@ -58,8 +62,18 @@ class AdmissionCheck:
         if "ST" in name.upper():
             return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=["ST/*ST"])
 
-        # 2. 次新股
-        listing_days = ctx.get("listing_days", 365)
+        # 2. 次新股 — 优先从 ctx listing_days / listing_date 获取，否则使用保守默认
+        listing_days = ctx.get("listing_days")
+        if listing_days is None:
+            listing_date = ctx.get("listing_date")
+            if listing_date is not None:
+                try:
+                    delta = datetime.now() - listing_date
+                    listing_days = delta.days
+                except Exception:
+                    listing_days = 90
+            else:
+                listing_days = 90
         if listing_days < self.MIN_LISTING_DAYS:
             return AdmissionResult(symbol=symbol, name=name, status=GateStatus.REJECTED, flags=[f"次新股 ({listing_days}d)"])
 

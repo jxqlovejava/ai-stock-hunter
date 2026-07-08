@@ -809,10 +809,22 @@ def cmd_preference(args: list[str]):
     elif sub == "reset":
         loader.reset()
         print("✅ 偏好已重置为默认值")
+    elif sub == "coc-update" and len(args) >= 3:
+        industry = args[1]
+        try:
+            level = int(args[2])
+        except ValueError:
+            print("❌ 熟悉度需为 1-5 的数字")
+            return
+        ok = loader.update_circle_of_competence(industry, level)
+        if ok:
+            print(f"✅ 能力圈已更新: {industry} = {'⭐' * level} ({level}/5)")
+        else:
+            print(f"❌ 更新能力圈失败")
     elif sub == "path":
         print(os.path.abspath(loader.path))
     else:
-        print(f"未知子命令: {sub}，可用: view | setup | edit | reset | path")
+        print(f"未知子命令: {sub}，可用: view | setup | edit | reset | coc-update <行业> <熟悉度(1-5)> | path")
 
 
 def _cmd_preference_setup(loader):
@@ -1585,9 +1597,11 @@ def cmd_alpha_scan(args: list[str]):
     for rank, (sym, name, score, stage) in enumerate(results, 1):
         emoji = {"dormant": "💤", "emerging": "⭐", "spreading": "📈",
                  "consensus": "⚠️", "crowded": "🚨", "fading": "📉"}
+        stage_cn = {"dormant": "休眠期", "emerging": "萌芽期", "spreading": "扩散期",
+                     "consensus": "共识期", "crowded": "拥挤期", "fading": "消退期"}
         print(
             f"  {rank:2d}. {sym} {name:<8s} "
-            f"Alpha {score:.0f} | 叙事: {emoji.get(stage, '❓')} {stage}"
+            f"Alpha {score:.0f} | 叙事: {emoji.get(stage, '❓')} {stage_cn.get(stage, stage)}"
         )
 
 
@@ -3780,6 +3794,83 @@ def _print_nl_help():
     print()
 
 
+@_safe_cmd
+def cmd_record_position(symbol: str, name: str, entry_price: float, quantity: int):
+    """记录持仓到 data/positions.json（可被 AI agent 编程调用）。"""
+    import json
+    from pathlib import Path
+
+    path = Path("data/positions.json")
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                positions = json.load(f)
+            except json.JSONDecodeError:
+                positions = {}
+    else:
+        positions = {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    positions[symbol] = {
+        "symbol": symbol,
+        "name": name,
+        "entry_price": entry_price,
+        "entry_date": now.split("T")[0],
+        "quantity": quantity,
+        "direction": "LONG",
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(positions, f, ensure_ascii=False, indent=2)
+    print(f"✅ 记录持仓: {name}({symbol}) {quantity}股@{entry_price}")
+    return positions
+
+
+@_safe_cmd
+def cmd_update_watchlist(symbol: str, name: str, stop_price: float = None, alert_above: float = None):
+    """更新自选股到 data/watchlist.json（可被 AI agent 编程调用）。"""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    path = Path("data/watchlist.json")
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                watchlist = json.load(f)
+            except json.JSONDecodeError:
+                watchlist = {"stocks": [], "updated_at": ""}
+    else:
+        watchlist = {"stocks": [], "updated_at": ""}
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    stocks = watchlist.get("stocks", [])
+    # 更新已有条目或追加
+    existing = next((s for s in stocks if s.get("symbol") == symbol), None)
+    if existing:
+        existing["name"] = name
+        if stop_price is not None:
+            existing["stop_price"] = stop_price
+        if alert_above is not None:
+            existing["alert_above"] = alert_above
+    else:
+        stocks.append({
+            "symbol": symbol,
+            "name": name,
+            "stop_price": stop_price,
+            "alert_above": alert_above,
+        })
+    watchlist["stocks"] = stocks
+    watchlist["updated_at"] = datetime.now().isoformat()
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(watchlist, f, ensure_ascii=False, indent=2)
+    print(f"✅ 更新自选股: {name}({symbol})" +
+          (f" 止损={stop_price}" if stop_price is not None else "") +
+          (f" 预警≥{alert_above}" if alert_above is not None else ""))
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -3973,6 +4064,9 @@ def main():
         # Phase 12: 回调入场
         "pullback-scan": lambda: cmd_pullback_scan(args),
         "pullback-watch": lambda: cmd_pullback_watch(args),
+        # 场景五: 程序化持仓/自选股记录
+        "record-position": lambda: cmd_record_position(args[0], args[1], float(args[2]), int(args[3])) if len(args) >= 4 else print("用法: record-position <code> <名称> <价格> <数量>"),
+        "update-watchlist": lambda: cmd_update_watchlist(args[0], args[1], float(args[2]) if len(args) >= 3 and args[2] else None, float(args[3]) if len(args) >= 4 and args[3] else None) if args else print("用法: update-watchlist <code> <名称> [止损价] [预警价]"),
     }
 
     handler = commands.get(cmd)

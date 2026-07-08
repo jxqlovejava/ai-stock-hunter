@@ -578,3 +578,107 @@ if __name__ == "__main__":
 
     dataset = build_factor_dataset(args.start, args.end)
     print(f"\n完成: {len(dataset['stocks'])} stocks, {len(dataset['dates'])} dates")
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: 行业中性化 + 极值缩尾 + 截面标准化
+# ---------------------------------------------------------------------------
+
+def winsorize(series: pd.Series, limits: tuple = (0.01, 0.99)) -> pd.Series:
+    """极值缩尾 — 将超出分位数的值截断到分位数边界。
+
+    Args:
+        series: 因子值序列
+        limits: (下分位, 上分位)
+
+    Returns:
+        缩尾后的序列
+    """
+    lower = series.quantile(limits[0])
+    upper = series.quantile(limits[1])
+    return series.clip(lower, upper)
+
+
+def zscore(series: pd.Series) -> pd.Series:
+    """截面 z-score 标准化。
+
+    z_i = (x_i - mean(x)) / std(x)
+
+    标准化后因子均值=0, 标准差=1。
+    配合 winsorize() 使用避免极端值影响标准差。
+    """
+    mu = series.mean()
+    sigma = series.std(ddof=1)
+    if sigma < 1e-12:
+        return pd.Series(0.0, index=series.index)
+    return (series - mu) / sigma
+
+
+def neutralize_by_industry(
+    factor_values: pd.Series,
+    industry_map: dict,
+) -> pd.Series:
+    """行业中性化 — 从因子值中剔除行业均值。
+
+    方法: 行业内部去均值
+      factor_residual_i = factor_i - mean(factor | industry_i)
+
+    中性化后的因子值完全不包含行业选择的信息，
+    纯 Alpha 来自行业内选股能力。
+
+    对于 A 股尤为重要：
+      - 银行天然低 PB、高股息率 → PB 因子不加中性化会全选银行
+      - 科技天然高 PE → PE 因子不加中性化会全选银行
+      - 行业内排名才是真正的选股 Alpha
+
+    Args:
+        factor_values: index=symbol, value=factor_score
+        industry_map: {symbol: industry_name} 或 {symbol: sw1_name}
+
+    Returns:
+        行业中性化后的因子值（行业内去均值）
+    """
+    if not industry_map:
+        return factor_values
+
+    # 构造行业列
+    industry_series = pd.Series(
+        {sym: industry_map.get(sym, "unknown") for sym in factor_values.index}
+    )
+
+    # 行业均值
+    industry_mean = factor_values.groupby(industry_series).transform("mean")
+
+    # 残差 = 因子值 - 行业均值
+    residual = factor_values - industry_mean
+
+    # 全市场截面 z-score (使不同因子可比)
+    return zscore(residual)
+
+
+def standardized_pipeline(
+    factor_values: pd.Series,
+    industry_map: dict | None = None,
+    winsorize_limits: tuple = (0.01, 0.99),
+) -> pd.Series:
+    """完整的标准化管道: 缩尾 → 行业中性化 → z-score。
+
+    Args:
+        factor_values: 原始因子值
+        industry_map: 行业映射（None 则跳过中性化）
+        winsorize_limits: 缩尾边界
+
+    Returns:
+        标准化后的因子值
+    """
+    # Step 1: 极值缩尾
+    processed = winsorize(factor_values, winsorize_limits)
+
+    # Step 2: 行业中性化
+    if industry_map:
+        processed = neutralize_by_industry(processed, industry_map)
+
+    # Step 3: z-score 标准化
+    processed = zscore(processed)
+
+    return processed

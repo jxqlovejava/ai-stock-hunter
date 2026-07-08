@@ -11,14 +11,14 @@ class TestScreeningPresets:
 
     def test_presets_loaded(self):
         """所有 5 种预设应已加载。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         expected = ["value", "growth", "quality", "short", "special-situation"]
         for preset_name in expected:
             assert preset_name in SCREENING_PRESETS, f"缺失预设: {preset_name}"
 
     def test_preset_has_required_fields(self):
         """每个预设应包含必需字段。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         for name, preset in SCREENING_PRESETS.items():
             assert preset.name, f"{name}: 缺少 name"
             assert preset.description, f"{name}: 缺少 description"
@@ -28,14 +28,14 @@ class TestScreeningPresets:
 
     def test_preset_weights_sum_positive(self):
         """每个预设的权重应至少有一个 > 0。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         for name, preset in SCREENING_PRESETS.items():
             total = sum(preset.weight_overrides.values())
             assert total > 0, f"{name}: 权重全为 0"
 
     def test_value_preset_thresholds(self):
         """价值型预设阈值应合理。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         value = SCREENING_PRESETS["value"]
         assert value.thresholds["max_pe"] == 15
         assert value.thresholds["max_pb"] == 1.5
@@ -44,7 +44,7 @@ class TestScreeningPresets:
 
     def test_growth_preset_thresholds(self):
         """成长型预设阈值应合理。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         growth = SCREENING_PRESETS["growth"]
         assert growth.thresholds["min_revenue_growth"] == 0.15
         assert growth.thresholds["min_earnings_growth"] == 0.20
@@ -53,21 +53,21 @@ class TestScreeningPresets:
 
     def test_quality_preset_thresholds(self):
         """质量型预设阈值应合理。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         quality = SCREENING_PRESETS["quality"]
         assert quality.thresholds["min_roe"] == 0.15
         assert quality.thresholds["min_consecutive_profit_years"] == 5
 
     def test_short_preset_no_short_sell(self):
         """做空型预设应仅用于风险识别 (A 股限制)。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         short = SCREENING_PRESETS["short"]
         assert any("不做空" in a or "仅识别风险" in a for a in short.adapters), \
             "做空型预设必须声明 A 股不做空"
 
     def test_special_situation_adapters(self):
         """事件驱动预设应包含 A 股特定事件。"""
-        from src.routing.l1_analyze import SCREENING_PRESETS
+        from src.routing.diagnosis import SCREENING_PRESETS
         ss = SCREENING_PRESETS["special-situation"]
         adapter_text = " ".join(ss.adapters)
         assert any(kw in adapter_text for kw in ["IPO", "重组", "回购", "定增", "股权激励"]), \
@@ -140,8 +140,8 @@ class TestPresetScoreCalc:
     def test_calc_preset_score_value(self):
         """价值型评分应以价值因子为主。"""
         from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
-        from src.routing.l1_analyze import AnalysisReport
-        report = AnalysisReport(
+        from src.routing.diagnosis import DiagnosisReport
+        report = DiagnosisReport(
             symbol="600519", name="贵州茅台",
             value_score=80, quality_score=70,
             momentum_score=50, macro_score=55,
@@ -157,8 +157,8 @@ class TestPresetScoreCalc:
     def test_calc_preset_score_growth(self):
         """成长型评分应以质量和动量为主。"""
         from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
-        from src.routing.l1_analyze import AnalysisReport
-        report = AnalysisReport(
+        from src.routing.diagnosis import DiagnosisReport
+        report = DiagnosisReport(
             symbol="300750", name="宁德时代",
             value_score=40, quality_score=85,
             momentum_score=75, macro_score=55,

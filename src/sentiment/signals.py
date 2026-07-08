@@ -74,6 +74,13 @@ class MarketSentiment:
     timestamp: str = ""                # ISO 时间戳
     data_errors: list[str] = field(default_factory=list)  # 数据获取失败记录
     panic_arb_advice: str = ""         # 恐慌套利建议
+    # 深度解读字段
+    market_breadth_insight: str = ""  # 市场宽度解读
+    volume_insight: str = ""          # 成交量结构解读
+    northbound_insight: str = ""      # 北向资金深度解读
+    limit_pool_insight: str = ""      # 涨跌停/炸板解读
+    vix_insight: str = ""             # 波动率解读
+    sector_signal_insight: str = ""   # 板块轮动信号
 
 
 # ---------------------------------------------------------------------------
@@ -536,11 +543,19 @@ class SentimentDetector:
     # 公共 API
     # ------------------------------------------------------------------
 
-    def detect_market(self) -> MarketSentiment:
+    def detect_market(self, **overrides: float | int) -> MarketSentiment:
         """检测当前大盘情绪 — 拉取实时数据并评估。
 
         返回完整的 MarketSentiment，包含所有指标明细、判定理由和恐慌套利建议。
         数据获取失败时使用默认值并标注 [DATA_GAP]。
+
+        Args:
+            **overrides: 可选的覆盖参数，用于测试或模拟场景。
+                advance_decline — 涨跌比
+                limit_down — 跌停家数
+                volume_ratio — 量比
+                northbound — 北向净流入（亿元，负值=流出）
+                margin_change — 融资日变化（亿元，负值=减少）
         """
         indicators: list[IndicatorSnapshot] = []
         panic_signals: list[str] = []
@@ -549,9 +564,24 @@ class SentimentDetector:
         data_errors: list[str] = []
         score = 50
 
+        # Extract overrides for test/simulation
+        ov_advance_decline = overrides.get("advance_decline")
+        ov_limit_down = overrides.get("limit_down")
+        ov_volume_ratio = overrides.get("volume_ratio")
+        ov_northbound = overrides.get("northbound")
+        ov_margin_change = overrides.get("margin_change")
+
         # ---- 1. 市场宽度 (涨跌比 + 涨跌停) ----
         breadth = self.fetcher.fetch_market_breadth()
-        if breadth.get("error"):
+        if ov_advance_decline is not None or ov_limit_down is not None:
+            # Override mode: use provided values instead of fetched data
+            if ov_advance_decline is not None:
+                advance_decline = ov_advance_decline
+            else:
+                advance_decline = 1.0
+            limit_up = 0
+            limit_down = ov_limit_down if ov_limit_down is not None else 0
+        elif breadth.get("error"):
             data_errors.append(f"市场宽度: {breadth['error']}")
             advance_decline = 1.0
             limit_up = 0
@@ -643,12 +673,15 @@ class SentimentDetector:
         indicators.append(ld_indicator)
 
         # ---- 2. 成交量 ----
-        vol = self.fetcher.fetch_volume_ratio()
-        if vol.get("error"):
-            data_errors.append(f"成交量: {vol['error']}")
-            volume_ratio = 1.0
+        if ov_volume_ratio is not None:
+            volume_ratio = ov_volume_ratio
         else:
-            volume_ratio = vol["volume_ratio"]
+            vol = self.fetcher.fetch_volume_ratio()
+            if vol.get("error"):
+                data_errors.append(f"成交量: {vol['error']}")
+                volume_ratio = 1.0
+            else:
+                volume_ratio = vol["volume_ratio"]
             indicators.append(IndicatorSnapshot(
                 name="成交量比", en_name="volume_ratio",
                 current_value=volume_ratio, unit="x",
@@ -662,20 +695,23 @@ class SentimentDetector:
             score -= 5
 
         # ---- 3. 北向资金 ----
-        nb = self.fetcher.fetch_northbound_flow()
-        if nb.get("error"):
-            data_errors.append(f"北向资金: {nb['error']}")
-            northbound_net = 0.0
+        if ov_northbound is not None:
+            northbound_net = ov_northbound
         else:
-            northbound_net = nb["net_flow_rmb"]
-            indicators.append(IndicatorSnapshot(
-                name="北向资金", en_name="northbound_net_flow",
-                current_value=northbound_net, unit="亿元",
-                panic_threshold=self.PANIC_NORTHBOUND_OUT,
-                extreme_threshold=self.EXTREME_NORTHBOUND_OUT,
-                description=f"北向净{nb['direction']} {abs(northbound_net):.1f} 亿",
-                data_source=nb["source"],
-            ))
+            nb = self.fetcher.fetch_northbound_flow()
+            if nb.get("error"):
+                data_errors.append(f"北向资金: {nb['error']}")
+                northbound_net = 0.0
+            else:
+                northbound_net = nb["net_flow_rmb"]
+                indicators.append(IndicatorSnapshot(
+                    name="北向资金", en_name="northbound_net_flow",
+                    current_value=northbound_net, unit="亿元",
+                    panic_threshold=self.PANIC_NORTHBOUND_OUT,
+                    extreme_threshold=self.EXTREME_NORTHBOUND_OUT,
+                    description=f"北向净{nb['direction']} {abs(northbound_net):.1f} 亿",
+                    data_source=nb["source"],
+                ))
 
         if northbound_net <= self.EXTREME_NORTHBOUND_OUT:
             extreme_signals.append(f"北向净流出 {abs(northbound_net):.0f} 亿 ≥ {abs(self.EXTREME_NORTHBOUND_OUT)} 亿（极端）")
@@ -685,26 +721,39 @@ class SentimentDetector:
             score -= 8
 
         # ---- 4. 融资融券 (历史数据 + 阈值判定) ----
-        margin_hist = self.fetcher.fetch_margin_history(days=20)
-        if margin_hist.get("error"):
-            data_errors.append(f"融资融券历史: {margin_hist['error']}")
-            # 回退：尝试旧版单点数据
-            margin = self.fetcher.fetch_margin_data()
-            if margin.get("error"):
-                data_errors.append(f"融资融券: {margin['error']}")
-            else:
-                indicators.append(IndicatorSnapshot(
-                    name="融资余额", en_name="margin_balance",
-                    current_value=margin.get("margin_balance", 0), unit="亿元",
-                    description=f"融资余额（无历史数据，不判定）",
-                    data_source=margin.get("source", "N/A"),
-                ))
+        _margin_data_ok = False
+        if ov_margin_change is not None:
+            # Override mode: use provided daily change
+            _margin_data_ok = True
+            latest_balance = 15000.0  # dummy baseline
+            daily_change = float(ov_margin_change)
+            avg_20d = 15000.0
+            dev_sigma = 0.0
+            _margin_source = "override"
         else:
-            latest_balance = margin_hist["latest_balance"]
-            daily_change = margin_hist["daily_change"]
-            avg_20d = margin_hist["avg_20d"]
-            dev_sigma = margin_hist["deviation_sigma"]
+            margin_hist = self.fetcher.fetch_margin_history(days=20)
+            if margin_hist.get("error"):
+                data_errors.append(f"融资融券历史: {margin_hist['error']}")
+                # 回退：尝试旧版单点数据
+                margin = self.fetcher.fetch_margin_data()
+                if margin.get("error"):
+                    data_errors.append(f"融资融券: {margin['error']}")
+                else:
+                    indicators.append(IndicatorSnapshot(
+                        name="融资余额", en_name="margin_balance",
+                        current_value=margin.get("margin_balance", 0), unit="亿元",
+                        description=f"融资余额（无历史数据，不判定）",
+                        data_source=margin.get("source", "N/A"),
+                    ))
+            else:
+                _margin_data_ok = True
+                latest_balance = margin_hist["latest_balance"]
+                daily_change = margin_hist["daily_change"]
+                avg_20d = margin_hist["avg_20d"]
+                dev_sigma = margin_hist["deviation_sigma"]
+                _margin_source = margin_hist["source"]
 
+        if _margin_data_ok:
             # 融资余额变化判定
             margin_signal = "normal"
             if daily_change <= -50:  # 日减 > 50 亿
@@ -731,7 +780,7 @@ class SentimentDetector:
                 greed_threshold=self.GREED_MARGIN_SPIKE,
                 signal=margin_signal,
                 description=f"融资 {latest_balance:.1f} 亿（日变化 {daily_change:+.1f} 亿，偏离 {dev_sigma:+.1f}σ）",
-                data_source=margin_hist["source"],
+                data_source=_margin_source,
             ))
 
         # ---- 5. 炸板率 & 连板高度 (P0 新增) ----
@@ -892,6 +941,43 @@ class SentimentDetector:
         # ---- 10. 恐慌套利建议 ----
         panic_arb_advice = self._generate_panic_arb_advice(level, score, panic_signals, extreme_signals)
 
+        # ---- 10a. 深度解读 ----
+        # Safely derive insight variables (some from conditional blocks)
+        _frozen_ratio = 0.0
+        _northbound_dir = "inflow" if northbound_net > 0 else ("outflow" if northbound_net < 0 else "none")
+        try:
+            _br = break_rate
+        except NameError:
+            _br = 0.0
+        try:
+            _mh = max_height
+        except NameError:
+            _mh = 0
+        try:
+            _zt = zt_count
+        except NameError:
+            _zt = 0
+        try:
+            _iv = ivix_val
+        except NameError:
+            _iv = 0.0
+        _ivchg = ivix.get("change", 0) if isinstance(ivix, dict) else 0
+
+        breadth_insight = self._generate_breadth_insight(
+            advance_decline, limit_up, limit_down,
+        )
+        volume_insight = self._generate_volume_insight(
+            volume_ratio, _frozen_ratio, level in (SentimentLevel.PANIC, SentimentLevel.EXTREME_PANIC),
+        )
+        northbound_insight = self._generate_northbound_insight(
+            northbound_net, _northbound_dir,
+        )
+        limit_pool_insight = self._generate_limit_pool_insight(
+            _br, _mh, _zt, 0, limit_down,
+        )
+        vix_insight = self._generate_vix_insight(_iv, _ivchg)
+        sector_insight = ""  # 板块轮动需额外数据，暂留空
+
         # ---- 11. 置信度 ----
         total_indicators = len(indicators)
         failed_indicators = len(data_errors)
@@ -935,6 +1021,12 @@ class SentimentDetector:
             timestamp=datetime.now().isoformat(),
             data_errors=data_errors,
             panic_arb_advice=panic_arb_advice,
+            market_breadth_insight=breadth_insight,
+            volume_insight=volume_insight,
+            northbound_insight=northbound_insight,
+            limit_pool_insight=limit_pool_insight,
+            vix_insight=vix_insight,
+            sector_signal_insight=sector_insight,
         )
 
     # ------------------------------------------------------------------
@@ -977,6 +1069,100 @@ class SentimentDetector:
             )
         else:
             return "🟢 市场情绪正常 — 无明显套利机会，按正常策略执行。"
+
+    # ------------------------------------------------------------------
+    # 深度解读方法
+    # ------------------------------------------------------------------
+
+    def _generate_breadth_insight(
+        self, ad_ratio: float, limit_up: int, limit_down: int,
+    ) -> str:
+        """生成市场宽度解读。"""
+        if ad_ratio <= 0:
+            return ""
+        if ad_ratio >= 3.0:
+            return f"市场宽度极强（涨跌比{ad_ratio:.1f}），普涨格局，追高风险加大"
+        elif ad_ratio >= 1.5:
+            return f"市场宽度偏强（涨跌比{ad_ratio:.1f}），赚钱效应良好但结构性分化存在"
+        elif ad_ratio >= 0.7:
+            return f"市场宽度中性（涨跌比{ad_ratio:.1f}），个股分化明显，选股能力决定收益"
+        else:
+            return f"市场宽度偏弱（涨跌比{ad_ratio:.2f}），多数个股下跌，注意控制仓位"
+
+    def _generate_volume_insight(
+        self, vol_ratio: float, frozen_ratio: float, is_panic: bool,
+    ) -> str:
+        """生成成交量结构解读。"""
+        if vol_ratio <= 0:
+            return ""
+        parts = []
+        if vol_ratio > 1.5:
+            parts.append(f"成交量显著放大（{vol_ratio:.1f}倍），市场参与度高")
+        elif vol_ratio > 1.0:
+            parts.append(f"成交量温和放大（{vol_ratio:.1f}倍），交投活跃")
+        elif vol_ratio > 0.5:
+            parts.append(f"成交量正常（{vol_ratio:.1f}倍），市场参与度一般")
+        else:
+            parts.append(f"成交量萎缩（{vol_ratio:.2f}倍），市场观望情绪浓厚")
+        if frozen_ratio > 0.05 and is_panic:
+            parts.append(f"跌停封单占比{frozen_ratio:.1%}，流动性风险需关注")
+        return "；".join(parts)
+
+    def _generate_northbound_insight(
+        self, net_flow: float, direction: str,
+    ) -> str:
+        """生成北向资金深度解读。"""
+        if net_flow == 0 and direction == "none":
+            return "北向资金数据未获取，无法判断外资动向"
+        if direction == "inflow":
+            return f"北向资金净流入{net_flow:.1f}亿，外资积极看多A股，短期情绪偏正面"
+        elif direction == "outflow":
+            return f"北向资金净流出{abs(net_flow):.1f}亿，外资减仓观望，短期需谨慎"
+        else:
+            return f"北向资金净流入{net_flow:.1f}亿，外资动向平稳"
+
+    def _generate_limit_pool_insight(
+        self, break_rate: float, max_height: int,
+        zt_count: int, zb_count: int, dt_count: int,
+    ) -> str:
+        """生成涨跌停/炸板解读。"""
+        parts = []
+        if zt_count > 0:
+            parts.append(f"涨停{zt_count}家")
+        if dt_count > 0:
+            parts.append(f"跌停{dt_count}家")
+        if break_rate > 0:
+            if break_rate > 35:
+                parts.append(f"炸板率{break_rate:.0f}%偏高，封板意愿弱，追板风险大")
+            elif break_rate > 20:
+                parts.append(f"炸板率{break_rate:.0f}%正常，短线生态健康")
+            else:
+                parts.append(f"炸板率{break_rate:.0f}%偏低，封板意愿强，短线情绪积极")
+        if max_height >= 5:
+            parts.append(f"最高{max_height}连板，短线龙头效应明显")
+        return "；".join(parts) if parts else ""
+
+    def _generate_vix_insight(self, ivix_val: float, ivix_chg: float) -> str:
+        """生成波动率解读。"""
+        if ivix_val <= 0:
+            return ""
+        if ivix_val > 30:
+            level = "极高"
+            advice = "市场恐慌或剧烈波动期，期权保护成本高，应考虑减仓或对冲"
+        elif ivix_val > 25:
+            level = "偏高"
+            advice = "市场不确定性较大，建议控制仓位，等待波动率回落"
+        elif ivix_val > 20:
+            level = "正常偏上"
+            advice = "波动率略高于中枢，短期可能有方向性选择"
+        elif ivix_val > 15:
+            level = "正常"
+            advice = "波动率处于合理区间，市场情绪稳定"
+        else:
+            level = "偏低"
+            advice = "波动率过低，市场可能过于乐观，注意尾部风险"
+        chg_text = f"（日变化{ivix_chg:+.2f}%）" if ivix_chg != 0 else ""
+        return f"QVIX={ivix_val:.1f}%{chg_text}，波动率{level}。{advice}"
 
     # ------------------------------------------------------------------
     # 板块情绪（Level 2）

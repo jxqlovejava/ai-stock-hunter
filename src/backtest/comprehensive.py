@@ -16,6 +16,7 @@ import pandas as pd
 
 from .engine import BacktestEngine
 from .mvp1_strategy import MVP1Strategy
+from .cost_model import AShareCostCalculator
 
 CACHE = Path(__file__).resolve().parent.parent.parent / "data" / "kline_cache"
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -143,6 +144,14 @@ class GridResult:
     max_drawdown: float = 0
     trades: int = 0
     final_value: float = 0
+    # Phase 12: 扩展指标
+    sortino: float = 0              # Sortino 比率（下行风险调整收益）
+    calmar: float = 0               # Calmar 比率（收益/最大回撤）
+    win_rate: float = 0             # 胜率
+    payoff_ratio: float = 0         # 盈亏比（avg_win/abs(avg_loss)）
+    turnover: float = 0             # 年化换手率
+    total_cost: float = 0           # 总交易成本（佣金+印花税+滑点）
+    cost_adjusted_return: float = 0 # 扣成本后年化收益
 
 
 def grid_search(
@@ -204,6 +213,121 @@ def grid_search(
 
     results.sort(key=lambda x: x.sharpe, reverse=True)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: 扩展回测指标
+# ---------------------------------------------------------------------------
+
+import numpy as np
+
+
+def _compute_sortino(returns: list[float], risk_free: float = 0.02) -> float:
+    """Sortino 比率 = (年化收益 - 无风险利率) / 下行标准差。
+
+    只惩罚下行波动，不惩罚上行波动。
+    """
+    r = np.asarray(returns, dtype=float)
+    r = r[np.isfinite(r)]
+    if len(r) < 20:
+        return 0.0
+
+    annual_return = float(np.mean(r)) * 252
+    excess = annual_return - risk_free
+
+    # 下行标准差: 只取负收益
+    downside = r[r < 0]
+    if len(downside) < 5:
+        return 0.0
+
+    downside_std = float(np.std(downside, ddof=1)) * np.sqrt(252)
+    if downside_std < 1e-10:
+        return 0.0
+
+    return excess / downside_std
+
+
+def _compute_calmar(annual_return: float, max_drawdown: float) -> float:
+    """Calmar 比率 = 年化收益 / |最大回撤|。"""
+    if max_drawdown < 0.001:
+        return 0.0
+    return annual_return / abs(max_drawdown)
+
+
+def _compute_win_rate(trades: list[dict]) -> float:
+    """胜率 = 盈利交易数 / 总交易数。"""
+    if not trades:
+        return 0.0
+    wins = sum(1 for t in trades if t.get("pnl", 0) > 0)
+    return wins / len(trades)
+
+
+def _compute_payoff_ratio(trades: list[dict]) -> float:
+    """盈亏比 = avg(盈利交易收益) / |avg(亏损交易收益)|。"""
+    if not trades:
+        return 0.0
+    wins = [t["pnl"] for t in trades if t.get("pnl", 0) > 0]
+    losses = [t["pnl"] for t in trades if t.get("pnl", 0) <= 0]
+    if not losses or not wins:
+        return 0.0
+    avg_win = sum(wins) / len(wins)
+    avg_loss = abs(sum(losses) / len(losses))
+    if avg_loss < 1e-10:
+        return 0.0
+    return avg_win / avg_loss
+
+
+def _compute_turnover(
+    changes: list[dict], portfolio_values: list[float],
+) -> float:
+    """年化换手率（单边）≈ Σ|Δ持仓| / (2 × 平均资产) × (252 / N期)。
+
+    Args:
+        changes: 每期持仓变化列表 [{"bought": [...], "sold": [...], "total_value": float}]
+        portfolio_values: 每期末资产价值
+
+    Returns:
+        年化单边换手率
+    """
+    if not changes or len(changes) < 2:
+        return 0.0
+
+    total_turnover = 0.0
+    for ch in changes:
+        tv = ch.get("total_value", 0) or 0
+        if tv > 0:
+            total_turnover += tv
+
+    avg_portfolio = float(np.mean(portfolio_values)) if portfolio_values else 1.0
+    if avg_portfolio < 1:
+        return 0.0
+
+    n_periods = len(changes)
+    annual_factor = 252.0 / max(n_periods, 1)
+    # 单边换手 = 双边换手 / 2
+    return (total_turnover / avg_portfolio) * annual_factor / 2.0
+
+
+def _estimate_trading_cost(
+    trades: list[dict], portfolio_value: float,
+) -> tuple[float, float]:
+    """估算交易成本。
+
+    Returns:
+        (total_cost, cost_adjusted_return_pct)
+    """
+    calc = AShareCostCalculator()
+    total_cost = 0.0
+    for t in trades:
+        price = t.get("price", 0) or 0
+        qty = t.get("quantity", 0) or 0
+        is_buy = t.get("action", "") in ("BUY", "OPEN")
+        if price > 0 and qty > 0:
+            cost = calc.estimate_cost(price=price, quantity=qty, is_open=is_buy)
+            total_cost += cost.total_cost
+
+    cost_pct = total_cost / portfolio_value if portfolio_value > 0 else 0.0
+    return total_cost, cost_pct
 
 
 # ---------------------------------------------------------------------------

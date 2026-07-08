@@ -214,8 +214,8 @@ class TestScoreExecutive:
 
 class TestAnalysisReportFields:
     def test_default_executive_fields(self):
-        from src.routing.l1_analyze import AnalysisReport
-        r = AnalysisReport(symbol="000001", name="平安银行")
+        from src.routing.diagnosis import DiagnosisReport
+        r = DiagnosisReport(symbol="000001", name="平安银行")
         assert r.executive_score == 50.0
         assert r.executive_risks == []
 
@@ -226,7 +226,7 @@ class TestAnalysisReportFields:
 
 class TestVerdictExecutiveRisks:
     def test_verdict_stores_executive_risks(self):
-        from src.routing.l2_judge import Verdict
+        from src.routing.verdict import Verdict
         v = Verdict(symbol="000001", score=70, executive_risks=["高管净减持"])
         assert len(v.executive_risks) == 1
         assert "高管净减持" in v.executive_risks
@@ -238,12 +238,12 @@ class TestVerdictExecutiveRisks:
 
 class TestTradeSignalExecutiveRisk:
     def test_signal_default_no_risk(self):
-        from src.routing.l3_trade import TradeSignal
+        from src.routing.positioning import TradeSignal
         s = TradeSignal(symbol="000001", action="HOLD", target_weight=0.0)
         assert s.executive_risk is False
 
     def test_signal_with_risk(self):
-        from src.routing.l3_trade import TradeSignal
+        from src.routing.positioning import TradeSignal
         s = TradeSignal(symbol="000001", action="HOLD", target_weight=0.0, executive_risk=True)
         assert s.executive_risk is True
 

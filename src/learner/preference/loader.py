@@ -74,6 +74,29 @@ class InvestorPreferenceLoader:
             )
         logger.info("偏好已保存到 %s", self._path)
 
+    def update_circle_of_competence(self, industry: str, level: int) -> bool:
+        """更新能力圈 — 新增或修改行业熟悉度。
+
+        Args:
+            industry: 行业名称（如 半导体、医药）
+            level: 熟悉度 1-5
+
+        Returns:
+            True 保存成功，False 失败
+        """
+        if level < 1 or level > 5:
+            logger.warning("能力圈熟悉度需在 1-5 之间: %d", level)
+            return False
+        try:
+            prefs = self.load()
+            prefs.circle_of_competence.industries[industry] = level
+            self.save(prefs)
+            logger.info("能力圈已更新: %s = %d/5", industry, level)
+            return True
+        except Exception as e:
+            logger.error("更新能力圈失败: %s", e)
+            return False
+
     def reset(self) -> InvestorPreference:
         """重置为默认值并覆盖文件。"""
         prefs = InvestorPreference()

@@ -258,6 +258,10 @@ TOP_PLAYBOOKS: list[Playbook] = [
 ]
 
 
+# 前 3 个核心操盘手法（涨停板接力、机构抱团拉升、国家队托底）
+TOP_3_PLAYBOOKS: list[Playbook] = TOP_PLAYBOOKS[:3]
+
+
 def get_playbook_evidence_summary() -> str:
     """生成所有 playbook 的证据等级摘要。"""
     from collections import Counter

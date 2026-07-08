@@ -702,7 +702,7 @@ class TestPipelineIntegration:
 
     def test_l4_alpha_decay_check(self):
         """风控检测 Alpha 衰减。"""
-        from src.routing.l3_trade import TradeSignal
+        from src.routing.positioning import TradeSignal
         from src.routing.risk_control import RiskControlEngine
 
         l4 = RiskControlEngine()
