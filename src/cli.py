@@ -2390,6 +2390,178 @@ def cmd_technical(args: list[str]):
 
 
 @_safe_cmd
+def cmd_timing(args: list[str]):
+    """T+0 日内时机分析 — 日线+分钟线双维度判断建仓/加仓/减仓时机。"""
+    from src.routing.orchestrator import Orchestrator
+
+    symbol = args[0] if args else ""
+    if not symbol or not _validate_symbol(symbol):
+        print("用法: python -m src timing <股票代码>")
+        print("示例: python -m src timing 002460")
+        return
+
+    market = _infer_market(symbol)
+    print(f"⏱️  T+0 日内时机分析: {symbol}")
+    print("=" * 60)
+
+    orch = Orchestrator()
+    t0 = orch.run_t0(symbol, market)
+
+    if t0 is None:
+        print("❌ T+0 分析不可用（分钟数据获取失败或交易日未开盘）")
+        print("   提示: T+0 分析需要盘中交易时段运行")
+        return
+
+    action_emoji = {"add": "🟢", "hold": "🟡", "reduce": "🟠", "cut": "🔴", "no_position": "⚪"}
+    action_text = {"add": "可以加仓", "hold": "观望等待", "reduce": "建议减仓", "cut": "坚决减仓", "no_position": "不建议建仓"}
+    emoji = action_emoji.get(t0["action"], "❓")
+    text = action_text.get(t0["action"], "未知")
+
+    print(f"\n  {emoji} {text}  得分: {t0['score']}")
+    print(f"\n  ── 日线技术位 ──")
+    print(f"  MA5: {t0['ma5']:.2f}  MA10: {t0['ma10']:.2f}  MA20: {t0['ma20']:.2f}")
+    print(f"  阻力: {t0['resistance']}  支撑: {t0['support_1']}")
+
+    if t0.get("vwap", 0) > 0:
+        print(f"\n  ── 日内数据 ──")
+        print(f"  VWAP: {t0['vwap']:.2f}  H={t0['day_high']} L={t0['day_low']} ({t0.get('day_low_time','')})")
+        print(f"  振幅: {t0['amplitude']}%  反弹: {t0['rebound_from_low']:+.1f}%")
+        print(f"  总成交: {t0['total_vol']/10000:.0f}万股 / {t0['total_amount']/1e8:.1f}亿")
+        print(f"  反弹质量: {t0['rebound_quality']}")
+
+    if t0.get("daily_patterns"):
+        print(f"\n  ── K线形态 ──")
+        for p in t0["daily_patterns"]:
+            print(f"  {p}")
+    if t0.get("intraday_pattern"):
+        print(f"\n  ── 分时形态 ──")
+        print(f"  {t0['intraday_pattern']}")
+
+    if t0.get("signals_bull"):
+        print(f"\n  🟢 看多信号:")
+        for s in t0["signals_bull"]:
+            print(f"    + {s}")
+    if t0.get("signals_bear"):
+        print(f"\n  🔴 看空信号:")
+        for s in t0["signals_bear"]:
+            print(f"    - {s}")
+
+    if t0.get("suggested_price", 0) > 0:
+        print(f"\n  💰 建议操作价: {t0['suggested_price']:.2f}")
+    if t0.get("stop_loss", 0) > 0:
+        print(f"  🛑 止损价: {t0['stop_loss']:.2f}")
+    if t0.get("trigger_condition"):
+        print(f"  📋 {t0['trigger_condition']}")
+
+    print(f"\n  ⚠️ A股T+1制度下，日内操作需已有底仓。以上不构成投资建议。")
+
+
+@_safe_cmd
+def cmd_macro_event(args: list[str]):
+    """宏观事件因果链分析 — 事件→A股传导路径→影响估计→策略建议。"""
+    from src.macro.event_analyzer import EventAnalyzer
+
+    if not args:
+        print("用法: python -m src macro-event <事件描述> [--category 类型] [--symbol 股票] [--sector 行业]")
+        print()
+        print("示例:")
+        print('  python -m src macro-event "美联储意外加息50bp" --category monetary')
+        print('  python -m src macro-event "美国扩大AI芯片出口限制" --category tech_sanction --symbol 002460')
+        return
+
+    import argparse
+    parser = argparse.ArgumentParser(description="宏观事件因果链分析")
+    parser.add_argument("description", nargs="+", help="事件描述")
+    parser.add_argument("--category", default="", choices=["monetary","geopolitical","trade_policy","tech_sanction","economic_data","financial_crisis","commodity","regulatory"], help="事件类型")
+    parser.add_argument("--symbol", default="", help="关注的个股代码")
+    parser.add_argument("--sector", default="", help="个股所属行业")
+    parser.add_argument("--source", default="", help="信息来源")
+    parsed = parser.parse_args(args)
+
+    desc = " ".join(parsed.description) if isinstance(parsed.description, list) else parsed.description
+
+    print(f"🌍 宏观事件因果链分析")
+    print("=" * 60)
+
+    analyzer = EventAnalyzer()
+    report = analyzer.analyze(
+        event_description=desc,
+        category_hint=parsed.category,
+        source=parsed.source,
+        stock_symbol=parsed.symbol,
+        stock_sector=parsed.sector,
+    )
+
+    # 事件摘要
+    print(f"\n  📰 事件: {report.event.title}")
+    print(f"  🏷️  分类: {report.event.category.value}")
+    if report.event.source:
+        print(f"  📎 来源: {report.event.source}")
+
+    # 传导路径
+    print(f"\n  ── 传导路径 ({len(report.transmission_channels)}条) ──")
+    if report.transmission_channels:
+        for ch in report.transmission_channels:
+            direction_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "➖"}
+            mag_bar = {"strong": "███", "moderate": "██", "weak": "█"}
+            emoji = direction_emoji.get(ch.direction.value, "➖")
+            bar = mag_bar.get(ch.magnitude.value, "█")
+            print(f"  {emoji} {ch.channel} [{bar}] {ch.timeframe.value}")
+            print(f"     {ch.description}")
+            if ch.affected_sectors:
+                print(f"     影响行业: {', '.join(ch.affected_sectors)}")
+    else:
+        print("  (无匹配传导路径)")
+
+    # 影响估计
+    if report.impact:
+        imp = report.impact
+        print(f"\n  ── 影响估计 ──")
+        print(f"  方向: {imp.direction.value}  基准: {imp.base_case_change_pct:+.1f}%")
+        print(f"  乐观: {imp.bullish_case_change_pct:+.1f}%  悲观: {imp.bearish_case_change_pct:+.1f}%")
+        print(f"  峰值: {imp.peak_impact_days}天  置信度: {imp.confidence:.0%}")
+        print(f"  净得分: {report.net_bullish_score:+.2f}")
+        if imp.reasoning:
+            print(f"  推理: {imp.reasoning}")
+
+    # 历史类比
+    if report.historical_analogs:
+        print(f"\n  ── 历史类比 ──")
+        for a in report.historical_analogs:
+            print(f"  📖 {a.event_name} ({a.period})")
+            print(f"     上证{a.shanghai_change_pct:+.0f}%  相似度{a.similarity_score:.0%}")
+            if a.key_parallels:
+                print(f"     相似: {', '.join(a.key_parallels[:3])}")
+            if a.key_differences:
+                print(f"     差异: {', '.join(a.key_differences[:3])}")
+
+    # 策略建议
+    print(f"\n  ── 策略建议 ──")
+    print(f"  整体定位: {report.strategy.overall_position}")
+    if report.strategy.suggested_action:
+        print(f"  操作: {report.strategy.suggested_action}")
+    if report.strategy.hedging_suggestions:
+        print(f"  对冲: {', '.join(report.strategy.hedging_suggestions)}")
+    if report.strategy.monitoring_indicators:
+        print(f"  监控: {', '.join(report.strategy.monitoring_indicators)}")
+    if report.strategy.position_sizing:
+        print(f"  仓位: {report.strategy.position_sizing}")
+
+    # 风险
+    if report.risk_factors:
+        print(f"\n  ── 风险因子 ──")
+        for r in report.risk_factors:
+            print(f"  ⚠️  {r}")
+
+    # 个股影响
+    if parsed.symbol and report.stock_impact_summary:
+        print(f"\n  ── 个股影响 ({parsed.symbol}) ──")
+        print(f"  {report.stock_impact_summary}")
+
+    print(f"\n  ⚠️ 以上为系统分析，不构成投资建议。")
+
+
+@_safe_cmd
 def cmd_swing_scan(args: list[str]):
     """波段选股扫描 — 扫描技术面符合条件的短线标的。"""
     import argparse
@@ -2694,6 +2866,8 @@ def main():
         print("  technical <code>        技术分析报告 (六维评分)")
         print("  swing-scan              波段选股扫描")
         print("  monitor [start|once]    实时盯盘监控")
+        print("  timing <code>           T+0 日内时机分析 (建仓/加仓/减仓)")
+        print("  macro-event <desc>      宏观事件因果链分析 (A股传导)")
         print()
         print("🕯️ K线形态 (NEW):")
         print("  patterns <code>         K线形态识别 (63种)")
@@ -2780,6 +2954,8 @@ def main():
         "monitor": lambda: cmd_monitor(args),
         "technical": lambda: cmd_technical(args),
         "swing-scan": lambda: cmd_swing_scan(args),
+        "timing": lambda: cmd_timing(args),
+        "macro-event": lambda: cmd_macro_event(args),
         # 策略竞技场
         "arena": lambda: cmd_arena(args),
         # Phase 8: Alpha 挖掘管线
