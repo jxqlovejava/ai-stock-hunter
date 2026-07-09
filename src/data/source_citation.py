@@ -102,6 +102,11 @@ PROVIDER_CONFIDENCE: dict[str, float] = {
     "learner": 0.75,
     "investor_preference": 0.95,
     "verified_cache": 0.95,
+    # 降级源 (Fallback)
+    "eastmoney-news": 0.75,     # 东财新闻搜索 (T2)
+    "eastmoney-global": 0.75,   # 东财7×24快讯 (T2)
+    "eastmoney-report": 0.75,   # 东财研报 (T2)
+    "akshare-screen": 0.70,     # AKShare 客户端选股降级 (T2)
 }
 
 # 数据源默认 T0-T3 分级
@@ -123,6 +128,11 @@ PROVIDER_SOURCE_TIER: dict[str, str] = {
     "manual": SOURCE_TIER_T2,
     "llm_derived": SOURCE_TIER_T3,
     "verified_cache": SOURCE_TIER_T1,
+    # 降级源
+    "eastmoney-news": SOURCE_TIER_T2,
+    "eastmoney-global": SOURCE_TIER_T2,
+    "eastmoney-report": SOURCE_TIER_T2,
+    "akshare-screen": SOURCE_TIER_T2,
 }
 
 # 统一缺口/未溯源标记
@@ -143,6 +153,12 @@ FRESHNESS_LIMITS: dict[str, timedelta] = {
     "financials": timedelta(hours=24),
     "topic_policy": timedelta(hours=12),
     "analyst_report": timedelta(days=7),
+    "announcement": timedelta(hours=24),
+    "research_report": timedelta(days=7),
+    "news_event": timedelta(hours=6),
+    "executive_trade": timedelta(hours=4),
+    "dividend": timedelta(hours=24),
+    "stock_screening": timedelta(minutes=15),
     "fundamental": timedelta(hours=24),
     "executive": timedelta(hours=4),
     "industry_pe": timedelta(hours=24),

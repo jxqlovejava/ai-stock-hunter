@@ -34,6 +34,13 @@ _SCRIPT_PATHS = {
 TIMEOUT = 30  # 秒
 MAX_RETRIES = 2
 
+# 使用项目 venv Python（系统 Python 3.9 有 urllib3/LibreSSL 兼容性 warning）
+_VENV_PYTHON = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python3"
+_PYTHON_BIN = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else "python3"
+
+# 妙想 API 错误码
+_MX_DAILY_QUOTA_EXCEEDED = 113  # 免费版日调用次数已达上限
+
 
 class MiaoXiangAdapter:
     """妙想 Skill CLI 调用适配器。
@@ -51,6 +58,8 @@ class MiaoXiangAdapter:
         else:
             self._api_key = api_key
         self._output_dir = output_dir or tempfile.mkdtemp(prefix="mx_output_")
+        # 配额状态（供 Provider 层查询）
+        self.last_quota_exceeded: bool = False
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
 
@@ -342,7 +351,7 @@ class MiaoXiangAdapter:
                 env["MX_APIKEY"] = self._api_key
 
                 result = subprocess.run(
-                    ["python3", str(script_path), query, skill_output_dir],
+                    [_PYTHON_BIN, str(script_path), query, skill_output_dir],
                     capture_output=True,
                     text=True,
                     timeout=TIMEOUT,
@@ -351,9 +360,23 @@ class MiaoXiangAdapter:
                 )
 
                 if result.returncode != 0:
+                    stdout_tail = result.stdout[-500:] if result.stdout else ""
+                    stderr_tail = result.stderr[-500:] if result.stderr else ""
+                    combined = stdout_tail + stderr_tail
+
+                    # 日限额耗尽 → 不重试，静默降级
+                    if f"状态码 {_MX_DAILY_QUOTA_EXCEEDED}" in combined or \
+                       f"status {_MX_DAILY_QUOTA_EXCEEDED}" in combined:
+                        logger.info(
+                            "%s 日调用次数已达上限(免费版150次/天)，跳过",
+                            skill_name,
+                        )
+                        self.last_quota_exceeded = True
+                        return None
+
                     logger.warning(
                         "%s 脚本返回非零 (attempt %d): %s\nstderr: %s",
-                        skill_name, attempt + 1, result.returncode, result.stderr[:500],
+                        skill_name, attempt + 1, result.returncode, stderr_tail,
                     )
                     if attempt < MAX_RETRIES:
                         continue

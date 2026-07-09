@@ -57,6 +57,46 @@ class MiaoXiangProvider(DataProvider):
         self._cache_ttl_fin = timedelta(hours=1)
         self._cache_ttl_news = timedelta(minutes=30)
         self._cache_ttl_executive = timedelta(hours=4)
+        # 日限额追踪（镜像 GuosenProvider 模式）
+        self._exhausted: bool = False
+        self._consecutive_quota_errors: int = 0
+        self._last_reset_date = datetime.now().date()
+
+    # ------------------------------------------------------------------
+    # 配额管理
+    # ------------------------------------------------------------------
+
+    def _maybe_reset_quota(self):
+        """跨日自动重置配额状态。"""
+        today = datetime.now().date()
+        if self._last_reset_date != today:
+            self._exhausted = False
+            self._consecutive_quota_errors = 0
+            self._last_reset_date = today
+            logger.info("妙想: 新的一天，配额状态已重置")
+
+    def is_exhausted(self) -> bool:
+        """今日配额是否已耗尽。"""
+        self._maybe_reset_quota()
+        return self._exhausted
+
+    def mark_exhausted(self):
+        """标记今日配额已耗尽，后续调用跳过 mx。"""
+        self._exhausted = True
+        logger.warning("妙想: 日配额已耗尽 (status 113)，今日停止 mx 请求")
+
+    def _check_quota_status(self):
+        """每轮 mx 调用后检查适配器是否报告配额耗尽。
+
+        需连续 2 次出现 status 113 才标记 exhausted，
+        避免偶发错误导致误判（全天黑名单）。
+        """
+        if self._adapter.last_quota_exceeded:
+            self._consecutive_quota_errors += 1
+            if self._consecutive_quota_errors >= 2:
+                self.mark_exhausted()
+        else:
+            self._consecutive_quota_errors = 0
 
     # ------------------------------------------------------------------
     # DataProvider 接口
@@ -118,6 +158,9 @@ class MiaoXiangProvider(DataProvider):
         max_results: int = 10,
     ) -> list[NewsItem]:
         """搜索金融资讯，返回 NewsItem 列表。"""
+        if self.is_exhausted():
+            return []
+
         cache_key = f"news:{query}"
         cached = self._cache_get(cache_key, self._cache_ttl_news)
         if cached is not None:
@@ -125,6 +168,7 @@ class MiaoXiangProvider(DataProvider):
 
         raw = self._adapter.search_news(query)
         if raw is None:
+            self._check_quota_status()
             return []
 
         items = []
@@ -158,6 +202,8 @@ class MiaoXiangProvider(DataProvider):
 
     def get_related_parties(self, symbol: str) -> list[RelatedParty]:
         """获取个股关联方（十大股东/高管/子公司）。"""
+        if self.is_exhausted():
+            return []
         cache_key = f"related:{symbol}"
         cached = self._cache_get(cache_key, self._cache_ttl_fin)
         if cached is not None:
@@ -189,36 +235,48 @@ class MiaoXiangProvider(DataProvider):
 
     def get_executive_trades(self, symbol: str) -> list[ExecutiveTrade]:
         """获取高管增减持数据。"""
+        if self.is_exhausted():
+            return []
         cache_key = f"exec_trades:{symbol}"
         cached = self._cache_get(cache_key, self._cache_ttl_executive)
         if cached is not None:
             return cached
 
         raw = self._adapter.query_executive_trades(symbol)
+        if raw is None:
+            self._check_quota_status()
         result = self._parse_executive_trades_from_raw(raw)
         self._cache_set(cache_key, result)
         return result
 
     def get_executive_profiles(self, symbol: str) -> list[ExecutiveProfile]:
         """获取高管背景履历。"""
+        if self.is_exhausted():
+            return []
         cache_key = f"exec_profiles:{symbol}"
         cached = self._cache_get(cache_key, self._cache_ttl_executive)
         if cached is not None:
             return cached
 
         raw = self._adapter.query_executive_profiles(symbol)
+        if raw is None:
+            self._check_quota_status()
         result = self._parse_executive_profiles_from_raw(raw)
         self._cache_set(cache_key, result)
         return result
 
     def get_board_changes(self, symbol: str) -> list[BoardChange]:
         """获取董监高变动。"""
+        if self.is_exhausted():
+            return []
         cache_key = f"board_changes:{symbol}"
         cached = self._cache_get(cache_key, self._cache_ttl_executive)
         if cached is not None:
             return cached
 
         raw = self._adapter.query_board_changes(symbol)
+        if raw is None:
+            self._check_quota_status()
         result = self._parse_board_changes_from_raw(raw)
         self._cache_set(cache_key, result)
         return result
@@ -229,8 +287,11 @@ class MiaoXiangProvider(DataProvider):
 
     def screen_stocks(self, conditions: str) -> list[ScreeningResult]:
         """按条件筛选股票。委托给 mx-xuangu。"""
+        if self.is_exhausted():
+            return []
         raw = self._adapter.screen_stocks(conditions)
         if raw is None:
+            self._check_quota_status()
             return []
         results = []
         for entry in raw:

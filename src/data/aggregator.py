@@ -72,13 +72,16 @@ class DataAggregator:
     def guosen(self) -> GuosenProvider | None:
         """懒加载国信适配器。无 API Key 时返回 None。
 
-        每次访问重新检查，不永久缓存失败状态。
-        用户后续设置 GS_API_KEY 后自动恢复可用。
+        缓存实例以避免每次访问重新创建（导致 _exhausted 状态丢失，
+        已耗尽的 Key 被反复重试）。用户后续设置 GS_API_KEY 后需
+        重启进程或调用 reset() 恢复。
         """
-        try:
-            return GuosenProvider()
-        except RuntimeError:
-            return None
+        if self._guosen is None:
+            try:
+                self._guosen = GuosenProvider()
+            except RuntimeError:
+                return None
+        return self._guosen
 
     @property
     def akshare(self) -> AKShareProvider:
@@ -388,73 +391,332 @@ class DataAggregator:
         return status
 
     # ------------------------------------------------------------------
-    # V4 新增: 妙想 Skill 代理方法
+    # V5: 妙想 Skill 代理方法（带降级链）
     # ------------------------------------------------------------------
 
     def search_news(self, query: str, max_results: int = 10) -> list[NewsItem]:
-        """搜索金融资讯。mx-search 优先 → 返回空列表（无降级源）。"""
+        """搜索金融资讯。
+
+        降级链: mx-search → 东财个股新闻 → 东财 7×24 快讯 → []
+        """
+        # 1. mx-search (主源)
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.search_news(query, max_results)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.search_news(query, max_results)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-search 失败: %s", e)
+
+        # 2. 东财个股新闻 (降级)
+        try:
+            from .eastmoney_fallback import fetch_em_stock_news
+            raw = fetch_em_stock_news(query, max_results)
+            if raw:
+                items = []
+                for entry in raw:
+                    items.append(NewsItem(
+                        title=entry.get("title", ""),
+                        source=entry.get("source", "eastmoney-news"),
+                        date=entry.get("time", ""),
+                        content=entry.get("content", ""),
+                        url=entry.get("url", ""),
+                        provider="eastmoney-news",
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("东财个股新闻降级失败: %s", e)
+
+        # 3. 东财 7×24 快讯 (更深降级)
+        try:
+            from .eastmoney_fallback import fetch_em_global_news
+            raw = fetch_em_global_news(max_results * 2)
+            if raw:
+                filtered = self._filter_news_by_keyword(raw, query)
+                items = []
+                for entry in filtered[:max_results]:
+                    items.append(NewsItem(
+                        title=entry.get("title", ""),
+                        source=entry.get("source", "eastmoney-global"),
+                        date=entry.get("time", ""),
+                        content=entry.get("summary", ""),
+                        url=entry.get("url", ""),
+                        provider="eastmoney-global",
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("东财全球资讯降级失败: %s", e)
+
         return []
 
     def search_announcements(self, symbol: str) -> list[NewsItem]:
-        """搜索个股公告。"""
+        """搜索个股公告。
+
+        降级链: mx-search → 巨潮 cninfo → []
+        """
+        # 1. mx-search
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.search_announcements(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.search_announcements(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-search 公告失败: %s", e)
+
+        # 2. 巨潮 cninfo (降级)
+        try:
+            from .eastmoney_fallback import fetch_cninfo_announcements
+            raw = fetch_cninfo_announcements(symbol)
+            if raw:
+                items = []
+                for entry in raw:
+                    items.append(NewsItem(
+                        title=entry.get("title", ""),
+                        source="cninfo",
+                        date=entry.get("date", ""),
+                        content=entry.get("type", ""),
+                        url=entry.get("url", ""),
+                        provider="cninfo",
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("巨潮公告降级失败 (%s): %s", symbol, e)
+
         return []
 
     def search_research_reports(self, symbol: str) -> list[NewsItem]:
-        """搜索个股研报。"""
+        """搜索个股研报。
+
+        降级链: mx-search → 东财 reportapi → []
+        """
+        # 1. mx-search
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.search_research_reports(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.search_research_reports(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-search 研报失败: %s", e)
+
+        # 2. 东财 reportapi (降级)
+        try:
+            from .eastmoney_fallback import fetch_em_research_reports
+            raw = fetch_em_research_reports(symbol)
+            if raw:
+                items = []
+                for entry in raw:
+                    content_parts = []
+                    if entry.get("org"):
+                        content_parts.append(f"机构: {entry['org']}")
+                    if entry.get("rating"):
+                        content_parts.append(f"评级: {entry['rating']}")
+                    if entry.get("eps_cur"):
+                        content_parts.append(f"今年EPS: {entry['eps_cur']}")
+                    if entry.get("eps_next"):
+                        content_parts.append(f"明年EPS: {entry['eps_next']}")
+                    items.append(NewsItem(
+                        title=entry.get("title", ""),
+                        source=entry.get("org", "eastmoney-report"),
+                        date=entry.get("date", ""),
+                        content="; ".join(content_parts),
+                        url=f"https://pdf.dfcfw.com/pdf/H3_{entry.get('info_code', '')}_1.pdf",
+                        provider="eastmoney-report",
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("东财研报降级失败 (%s): %s", symbol, e)
+
         return []
 
     def get_related_parties(self, symbol: str) -> list[RelatedParty]:
-        """获取个股关联方。mx-data 独有能力，无降级源。"""
+        """获取个股关联方。
+
+        降级链: mx-data → [DATA_GAP]（无可用的免费降级源）
+        """
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.get_related_parties(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.get_related_parties(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-data 关联方失败: %s", e)
+
+        # 无免费降级源 — 关联关系需要结构化股权数据库
+        logger.info("[DATA_GAP] get_related_parties(%s): 妙想不可用，无可用的免费降级源", symbol)
         return []
 
     def get_executive_trades(self, symbol: str) -> list[ExecutiveTrade]:
-        """获取高管增减持。mx-data 独有能力，无降级源。"""
+        """获取高管增减持。
+
+        降级链: mx-data → 东财 datacenter RPT_EXECUTIVE_TRADE → []
+        """
+        # 1. mx-data
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.get_executive_trades(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.get_executive_trades(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-data 高管交易失败: %s", e)
+
+        # 2. 东财 datacenter (降级)
+        try:
+            from .eastmoney_fallback import fetch_em_executive_trades
+            raw = fetch_em_executive_trades(symbol)
+            if raw:
+                items = []
+                for entry in raw:
+                    items.append(ExecutiveTrade(
+                        executive_name=entry.get("name", ""),
+                        position=entry.get("position", ""),
+                        trade_type=entry.get("trade_type", "buy"),
+                        trade_date=entry.get("date", ""),
+                        volume=entry.get("volume"),
+                        price=entry.get("price"),
+                        total_value=entry.get("total_value"),
+                        change_after_trade_pct=entry.get("change_pct"),
+                        provider="eastmoney",
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("东财高管交易降级失败 (%s): %s", symbol, e)
+
         return []
 
     def get_executive_profiles(self, symbol: str) -> list[ExecutiveProfile]:
-        """获取高管背景履历。mx-data 独有能力，无降级源。"""
+        """获取高管背景履历。
+
+        降级链: mx-data → [DATA_GAP]（无可用的免费降级源）
+        """
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.get_executive_profiles(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.get_executive_profiles(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-data 高管履历失败: %s", e)
+
+        logger.info("[DATA_GAP] get_executive_profiles(%s): 妙想不可用，无可用的免费降级源", symbol)
         return []
 
     def get_board_changes(self, symbol: str) -> list[BoardChange]:
-        """获取董监高变动。mx-data 独有能力，无降级源。"""
+        """获取董监高变动。
+
+        降级链: mx-data → 巨潮 cninfo 公告搜索 → []
+        """
+        # 1. mx-data
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.get_board_changes(symbol)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.get_board_changes(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-data 董事会变更失败: %s", e)
+
+        # 2. 巨潮 cninfo (降级) — 搜索董监高相关公告
+        try:
+            from .eastmoney_fallback import fetch_cninfo_announcements
+            # 搜索董事/监事/高管变动公告
+            raw = fetch_cninfo_announcements(symbol)
+            if raw:
+                items = []
+                board_keywords = ["董事", "监事", "高管", "总裁", "副总裁", "总经理",
+                                  "董秘", "辞职", "聘任", "选举", "任命", "变更"]
+                for entry in raw:
+                    title = entry.get("title", "")
+                    if any(kw in title for kw in board_keywords):
+                        items.append(BoardChange(
+                            person_name="",  # 公告标题通常不包含具体人名
+                            old_position="",
+                            new_position="",
+                            change_date=entry.get("date", ""),
+                            reason=title[:200],
+                            provider="cninfo",
+                        ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("巨潮董事会变更降级失败 (%s): %s", symbol, e)
+
         return []
 
     def screen_stocks(self, conditions: str) -> list[ScreeningResult]:
-        """条件选股。mx-xuangu 优先 → AKShare scan_all_stocks() 降级（客户端过滤）。"""
+        """条件选股。
+
+        降级链: mx-xuangu → AKShare 全扫描 + 客户端字段过滤 → []
+        """
+        # 1. mx-xuangu
         mx = self.miaoxiang
-        if mx is not None:
-            results = mx.screen_stocks(conditions)
-            if results:
-                return results
-        # AKShare 降级：全市场扫描 + 客户端条件过滤（简化实现）
+        if mx is not None and not mx.is_exhausted():
+            try:
+                results = mx.screen_stocks(conditions)
+                if results:
+                    return results
+            except Exception as e:
+                logger.debug("mx-xuangu 失败: %s", e)
+
+        # 2. AKShare 全市场扫描 + 客户端条件过滤
+        try:
+            from .akshare import AKShareProvider
+            ak = AKShareProvider()
+            if ak.health_check():
+                all_quotes = ak.get_all_quotes()
+                if all_quotes:
+                    filtered = self._apply_client_filter(all_quotes, conditions)
+                    if filtered:
+                        return filtered
+        except Exception as e:
+            logger.debug("AKShare 选股降级失败: %s", e)
+
         return []
 
     def screen_by_industry(self, industry: str) -> list[ScreeningResult]:
-        """按行业筛选。"""
+        """按行业筛选。
+
+        降级链: mx-xuangu → 东财 push2 行业成分股 → []
+        """
+        # 1. mx-xuangu
         mx = self.miaoxiang
-        if mx is not None:
-            return mx.screen_by_industry(industry)
+        if mx is not None and not mx.is_exhausted():
+            try:
+                result = mx.screen_by_industry(industry)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug("mx-xuangu 行业筛选失败: %s", e)
+
+        # 2. 东财 push2 行业成分股 (降级)
+        try:
+            from .eastmoney_fallback import fetch_em_industry_stocks
+            raw = fetch_em_industry_stocks(industry)
+            if raw:
+                items = []
+                for entry in raw:
+                    items.append(ScreeningResult(
+                        symbol=entry.get("code", ""),
+                        name=entry.get("name", ""),
+                        market="A股",
+                        price=_safe_float_single(entry.get("price")),
+                        change_pct=_safe_float_single(entry.get("change_pct")),
+                        pe_ttm=_safe_float_single(entry.get("pe")),
+                    ))
+                if items:
+                    return items
+        except Exception as e:
+            logger.debug("东财行业成分股降级失败 (%s): %s", industry, e)
+
         return []
 
     def get_cross_validated_quote(self, symbol: str, market: str = "SH") -> tuple[Optional[Quote], bool, bool]:
@@ -587,8 +849,16 @@ class DataAggregator:
             self._cache_set(cache_key, result)
             return result
         except Exception:
-            logger = __import__("logging").getLogger(__name__)
-            logger.debug("Industry PE/PB fetch failed for %s", symbol, exc_info=True)
+            logger.debug("Industry PE/PB (AKShare) fetch failed for %s", symbol, exc_info=True)
+            # 降级: 东财 push2
+            try:
+                from .eastmoney_fallback import fetch_em_industry_pe_pb
+                em_result = fetch_em_industry_pe_pb()
+                if em_result[0] is not None or em_result[1] is not None:
+                    self._cache_set(cache_key, em_result)
+                    return em_result
+            except Exception as e2:
+                logger.debug("Industry PE/PB (EastMoney) fallback failed: %s", e2)
             result = (None, None)
             self._cache_set(cache_key, result)
             return result
@@ -636,8 +906,24 @@ class DataAggregator:
             self._cache_set(cache_key, result)
             return result
         except Exception:
-            logger = __import__("logging").getLogger(__name__)
-            logger.debug("Dividend data fetch failed for %s", symbol, exc_info=True)
+            logger.debug("Dividend data (AKShare) fetch failed for %s", symbol, exc_info=True)
+            # 降级: 东财 datacenter 分红
+            try:
+                from .eastmoney_fallback import fetch_em_dividend
+                raw = fetch_em_dividend(symbol)
+                if raw:
+                    # 取最近一期每股派息作为股息率估算
+                    latest = raw[0]
+                    bonus = latest.get("bonus_rmb", 0)
+                    if bonus and bonus > 0:
+                        # 需要配合当前股价算股息率
+                        quote = self.get_quote(symbol)
+                        if quote and quote.price:
+                            result = round(float(bonus) / float(quote.price) * 100, 2)
+                            self._cache_set(cache_key, result)
+                            return result
+            except Exception as e2:
+                logger.debug("Dividend (EastMoney) fallback failed: %s", e2)
             self._cache_set(cache_key, None)
             return None
 
@@ -665,6 +951,137 @@ class DataAggregator:
         growth = round((latest.net_profit - prior.net_profit) / abs(prior.net_profit) * 100, 2)
         self._cache_set(cache_key, growth)
         return growth
+
+    # ------------------------------------------------------------------
+    # 降级辅助方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _safe_float_single(v) -> Optional[float]:
+        """安全转换单个值为 float。"""
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _filter_news_by_keyword(raw_news: list[dict], query: str) -> list[dict]:
+        """从快讯列表中按关键词过滤匹配条目。"""
+        keywords = [w.strip() for w in query.split() if len(w.strip()) >= 2]
+        if not keywords:
+            return raw_news[:10]
+        filtered = []
+        for entry in raw_news:
+            text = entry.get("title", "") + " " + entry.get("summary", "")
+            if any(kw in text for kw in keywords):
+                filtered.append(entry)
+        return filtered[:20] if filtered else raw_news[:5]
+
+    @staticmethod
+    def _apply_client_filter(
+        quotes: list, conditions: str
+    ) -> list:
+        """客户端条件过滤（AKShare 全扫描降级）。
+
+        支持的条件格式:
+          - pe<30, pe_ttm<15, 市盈率<20
+          - 市值>100亿, mcap>10000000000
+          - 涨跌幅>3, change_pct>5
+          - pb<2, 市净率<3
+        """
+        from .schema import ScreeningResult
+
+        conds = conditions.lower().replace(" ", "")
+        filtered = []
+
+        for q in quotes:
+            # 提取字段值 (Quote 是 dataclass 或 dict)
+            if isinstance(q, dict):
+                name = q.get("name", "")
+                code = q.get("symbol", "")
+                price = q.get("price")
+                pe = q.get("pe_ttm")
+                pb = q.get("pb")
+                mcap = q.get("mcap_yi")
+                change_pct = q.get("change_pct")
+            else:
+                name = getattr(q, "name", "")
+                code = getattr(q, "symbol", "")
+                price = getattr(q, "price", None)
+                pe = getattr(q, "pe_ttm", None)
+                pb = getattr(q, "pb", None)
+                mcap_val = getattr(q, "mcap_yi", None)
+                # mcap_yi 单位是亿，转换为元的数量级进行比较
+                mcap = mcap_val
+                change_pct = getattr(q, "change_pct", None)
+
+            # 简单条件匹配
+            match = True
+
+            # PE 条件
+            import re as _re
+            pe_match = _re.search(r"pe[_a-z]*?<(\d+\.?\d*)", conds)
+            if pe_match and pe is not None:
+                try:
+                    if float(pe) >= float(pe_match.group(1)):
+                        match = False
+                except (ValueError, TypeError):
+                    pass
+
+            pe_gt = _re.search(r"pe[_a-z]*?>(\d+\.?\d*)", conds)
+            if pe_gt and pe is not None:
+                try:
+                    if float(pe) <= float(pe_gt.group(1)):
+                        match = False
+                except (ValueError, TypeError):
+                    pass
+
+            # PB 条件
+            pb_match = _re.search(r"pb[_a-z]*?<(\d+\.?\d*)", conds)
+            if pb_match and pb is not None:
+                try:
+                    if float(pb) >= float(pb_match.group(1)):
+                        match = False
+                except (ValueError, TypeError):
+                    pass
+
+            # 市值条件 (亿)
+            mcap_gt = _re.search(r"(?:市值|mcap)[_a-z]*?>(\d+\.?\d*)", conds)
+            if mcap_gt and mcap is not None:
+                try:
+                    target = float(mcap_gt.group(1))
+                    # mcap 单位是亿
+                    if float(mcap) <= target:
+                        match = False
+                except (ValueError, TypeError):
+                    pass
+
+            # 涨跌幅条件
+            chg_match = _re.search(r"(?:涨跌幅|change_pct|涨幅)[_a-z]*?>(\d+\.?\d*)", conds)
+            if chg_match and change_pct is not None:
+                try:
+                    if float(change_pct) <= float(chg_match.group(1)):
+                        match = False
+                except (ValueError, TypeError):
+                    pass
+
+            if match:
+                filtered.append(ScreeningResult(
+                    symbol=code,
+                    name=name,
+                    market="A股",
+                    price=float(price) if price else None,
+                    change_pct=float(change_pct) if change_pct is not None else None,
+                    pe_ttm=float(pe) if pe else None,
+                    provider="akshare-screen",
+                ))
+
+            if len(filtered) >= 50:
+                break
+
+        return filtered
 
     # ------------------------------------------------------------------
     # Cache
