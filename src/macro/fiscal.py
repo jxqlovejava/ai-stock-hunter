@@ -253,31 +253,9 @@ class FiscalAnalyzer:
         if cached is not None:
             return cached
 
-        try:
-            import akshare as ak
-
-            # Try macro China fiscal data
-            df = ak.macro_china_fiscal_growth()
-            if df is not None and len(df) > 0:
-                # Compute implied deficit from revenue - expenditure gap
-                rev_col = None
-                exp_col = None
-                for col in df.columns:
-                    col_lower = str(col).lower()
-                    if "收入" in str(col) and "同比" in str(col):
-                        rev_col = col
-                    if "支出" in str(col) and "同比" in str(col):
-                        exp_col = col
-                if rev_col and exp_col:
-                    rev = float(df[rev_col].iloc[-1])
-                    exp = float(df[exp_col].iloc[-1])
-                    # Deficit ratio proxy: expenditure growth - revenue growth as % of GDP
-                    # Use the gap as a directional signal
-                    deficit_proxy = exp - rev + 3.0  # baseline 3% + gap
-                    self._cache_set(cache_key, deficit_proxy)
-                    return deficit_proxy
-        except Exception as e:
-            logger.warning("AKShare fiscal growth fetch failed: %s", e)
+        # Note: AKShare removed macro_china_fiscal_growth.
+        # Only macro_china_czsr (fiscal revenue) exists, no expenditure function.
+        # Fall through to GDP-based estimate.
 
         # Fallback: try GDP-based estimate
         try:
@@ -308,7 +286,7 @@ class FiscalAnalyzer:
             import akshare as ak
 
             # Try fixed asset investment data
-            df = ak.macro_china_fixed_asset_investment()
+            df = ak.macro_china_gdzctz()
             if df is not None and len(df) > 0:
                 for col in df.columns:
                     col_str = str(col)
@@ -324,7 +302,7 @@ class FiscalAnalyzer:
                         self._cache_set(cache_key, val)
                         return val
         except Exception as e:
-            logger.warning("AKShare fixed asset investment fetch failed: %s", e)
+            logger.warning("AKShare gdzctz fetch failed: %s", e)
 
         val = self._query_guosen("基建投资增速 基础设施投资 同比")
         if val is not None:
@@ -377,15 +355,15 @@ class FiscalAnalyzer:
         try:
             import akshare as ak
 
-            df = ak.macro_china_fiscal_growth()
+            df = ak.macro_china_czsr()
             if df is not None and len(df) > 0:
-                for col in df.columns:
-                    if "收入" in str(col) and "同比" in str(col):
-                        val = float(df[col].iloc[-1])
-                        self._cache_set(cache_key, val)
-                        return val
+                # Column is '当月-同比增长'
+                if "当月-同比增长" in df.columns:
+                    val = float(df["当月-同比增长"].iloc[-1])
+                    self._cache_set(cache_key, val)
+                    return val
         except Exception as e:
-            logger.warning("AKShare fiscal revenue fetch failed: %s", e)
+            logger.warning("AKShare czsr revenue fetch failed: %s", e)
 
         val = self._query_guosen("财政收入 同比增速")
         if val is not None:
@@ -399,18 +377,8 @@ class FiscalAnalyzer:
         if cached is not None:
             return cached
 
-        try:
-            import akshare as ak
-
-            df = ak.macro_china_fiscal_growth()
-            if df is not None and len(df) > 0:
-                for col in df.columns:
-                    if "支出" in str(col) and "同比" in str(col):
-                        val = float(df[col].iloc[-1])
-                        self._cache_set(cache_key, val)
-                        return val
-        except Exception as e:
-            logger.warning("AKShare fiscal expenditure fetch failed: %s", e)
+        # Note: No AKShare fiscal expenditure function exists (czsr = revenue only).
+        # Fall through to GuosenProvider query.
 
         val = self._query_guosen("财政支出 同比增速")
         if val is not None:
