@@ -69,11 +69,21 @@ class GuosenProvider(DataProvider):
 
         self._active_idx: int = 0
         self._exhausted: set[int] = set()
+        self._last_reset_date = datetime.now().date()
         self._session = requests.Session()
         self._session.mount("https://", _LegacySSLAdapter())
         logger.info("国信: %d 个 Key 已加载", len(self._api_keys))
 
     # ── Key 管理 ──────────────────────────────────────────────
+
+    def _maybe_reset_quota(self):
+        """跨日自动重置 Key 耗尽状态。"""
+        today = datetime.now().date()
+        if self._last_reset_date != today:
+            self._exhausted.clear()
+            self._active_idx = 0
+            self._last_reset_date = today
+            logger.info("国信: 新的一天，%d 个 Key 配额已重置", len(self._api_keys))
 
     @property
     def _active_key(self) -> str:
@@ -94,6 +104,7 @@ class GuosenProvider(DataProvider):
 
     def _switch_key(self) -> bool:
         """日限额耗尽时切换 Key。返回 False=全部耗尽。"""
+        self._maybe_reset_quota()
         self._exhausted.add(self._active_idx)
         logger.warning("国信 Key #%d 日限额耗尽，切换", self._active_idx + 1)
         for i in range(len(self._api_keys)):
