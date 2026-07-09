@@ -613,7 +613,14 @@ def format_analysis_result(result: OrchestratorResult) -> str:
 
     pls = result.position_limits_summary
     if pls:
-        lines.append(f"  本金{pls.get('total_capital',0)/1e4:.0f}万  "
+        cap = pls.get('total_capital', 0)
+        if cap == 500000.0 and pls.get('_capital_is_default', True):
+            cap_str = "⚠️未设置"
+        elif cap >= 1e8:
+            cap_str = f"{cap/1e8:.1f}亿"
+        else:
+            cap_str = f"{cap/1e4:.0f}万"
+        lines.append(f"  本金{cap_str}  "
                      f"单票≤{pls.get('max_single_pct',0):.0%}  行业≤{pls.get('max_sector_pct',0):.0%}  "
                      f"总仓位≤{pls.get('max_total_exposure',0):.0%}")
 

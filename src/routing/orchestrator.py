@@ -311,6 +311,7 @@ class Orchestrator:
                 limits = investor.position_limits
                 result.position_limits_summary = {
                     "total_capital": limits.total_capital,
+                    "_capital_is_default": limits.total_capital == 500000.0,
                     "max_single_pct": limits.max_single_pct,
                     "max_sector_pct": limits.max_sector_pct,
                     "max_total_exposure": limits.max_total_exposure,
@@ -343,6 +344,9 @@ class Orchestrator:
         # r014b 不受影响（不依赖新闻）；r014 由后续 diagnosis.surge_risk 兜底。
         ctx["has_major_positive_news"] = False
 
+        # 注入 r032/r033/r034 财务质量军规所需上下文
+        self._inject_financial_doctrine_ctx(symbol, market, ctx)
+
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             result.passed = False
@@ -374,13 +378,15 @@ class Orchestrator:
             "warn_count": len(doctrine_result.warnings),
             "info_count": len(doctrine_result.infos),
             "rules": all_rules,
+            # 携带实际财务数据供显示
+            "financial_data": _build_financial_display_data(ctx),
         }
         bc = len(doctrine_result.blocked_by)
         wc = len(doctrine_result.warnings)
         step_done("✅", f"通过 {len(all_rules)}/{len(all_rules)}  阻断:{bc} 警告:{wc}")
         print_doctrine(result.doctrine_result)
         # 初始化终端 Workflow 清单
-        _wf = ["🏥军规✅", "🚪准入", "🌐增强上下文", "📊多维诊断", "🎭辩论/Munger", "⚖️裁决", "💰调度/🛡️风控", "⏱️T+0", "📊溯源"]
+        _wf = ["🏥军规✅", "🚪准入", "🌐增强上下文", "📊多维诊断", "🎭辩论/Munger", "⏱️T+0", "⚖️裁决", "💰调度/🛡️风控", "📊溯源"]
         print(f"\n  📋 分析管道: {' → '.join(_wf)}")
 
         # Step 2: 准入检查 — 尝试从数据源获取实际上市日期
@@ -930,12 +936,36 @@ class Orchestrator:
                 confidence=0.65,
             ))
 
+        # Phase 9: T+0 日内时机分析（中长期 Alpha 搜索可跳过，不阻塞主流程）
+        # 放在综合裁决之前，使日内时机信号能影响裁决判断
+        if not skip_t0:
+            step_start(7, "T+0 日内时机分析")
+            try:
+                t0 = self.run_t0(symbol, market, name)
+                if t0 is not None:
+                    result.t0_result = t0
+                    result.t0_available = True
+                    t0_score = t0.get("score", 0)
+                    t0_action = t0.get("action", "hold")
+                    step_done("✅", f"得分{t0_score}  建议{t0_action}")
+                    print_t0(t0)
+                else:
+                    step_done("⚠️", "数据不可用")
+            except Exception as e:
+                logger.debug("T+0 analysis failed for %s: %s", symbol, e)
+                step_done("⚠️", f"失败: {e}")
+        else:
+            step_start(7, "T+0 日内时机分析")
+            step_done("⏭️", "跳过 (Alpha搜索模式)")
+
+        _wf[5] = "⏱️T+0✅"
+
         # ---- Phase 7 & 8: 行业+公司深度研究 (仅 mode="full") ----
         if mode in ("full", "selection", "deep"):
             self._run_deep_research(symbol, name, result, report, quote_dict, fin_list)
 
         # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
-        step_start(7, "质量审查 + 综合裁决 + 情景估值")
+        step_start(8, "质量审查 + 综合裁决 + 情景估值")
         quality_report = self.quality_checker.check(report)
         if not quality_report.passed:
             result.warnings.extend(quality_report.blocking_flags)
@@ -1067,11 +1097,11 @@ class Orchestrator:
         if quality_report and not quality_report.passed:
             verdict_detail += f"  ⚠️质量{quality_report.overall_score:.0f}"
         step_done("✅", verdict_detail)
-        _wf[5] = "⚖️裁决✅"
+        _wf[6] = "⚖️裁决✅"
         print_verdict(verdict, result.enforced_verdict, result.scenario_valuation)
 
         # Step 6: 仓位调度
-        step_start(8, "仓位调度 + 风控执行")
+        step_start(9, "仓位调度 + 风控执行")
         effective_macro_cap = 0.80 * risk_mult
         # Phase 11: 使用宏观象限调整后的仓位上限
         if regime_adjustments is not None:
@@ -1199,7 +1229,7 @@ class Orchestrator:
         if risk.violations:
             sizing_detail += f"  ⚠️违规{len(risk.violations)}"
         step_done("✅" if risk.passed else "⚠️", sizing_detail)
-        _wf[6] = "💰调度/🛡️风控✅"
+        _wf[7] = "💰调度/🛡️风控✅"
         print_positioning(signal, result.sizing_detail, result.position_limits_summary)
         print_risk_control(risk, result.position_limits_summary)
 
@@ -1223,29 +1253,6 @@ class Orchestrator:
                 # 开仓/平仓由用户在真实交易后通过场景五同步到 data/positions.json。
             except Exception as e:
                 logger.debug("Phase 12 position state update failed for %s: %s", symbol, e)
-
-        # Phase 9: T+0 日内时机分析（中长期 Alpha 搜索可跳过，不阻塞主流程）
-        if not skip_t0:
-            step_start(9, "T+0 日内时机分析")
-            try:
-                t0 = self.run_t0(symbol, market, name)
-                if t0 is not None:
-                    result.t0_result = t0
-                    result.t0_available = True
-                    t0_score = t0.get("score", 0)
-                    t0_action = t0.get("action", "hold")
-                    step_done("✅", f"得分{t0_score}  建议{t0_action}")
-                    print_t0(t0)
-                else:
-                    step_done("⚠️", "数据不可用")
-            except Exception as e:
-                logger.debug("T+0 analysis failed for %s: %s", symbol, e)
-                step_done("⚠️", f"失败: {e}")
-        else:
-            step_start(9, "T+0 日内时机分析")
-            step_done("⏭️", "跳过 (Alpha搜索模式)")
-
-        _wf[7] = "⏱️T+0✅"
         step_start(10, "数据溯源 + 最终输出")
         step_done("✅", f"来源{len(report.source_citations)}条")
         _wf[8] = "📊溯源✅"
@@ -2701,6 +2708,66 @@ class Orchestrator:
         return []
 
     @staticmethod
+    def _inject_financial_doctrine_ctx(symbol: str, market: str, ctx: dict) -> None:
+        """注入 r032/r033/r034 财务质量军规所需上下文。
+
+        从财务数据中提取近 3 年 ROE、累计经营现金流/净利润/分红。
+        数据不足时保留空列表/0.0，由 checker 按"数据不足触发警告"处理。
+        """
+        try:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            fins = agg.get_financials(symbol, market, count=12)
+            if not fins:
+                return
+
+            # 按年份分组，取每年最新一期年报数据
+            from collections import defaultdict
+            by_year: dict[int, dict] = defaultdict(lambda: {"roe": None, "ocf": 0.0, "np": 0.0})
+
+            for f in fins:
+                period = getattr(f, "report_period", "")
+                if not period or len(period) < 4:
+                    continue
+                try:
+                    year = int(period[:4])
+                except ValueError:
+                    continue
+                # Q4 年报优先覆盖任意期数据
+                is_q4 = "Q4" in period or "12-31" in str(getattr(f, "report_date", ""))
+                if is_q4 or by_year[year]["roe"] is None:
+                    if getattr(f, "roe", None) is not None:
+                        by_year[year]["roe"] = f.roe
+                # 累计经营现金流和净利润（各期加总）
+                if getattr(f, "operating_cash_flow", None) is not None:
+                    by_year[year]["ocf"] += f.operating_cash_flow
+                if getattr(f, "net_profit", None) is not None:
+                    by_year[year]["np"] += f.net_profit
+
+            # 按年份排序，取最近 3 年
+            sorted_years = sorted(by_year.keys())[-3:]
+            roe_history = [by_year[y]["roe"] for y in sorted_years if by_year[y]["roe"] is not None]
+            ocf_3y = sum(by_year[y]["ocf"] for y in sorted_years)
+            np_3y = sum(by_year[y]["np"] for y in sorted_years)
+
+            ctx["roe_history"] = roe_history
+            ctx["operating_cash_flow_3y"] = ocf_3y
+            ctx["net_profit_3y"] = np_3y
+
+            # 尝试获取分红数据（妙想不可用时跳过）
+            try:
+                mx = agg.miaoxiang
+                if mx is not None and not mx.is_exhausted():
+                    dividend_3y = mx.get_dividend_3y(symbol)
+                    if dividend_3y is not None:
+                        ctx["dividend_3y"] = dividend_3y
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug("Failed to inject financial doctrine ctx for %s: %s", symbol, e)
+
+    @staticmethod
     def _get_related_parties(symbol: str) -> list[dict]:
         """从 mx-data 获取个股关联方信息。"""
         try:
@@ -2714,20 +2781,42 @@ class Orchestrator:
 
     @staticmethod
     def _get_executive_context(symbol: str) -> dict:
-        """从 mx-data 获取个股高管数据上下文（增减持/履历/变动）。"""
+        """获取个股高管数据上下文（增减持/履历/变动）。
+
+        通过 DataAggregator 聚合器获取，走完整降级链：
+        - trades:  mx-data → 东财 datacenter
+        - profiles: mx-data → [DATA_GAP]（暂无免费降级源）
+        - changes:  mx-data → 巨潮 cninfo 公告搜索
+        """
         ctx = {"trades": [], "profiles": [], "changes": []}
         try:
             from src.data.aggregator import DataAggregator
             agg = DataAggregator()
-            mx = agg.miaoxiang
-            if mx is None:
-                return ctx
-            ctx["trades"] = [t.model_dump() for t in mx.get_executive_trades(symbol)]
-            ctx["profiles"] = [p.model_dump() for p in mx.get_executive_profiles(symbol)]
-            ctx["changes"] = [c.model_dump() for c in mx.get_board_changes(symbol)]
+            ctx["trades"] = [t.model_dump() for t in agg.get_executive_trades(symbol)]
+            ctx["profiles"] = [p.model_dump() for p in agg.get_executive_profiles(symbol)]
+            ctx["changes"] = [c.model_dump() for c in agg.get_board_changes(symbol)]
         except Exception as e:
             logger.debug("Executive context unavailable for %s: %s", symbol, e)
         return ctx
+
+
+def _build_financial_display_data(ctx: dict) -> dict:
+    """从 doctrine ctx 中提取财务数据用于军规输出展示。"""
+    data: dict = {}
+    roe_history = ctx.get("roe_history", [])
+    if roe_history and len(roe_history) >= 3:
+        data["roe_history"] = roe_history
+    ocf = ctx.get("operating_cash_flow_3y", 0.0)
+    np_ = ctx.get("net_profit_3y", 0.0)
+    if np_ > 0:
+        data["ocf_np_ratio"] = ocf / np_
+    dividend = ctx.get("dividend_3y", 0.0) if ctx.get("dividend_3y") else None
+    if np_ > 0 and dividend is not None:
+        data["dividend_payout_ratio"] = dividend / np_ if np_ > 0 else None
+    # 标记财务数据是否全部缺失
+    if (not roe_history or len(roe_history) < 3) and np_ <= 0:
+        data["_financial_data_missing"] = True
+    return data
 
 
 def _detect_major_positive_news(news_context: list | None) -> bool:
@@ -2760,6 +2849,7 @@ def _perspective_to_dict(ps) -> dict:
         "evidence": ps.evidence[:5],
         "unique_insight": ps.unique_insight,
         "questions": ps.questions_to_ask[:3],
+        "qa_pairs": getattr(ps, "qa_pairs", [])[:3],  # 问题+回答对
     }
 
 

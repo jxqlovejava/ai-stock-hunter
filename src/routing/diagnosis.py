@@ -670,7 +670,8 @@ class DiagnosisEngine:
                 score += 5
         else:
             score -= 5
-            risks.append("高管背景信息缺失")
+            # 数据源不可用时仅记录提醒，不作为主要风险
+            # 真正的风险是"有数据但发现有问题的内容"
 
         return {"score": max(0.0, min(100.0, score)), "risks": risks}
 

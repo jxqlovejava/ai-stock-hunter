@@ -91,9 +91,25 @@ def print_doctrine(doctrine_result: dict | None) -> None:
     # 仅输出有问题的规则详情
     problem_rules = [r for r in rules if r.get("status") in ("blocked", "warn")]
     if problem_rules:
+        fin_data = doctrine_result.get("financial_data", {})
         print(f"\n  ⚠️ 需关注 ({len(problem_rules)}条):")
         for r in problem_rules:
-            print(f"    [{r['id']}] {r['name']}: {r['description']}")
+            detail = r['description']
+            rid = r['id']
+            # 注入实际财务数据
+            if rid == "r032" and fin_data.get("roe_history"):
+                roes = fin_data["roe_history"]
+                roe_str = " / ".join(f"{v:.1f}%" for v in roes)
+                detail = f"{detail} (近3年ROE: {roe_str})"
+            elif rid == "r033" and fin_data.get("ocf_np_ratio") is not None:
+                ratio = fin_data["ocf_np_ratio"]
+                detail = f"{detail} (累计OCF/NP={ratio:.2f})"
+            elif rid == "r034" and fin_data.get("dividend_payout_ratio") is not None:
+                ratio = fin_data["dividend_payout_ratio"]
+                detail = f"{detail} (累计分红/NP={ratio:.1%})"
+            elif rid in ("r032", "r033", "r034") and fin_data.get("_financial_data_missing"):
+                detail = f"{detail} [DATA_GAP: 财务数据不足]"
+            print(f"    [{rid}] {r['name']}: {detail}")
 
 
 # ── Step 2: 准入检查 & 市场全景 ──────────────────────────────────────
@@ -254,8 +270,15 @@ def print_debate(debate_perspectives: dict | None, debate_result: dict | None) -
             print(f"  🔴 {b}")
         if p.get("key_concern"):
             print(f"  ⚠️ {p['key_concern']}")
-        for q in p.get("questions_to_ask", [])[:2]:
-            print(f"  ❓ {q}")
+        # 显示问题+回答（优先使用 qa_pairs）
+        qa_pairs = p.get("qa_pairs", [])
+        if qa_pairs:
+            for qa in qa_pairs[:3]:
+                print(f"  ❓ {qa['q']}")
+                print(f"  💬 ↳ {qa['a']}")
+        else:
+            for q in p.get("questions_to_ask", [])[:2]:
+                print(f"  ❓ {q}")
         print()
 
 
@@ -404,7 +427,14 @@ def print_positioning(
 
     pls = position_limits_summary
     if pls:
-        print(f"  本金{pls.get('total_capital',0)/1e4:.0f}万  单票≤{pls.get('max_single_pct',0):.0%}  行业≤{pls.get('max_sector_pct',0):.0%}  总仓位≤{pls.get('max_total_exposure',0):.0%}")
+        cap = pls.get('total_capital', 0)
+        if cap == 500000.0 and pls.get('_capital_is_default', True):
+            cap_str = "⚠️未设置"
+        elif cap >= 1e8:
+            cap_str = f"{cap/1e8:.1f}亿"
+        else:
+            cap_str = f"{cap/1e4:.0f}万"
+        print(f"  本金{cap_str}  单票≤{pls.get('max_single_pct',0):.0%}  行业≤{pls.get('max_sector_pct',0):.0%}  总仓位≤{pls.get('max_total_exposure',0):.0%}")
 
     if signal:
         s = signal
