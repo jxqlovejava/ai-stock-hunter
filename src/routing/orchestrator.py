@@ -467,6 +467,7 @@ class Orchestrator:
             earnings_growth=earnings_growth,
             dividend_yield=dividend_yield,
             roe=getattr(fundamental_metrics, "roe", None) if fundamental_metrics else None,
+            cycle_analysis=cycle_analysis,
         )
 
         # ---- V4 妙想增强: 资讯上下文 + 关联关系 ----
@@ -2517,8 +2518,9 @@ class Orchestrator:
         earnings_growth: Optional[float] = None,
         dividend_yield: Optional[float] = None,
         roe: Optional[float] = None,
+        cycle_analysis: Optional[object] = None,
     ):
-        """执行多维估值分析。"""
+        """执行多维估值分析，可选注入周期上下文进行PE周期调整。"""
         try:
             from src.valuation.analyzer import ValuationAnalyzer
             analyzer = ValuationAnalyzer()
@@ -2535,6 +2537,7 @@ class Orchestrator:
                 dividend_yield=dividend_yield,
                 industry_pe_median=industry_pe,
                 industry_pb_median=industry_pb,
+                cycle_analysis=cycle_analysis,
             )
         except Exception as e:
             logger.debug("Valuation analysis unavailable for %s: %s", symbol, e)

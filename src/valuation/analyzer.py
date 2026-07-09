@@ -93,6 +93,7 @@ class ValuationAnalyzer:
         dividend_yield: Optional[float] = None,
         industry_pe_median: Optional[float] = None,
         industry_pb_median: Optional[float] = None,
+        cycle_analysis: Optional[object] = None,  # CycleAnalysis from src.cycle
     ) -> ValuationResult:
         """执行多维估值分析。
 
@@ -167,7 +168,54 @@ class ValuationAnalyzer:
             + div_score * w.dividend_yield
         )
 
-        phase = self._classify_phase(composite, pe_percentile, pb, pb_percentile)
+        # --- 周期-PE 调整: A 股周期逻辑下 PE 含义随周期阶段变化 ---
+        transition_signals: list[str] = []
+        cycle_adjusted = False
+        cycle_adjustment_delta = 0.0
+
+        if cycle_analysis is not None:
+            phase_raw = getattr(cycle_analysis, "phase", None)
+            if hasattr(phase_raw, "value"):
+                cycle_phase_str = phase_raw.value
+            else:
+                cycle_phase_str = str(phase_raw) if phase_raw else ""
+
+            if cycle_phase_str in ("recovery", "trough") and pe_ttm is not None and pe_ttm > 0:
+                # 周期底部: 高 PE 因盈利被压低 → 可能是买入机会
+                if pe_ttm > 25:
+                    boost = min(35.0, 15.0 + (pe_ttm - 25) * 0.4)
+                    delta = boost * w.pe_percentile
+                    composite += delta
+                    cycle_adjusted = True
+                    cycle_adjustment_delta = delta
+                    transition_signals.append(
+                        f"cycle_pe_boost: {cycle_phase_str}期PE={pe_ttm:.1f}x，"
+                        f"盈利底部PE虚高属正常，周期向上拐点+{delta:.0f}分"
+                    )
+            elif cycle_phase_str == "peak" and pe_ttm is not None and 0 < pe_ttm < 15:
+                # 周期顶部: 低 PE 可能是价值陷阱（盈利峰值）
+                penalty = 25.0
+                delta = -penalty * w.pe_percentile
+                composite += delta
+                cycle_adjusted = True
+                cycle_adjustment_delta = delta
+                transition_signals.append(
+                    f"cycle_pe_penalty: peak期PE={pe_ttm:.1f}x，"
+                    f"盈利峰值低PE警惕均值回归-{penalty * w.pe_percentile:.0f}分"
+                )
+            elif cycle_phase_str == "contraction" and pe_ttm is not None and pe_ttm > 20:
+                penalty = 30.0
+                delta = -penalty * w.pe_percentile
+                composite += delta
+                cycle_adjusted = True
+                cycle_adjustment_delta = delta
+                transition_signals.append(
+                    f"cycle_pe_penalty: contraction期PE={pe_ttm:.1f}x，盈利恶化中规避"
+                )
+        else:
+            cycle_phase_str = ""
+
+        phase = self._classify_phase(composite, pe_percentile, pb, pb_percentile, cycle_phase_str)
 
         return ValuationResult(
             symbol=symbol,
@@ -185,6 +233,9 @@ class ValuationAnalyzer:
             peg_ratio=peg_ratio,
             dividend_yield=dividend_yield,
             source_citations=citations,
+            transition_signals=transition_signals,
+            cycle_adjusted=cycle_adjusted,
+            cycle_adjustment_delta=round(cycle_adjustment_delta, 1),
         )
 
     # ------------------------------------------------------------------
@@ -346,8 +397,24 @@ class ValuationAnalyzer:
         pe_percentile: Optional[float] = None,
         pb: Optional[float] = None,
         pb_percentile: Optional[float] = None,
+        cycle_phase_str: str = "",
     ) -> ValuationPhase:
-        """根据综合评分和分位数据分类估值阶段。"""
+        """根据综合评分和分位数据分类估值阶段。
+
+        周期感知：RECOVERY/TROUGH 阶段高 PE 分位 ≠ 泡沫，PEAK 阶段低 PE 分位 ≠ 低估。
+        """
+        # 周期感知覆盖：RECOVERY/TROUGH + 高 PE 分位 → 非泡沫，可能是周期底部买入机会
+        if cycle_phase_str in ("recovery", "trough") and pe_percentile is not None and pe_percentile > self.PREMIUM_PE_PCT:
+            if composite_score >= 50:
+                return ValuationPhase.FAIR_VALUE
+            return ValuationPhase.FAIR_VALUE  # 周期底部高PE不归类为泡沫
+
+        # 周期感知覆盖：PEAK + 低 PE 分位 → 非低估，可能是价值陷阱
+        if cycle_phase_str == "peak" and pe_percentile is not None and pe_percentile <= self.DEEP_VALUE_PE_PCT:
+            if composite_score <= 35:
+                return ValuationPhase.PREMIUM
+            return ValuationPhase.FAIR_VALUE  # 周期顶部低PE不归类为深度低估
+
         # PE 分位优先判断
         if pe_percentile is not None:
             if pe_percentile <= self.DEEP_VALUE_PE_PCT:

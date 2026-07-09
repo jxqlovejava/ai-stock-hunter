@@ -114,8 +114,17 @@ class DiagnosisEngine:
         if macro:
             report.macro_score = self._score_macro(macro, macro_regime, fiscal_regime)
 
+        # 提前提取 cycle_phase 供 PE 评分使用
+        _cycle_phase = ""
+        if cycle_analysis is not None:
+            _cp = getattr(cycle_analysis, "phase", None)
+            if hasattr(_cp, "value"):
+                _cycle_phase = _cp.value
+            else:
+                _cycle_phase = str(_cp) if _cp else ""
+
         if quote and financials:
-            report.value_score = self._score_value(quote, valuation_result)
+            report.value_score = self._score_value(quote, valuation_result, _cycle_phase)
             report.quality_score = self._score_quality(financials, earnings_factor)
             mom = self._score_momentum(quote, northbound_profile)
             report.momentum_score = mom["score"]
@@ -167,8 +176,8 @@ class DiagnosisEngine:
         if report.executive_risks:
             report.confidence = max(0.3, report.confidence - 0.05)
 
-        report.bull_case = self._bull_case(name, quote, financials)
-        report.bear_case = self._bear_case(name, quote, financials)
+        report.bull_case = self._bull_case(name, quote, financials, _cycle_phase)
+        report.bear_case = self._bear_case(name, quote, financials, _cycle_phase)
 
         # Phase 10: 庄家操纵风险检测（日内分钟级）
         try:
@@ -497,18 +506,27 @@ class DiagnosisEngine:
 
         return max(0, min(100, score))
 
-    def _score_value(self, quote: dict, valuation_result: Optional[object] = None) -> float:
+    def _score_value(self, quote: dict, valuation_result: Optional[object] = None,
+                     cycle_phase: str = "") -> float:
         """价值评分：优先使用 ValuationAnalyzer 的 composite_score。
 
-        当 valuation_result 可用时，使用其综合评分。
-        回退到简单 PE 分位逻辑。
+        当 valuation_result 可用时，使用其综合评分（含周期调整）。
+        回退到简单 PE 分位逻辑，RECOVERY/TROUGH 阶段高PE不惩罚。
         """
         if valuation_result is not None:
             composite = getattr(valuation_result, "composite_score", None)
             if composite is not None:
                 return float(composite)
         pe_pct = quote.get("pe_percentile", 50)
-        return max(0, min(100, 100 - pe_pct))
+        pe_ttm = quote.get("pe_ttm") or quote.get("pe") or 0
+        score = max(0, min(100, 100 - pe_pct))
+
+        # 回退路径也加入周期感知：RECOVERY/TROUGH阶段高PE(>30)给予部分恢复
+        if cycle_phase in ("recovery", "trough") and pe_ttm > 30:
+            boost = min(25.0, (pe_ttm - 30) * 0.35)
+            score = min(100.0, score + boost)
+
+        return score
 
     def _score_valuation(self, valuation_result: Optional[object] = None) -> float:
         """估值评分 = ValuationAnalyzer composite_score。"""
@@ -675,8 +693,9 @@ class DiagnosisEngine:
 
         return {"score": max(0.0, min(100.0, score)), "risks": risks}
 
-    def _bull_case(self, name: str, quote: dict | None, fin: list | None) -> str:
-        """基于实际数据生成股票特定的看多理由。"""
+    def _bull_case(self, name: str, quote: dict | None, fin: list | None,
+                   cycle_phase: str = "") -> str:
+        """基于实际数据生成股票特定的看多理由，周期感知 PE 标签。"""
         parts = []
         pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
         pb = (quote or {}).get("pb") or 0
@@ -694,16 +713,20 @@ class DiagnosisEngine:
                 parts.append(f"营收增速{rev_growth:+.1f}%高成长")
             if profit_growth is not None and profit_growth > 20:
                 parts.append(f"利润增速{profit_growth:+.1f}%")
+        # 周期感知 PE 标签
         if pe > 0 and pe < 15:
             parts.insert(0, f"PE={pe:.1f}x估值偏低")
         elif pe > 0 and pe < 30:
             parts.insert(0, f"PE={pe:.1f}x估值合理")
+        elif pe > 0 and pe > 30 and cycle_phase in ("recovery", "trough"):
+            parts.insert(0, f"PE={pe:.1f}x(盈利周期底部，关注拐点确认)")
         if change_pct > 0:
             parts.append(f"当日涨{change_pct:+.1f}%技术面偏强")
         return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著亮点"
 
-    def _bear_case(self, name: str, quote: dict | None, fin: list | None) -> str:
-        """基于实际数据生成股票特定的看空理由。"""
+    def _bear_case(self, name: str, quote: dict | None, fin: list | None,
+                   cycle_phase: str = "") -> str:
+        """基于实际数据生成股票特定的看空理由，周期感知 PE 标签。"""
         parts = []
         pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
         pb = (quote or {}).get("pb") or 0
@@ -719,8 +742,13 @@ class DiagnosisEngine:
                 parts.append(f"营收增速{rev_growth:+.1f}%下滑")
             if debt_ratio is not None and debt_ratio > 70:
                 parts.append(f"资产负债率{debt_ratio:.0f}%偏高")
-        if pe > 60:
-            parts.insert(0, f"PE={pe:.1f}x估值偏高")
+        # 周期感知 PE 标签
+        if pe > 60 and cycle_phase in ("recovery", "trough"):
+            parts.insert(0, f"PE={pe:.1f}x(周期底部盈利压低PE，关注扭亏拐点)")
+        elif pe > 60:
+            parts.insert(0, f"PE={pe:.1f}x估值偏高(周期高位注意风险)")
+        elif pe < 0 and cycle_phase in ("recovery", "trough"):
+            parts.insert(0, "PE为负(周期底部亏损，关注扭亏拐点)")
         elif pe < 0:
             parts.insert(0, "PE为负，当前处于亏损状态")
         if change_pct < -3:
@@ -898,8 +926,12 @@ class DiagnosisEngine:
         return results[:limit]
 
     @staticmethod
-    def _passes_quick_filter(quote: dict, preset: ScreeningPreset) -> bool:
-        """快速排除不符合预设的股票。"""
+    def _passes_quick_filter(quote: dict, preset: ScreeningPreset,
+                             cycle_phase: str = "") -> bool:
+        """快速排除不符合预设的股票，周期感知 PE 上限。
+
+        RECOVERY/TROUGH 阶段有效 PE 上限提高至 40，避免过滤周期底部高 PE 标的。
+        """
         if not quote:
             return False
         th = preset.thresholds
@@ -914,10 +946,14 @@ class DiagnosisEngine:
         if market_cap < min_cap:
             return False
 
-        # PE 上限 (价值型和质量型)
+        # PE 上限 (价值型和质量型) — 周期感知
         if "max_pe" in th:
             pe = quote.get("pe_ttm") or quote.get("pe", 999)
-            if pe > th["max_pe"]:
+            effective_max_pe = th["max_pe"]
+            # RECOVERY/TROUGH 阶段放宽 PE 上限至 40
+            if cycle_phase in ("recovery", "trough"):
+                effective_max_pe = max(effective_max_pe, 40)
+            if pe > effective_max_pe:
                 return False
 
         # PE 下限 (成长型, 排除负 PE)
@@ -965,7 +1001,7 @@ SCREENING_PRESETS: dict[str, ScreeningPreset] = {
             "macro_score": 0.10, "momentum_score": 0.10, "sentiment": 0.10,
         },
         thresholds={
-            "max_pe": 15, "min_pb": 0.0, "max_pb": 1.5,
+            "max_pe": 30, "min_pb": 0.0, "max_pb": 1.5,
             "min_div_yield": 0.02, "max_debt_equity": 1.0,
             "min_market_cap": 2e9,  # 市值 > 20 亿
         },

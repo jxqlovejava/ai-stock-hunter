@@ -24,8 +24,8 @@ rules:
 
   # ---- 估值规则 ----
   valuation_max_pe:
-    description: "市盈率上限"
-    threshold: 200
+    description: "市盈率上限（A股周期底部PE可超200，阈值设300避免误报）"
+    threshold: 300
     severity: MEDIUM
     category: valuation
 

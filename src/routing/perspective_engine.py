@@ -666,20 +666,33 @@ class PerspectiveAnalyzer:
         else:
             bear.append(f"估值评分 {v:.0f}/100 — 估值偏高，缺乏安全边际。巴菲特不会在此时出手")
 
-        # 支柱3: PE 检查 (业务可预测性+价格合理性)
+        # 支柱3: PE 检查 (业务可预测性+价格合理性) — 周期感知
         pe = (quote.get("pe_ttm") or quote.get("pe") or 0) if quote else 0
+        _cp = getattr(l1, "cycle_phase", "") or ""
         if 0 < pe < 15:
-            score += 1.0
-            bull.append(f"PE={pe:.1f}<15 — 典型的巴菲特价值区间")
+            if _cp == "peak":
+                score += 0.3
+                bull.append(f"PE={pe:.1f}<15但周期高位 — 须确认非盈利峰值陷阱")
+            else:
+                score += 1.0
+                bull.append(f"PE={pe:.1f}<15 — 典型的巴菲特价值区间")
         elif pe < 25:
             score += 0.3
             bull.append(f"PE={pe:.1f} — 尚在合理范围，需结合成长性判断")
         elif pe > 50:
-            score -= 1.0
-            bear.append(f"PE={pe:.1f}>50 — 巴菲特从不为高估值买单，无论故事多好")
+            if _cp in ("recovery", "trough"):
+                score -= 0.3  # 周期底部高PE不重罚
+                bear.append(f"PE={pe:.1f}>50但周期{_cp}期 — 周期性高PE，需确认盈利拐点")
+            else:
+                score -= 1.0
+                bear.append(f"PE={pe:.1f}>50 — 巴菲特从不为高估值买单，无论故事多好")
         elif pe > 30:
-            score -= 0.3
-            bear.append(f"PE={pe:.1f}>30 — 估值偏贵，安全边际不足")
+            if _cp in ("recovery", "trough"):
+                # 周期底部PE 30-50不扣分
+                bull.append(f"PE={pe:.1f}(周期{_cp}期，PE偏高属正常)")
+            else:
+                score -= 0.3
+                bear.append(f"PE={pe:.1f}>30 — 估值偏贵，安全边际不足")
 
         # 支柱4: 业务可预测性 (cycle+macro proxy)
         cycle = getattr(l1, "cycle_score", 50) or 50
@@ -701,7 +714,8 @@ class PerspectiveAnalyzer:
         else:
             ps.verdict = "回避"
             ps.one_line_thesis = "多项支柱不达标 — 巴菲特不会在这个价格买入"
-        ps.key_concern = ("估值过高，安全边际不足" if v < 45 or pe > 30
+        ps.key_concern = ("估值过高，安全边际不足" if (v < 45 or pe > 30) and _cp not in ("recovery", "trough")
+                          else f"周期{_cp}期PE偏高属正常，关注盈利拐点" if (v < 45 or pe > 30) and _cp in ("recovery", "trough")
                           else "护城河能否持续20年？" if q < 60
                           else "是否在能力圈内？是否真正理解这门生意？")
         ps.unique_insight = f"巴菲特4支柱: 护城河{q:.0f}/100 + 安全边际{v:.0f}/100 + PE{pe:.1f} + 周期{cycle:.0f}/100 → 综合{ps.score:.1f}/5"

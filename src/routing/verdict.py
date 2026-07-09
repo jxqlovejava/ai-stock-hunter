@@ -258,7 +258,7 @@ class VerdictEngine:
         cycle_val = report.cycle_phase or "未知"
         falsifiable = [
             f"如果宏观 PMI < 48 (当前社融增速: 待查)，建议失效",
-            f"如果标的 PE 超过历史 70% 分位，建议失效",
+            f"如果标的PE超过历史70%分位且周期非RECOVERY/TROUGH，建议失效",
             f"如果经济周期从 {cycle_val} 进入收缩期或谷底期，建议效力减半",
         ]
         if gt_profile:
@@ -270,9 +270,15 @@ class VerdictEngine:
         if report.cycle_score < 30:
             risks.append({"text": f"经济周期偏空 ({report.cycle_phase})，注意系统性风险", "severity": "high", "source": f"cycle_score={report.cycle_score:.0f}"})
         if report.valuation_score > 80:
-            risks.append({"text": "估值极低 — 可能存在基本面隐忧或价值陷阱", "severity": "medium", "source": f"valuation_score={report.valuation_score:.0f}"})
+            if cycle_val == "peak":
+                risks.append({"text": "估值极低 — 周期顶部低PE须警惕价值陷阱", "severity": "high", "source": f"valuation_score={report.valuation_score:.0f}"})
+            else:
+                risks.append({"text": "估值极低 — 可能存在基本面隐忧或价值陷阱", "severity": "medium", "source": f"valuation_score={report.valuation_score:.0f}"})
         if report.valuation_score < 20:
-            risks.append({"text": "估值过高 — 泡沫风险显著", "severity": "high", "source": f"valuation_score={report.valuation_score:.0f}"})
+            if cycle_val in ("recovery", "trough"):
+                risks.append({"text": "估值偏高 — 周期底部正常现象，关注盈利拐点确认", "severity": "low", "source": f"valuation_score={report.valuation_score:.0f}"})
+            else:
+                risks.append({"text": "估值过高 — 泡沫风险显著", "severity": "high", "source": f"valuation_score={report.valuation_score:.0f}"})
         if report.sentiment_signal == "PANIC":
             risks.append({"text": "市场恐慌中，注意流动性", "severity": "high", "source": "sentiment=PANIC"})
         # Phase 3: 主题拥挤风险

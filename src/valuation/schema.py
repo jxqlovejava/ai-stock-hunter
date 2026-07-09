@@ -57,6 +57,10 @@ class ValuationResult:
     source_citations: list[SourceCitation] = field(default_factory=list)
     transition_signals: list[str] = field(default_factory=list)
 
+    # 周期调整跟踪
+    cycle_adjusted: bool = False          # 是否应用了周期-PE调整
+    cycle_adjustment_delta: float = 0.0   # 应用到综合评分的净增量
+
     # ------------------------------------------------------------------
     # Computed properties
     # ------------------------------------------------------------------
