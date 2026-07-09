@@ -166,8 +166,6 @@ def cmd_analyze(args: list[str]):
     from src.output.formatter import format_analysis_result
 
     mode = "full" if parsed.deep else "daily"
-    label = "选股分析" if parsed.deep else "日常监控"
-    print(f"📊 {label}: {symbol}")
     orch = Orchestrator()
     result = orch.run(
         symbol, market=_infer_market(symbol), mode=mode,

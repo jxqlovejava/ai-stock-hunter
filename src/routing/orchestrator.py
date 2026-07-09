@@ -42,6 +42,7 @@ from .verdict_enforcer import VerdictEnforcer
 from .mental_model_matcher import MentalModelMatcher
 from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
 from .position_state import PositionStateManager  # Phase 12: 实时持仓 HWM + 动态止盈止损
+from src.output.progress import step_start, step_done, info, warn, section as prog_section, header as prog_header
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,9 @@ class Orchestrator:
             strategy_params=strategy_params or {},
         )
 
+        print()  # 空行分隔
         # Step 0: 获取行情数据（双源交叉验证）
+        step_start(1, "行情获取 (双源交叉验证)")
         quote, cross_validated, dispute = self.data.get_cross_validated_quote(symbol, market)
         if quote is None:
             # 离线 fallback：尝试从本地 K 线缓存构造 quote
@@ -255,6 +258,9 @@ class Orchestrator:
 
         # 计算 MA20/MA60 + close_series 用于反追高检查
         self._inject_ma_data(symbol, quote_dict)
+
+        cv_label = "✅ 双源一致" if cross_validated else "⚠️ 单源"
+        step_done("✅", f"价格 {quote.price:.2f}  {cv_label}")
 
         # 加载投资者偏好
         investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
@@ -297,6 +303,7 @@ class Orchestrator:
                 logger.debug("Failed to resolve investor preferences: %s", e)
 
         # Step 1: 军规门禁
+        step_start(2, "军规门禁 (31条规则)")
         ctx = {"stock_name": name, **(portfolio or {})}
         if investor is not None:
             ctx["tier"] = investor.tier.value
@@ -348,8 +355,12 @@ class Orchestrator:
             "info_count": len(doctrine_result.infos),
             "rules": all_rules,
         }
+        bc = len(doctrine_result.blocked_by)
+        wc = len(doctrine_result.warnings)
+        step_done("✅", f"通过 {len(all_rules)}/{len(all_rules)}  阻断:{bc} 警告:{wc}")
 
         # Step 2: 准入检查 — 尝试从数据源获取实际上市日期
+        step_start(3, "准入检查 (ST/次新/流动性/停牌)")
         gate_ctx = {
             "is_limit_up": False,
             "is_limit_down": False,
@@ -366,9 +377,12 @@ class Orchestrator:
         if gate_result.status.value == "REJECTED":
             result.passed = False
             result.blocked_by = gate_result.flags
+            step_done("⛔", "被拦截: " + ", ".join(gate_result.flags[:3]))
             return result
+        step_done("✅", "通过")
 
         # ---- Phase 2.5: 宏观事件因果链分析 ----
+        step_start(4, "增强上下文 (宏观/北向/盈利修正/反操纵)")
         if macro_event_desc:
             try:
                 event_result = self.run_macro_event(
@@ -617,8 +631,15 @@ class Orchestrator:
                 "capital_divergence": manipulation_scan.capital_divergence,
                 "recommendations": manipulation_scan.recommendations,
             }
+        ctx_detail = f"宏观{macro_regime.quadrant.value if macro_regime else '?'}  "
+        if manipulation_scan and manipulation_scan.overall_risk > 20:
+            ctx_detail += f"操纵⚠️{manipulation_scan.overall_risk:.0f}"
+        else:
+            ctx_detail += "操纵✅"
+        step_done("✅", ctx_detail.strip())
 
         # Step 3: 多维诊断
+        step_start(5, "多维诊断 (宏观/价值/质量/动量/盈利修正/瓶颈/情绪)")
         # 使用真实行情 + 财务数据
         fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
         sentiment_dict = self._get_sentiment(nb_profile)
@@ -639,6 +660,8 @@ class Orchestrator:
         )
         result.report = report
         result.market_sentiment = sentiment_dict
+        scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f}"
+        step_done("✅", scores)
         if report_source_citations_gap:
             report.source_citations.append(report_source_citations_gap)
 
@@ -653,7 +676,8 @@ class Orchestrator:
                 source_tier="T2", nature="fact",
             ))
 
-        # Phase 1: 诊断护栏检查
+        # Phase 1: 诊断护栏检查 + Phase 6: 博弈论 + 思维模型
+        step_start(6, "博弈论 + 四大师辩论 + Munger模型")
         l1_violations = self.enforcer.enforce(
             stage="diagnosis",
             source_citations=report.source_citations,
@@ -731,6 +755,8 @@ class Orchestrator:
         )
         report.mental_models = matched_models
         result.mental_models = matched_models
+        debate_detail = f"分歧{debate.agreement_level}  模型{len(matched_models)}个"
+        step_done("✅", debate_detail)
         # Munger 思维模型匹配 — 分析解释
         if matched_models:
             report.source_citations.append(make_citation(
@@ -745,6 +771,7 @@ class Orchestrator:
             self._run_deep_research(symbol, name, result, report, quote_dict, fin_list)
 
         # CogAlpha: 多 Agent 质量审查 (数据新鲜度/一致性/泄露/可解释性/安全)
+        step_start(7, "质量审查 + 综合裁决 + 情景估值")
         quality_report = self.quality_checker.check(report)
         if not quality_report.passed:
             result.warnings.extend(quality_report.blocking_flags)
@@ -872,8 +899,13 @@ class Orchestrator:
                 ConfidenceGate.check(citation, context=f"verdict:{symbol}")
         except Exception:
             pass  # 门控失败不阻塞管道
+        verdict_detail = f"评分{verdict.score:.0f}/100  置信度{verdict.confidence:.0%}  {verdict.recommendation}"
+        if quality_report and not quality_report.passed:
+            verdict_detail += f"  ⚠️质量{quality_report.overall_score:.0f}"
+        step_done("✅", verdict_detail)
 
         # Step 6: 仓位调度
+        step_start(8, "仓位调度 + 风控执行")
         effective_macro_cap = 0.80 * risk_mult
         # Phase 11: 使用宏观象限调整后的仓位上限
         if regime_adjustments is not None:
@@ -997,6 +1029,10 @@ class Orchestrator:
         result.violations.extend(l4_violations)
 
         result.passed = True
+        sizing_detail = f"目标{signal.target_weight:.1%}  调整后{risk.adjusted_weight:.1%}"
+        if risk.violations:
+            sizing_detail += f"  ⚠️违规{len(risk.violations)}"
+        step_done("✅" if risk.passed else "⚠️", sizing_detail)
 
         # Phase 12: 持仓价格追踪（仅更新已有持仓的 HWM/止损预警，不自动开仓/平仓）
         # 实际交易由用户执行，之后通过场景五同步到系统。分析信号仅作参考建议。
@@ -1021,13 +1057,38 @@ class Orchestrator:
 
         # Phase 9: T+0 日内时机分析（中长期 Alpha 搜索可跳过，不阻塞主流程）
         if not skip_t0:
+            step_start(9, "T+0 日内时机分析")
             try:
                 t0 = self.run_t0(symbol, market, name)
                 if t0 is not None:
                     result.t0_result = t0
                     result.t0_available = True
+                    t0_score = t0.get("score", 0)
+                    t0_action = t0.get("action", "hold")
+                    step_done("✅", f"得分{t0_score}  建议{t0_action}")
+                else:
+                    step_done("⚠️", "数据不可用")
             except Exception as e:
                 logger.debug("T+0 analysis failed for %s: %s", symbol, e)
+                step_done("⚠️", f"失败: {e}")
+        else:
+            step_start(9, "T+0 日内时机分析")
+            step_done("⏭️", "跳过 (Alpha搜索模式)")
+
+        step_start(10, "数据溯源 + 最终输出")
+        step_done("✅", f"来源{len(report.source_citations)}条")
+
+        msg_parts = []
+        for m in result.mental_models[:2] if result.mental_models else []:
+            msg_parts.append(m.get('name_cn', '')[:15])
+        model_tags = ", ".join(msg_parts) if msg_parts else "-"
+        print(f"\n  📊 {'='*56}")
+        print(f"  📊 分析完成: {name}({symbol})")
+        if result.verdict:
+            rec_emoji = {"BUY": "🟢", "ADD": "🔵", "HOLD": "🟡", "REDUCE": "🟠", "SELL": "🔴"}.get(result.verdict.recommendation, "⚪")
+            print(f"  📊 {rec_emoji} {result.verdict.recommendation}  评分{result.verdict.score:.0f}/100  置信度{result.verdict.confidence:.0%}")
+        print(f"  📊 Munger: {model_tags}")
+        print(f"  📊 {'='*56}")
 
         return result
 
@@ -1608,6 +1669,7 @@ class Orchestrator:
                 # 回退：尝试从 akshare 获取日线数据
                 try:
                     import akshare as ak
+                    from datetime import datetime as dt
                     df = ak.stock_zh_a_hist(
                         symbol=symbol, period='daily',
                         start_date=start_date, end_date=end_date,
@@ -1617,16 +1679,20 @@ class Orchestrator:
                         from src.data.schema import Bar
                         daily_bars = []
                         for _, row in df.iterrows():
+                            ts = row.get('日期', None)
+                            if isinstance(ts, str):
+                                ts = dt.strptime(ts, "%Y-%m-%d")
                             bar = Bar(
                                 open=float(row['开盘']), close=float(row['收盘']),
                                 high=float(row['最高']), low=float(row['最低']),
                                 volume=int(row['成交量']), amount=float(row.get('成交额', 0)),
-                                timestamp=row.get('日期', None),
+                                timestamp=ts,
                             )
                             daily_bars.append(bar)
-                        daily_bars = daily_bars[-20:]
-                except Exception:
-                    pass
+                        daily_bars = daily_bars[-30:]  # 取最近 30 根（覆盖 3 日 + 2~3 周）
+                        logger.info("T+0: 已从 akshare 获取 %d 根日线", len(daily_bars))
+                except Exception as e2:
+                    logger.warning("T+0: akshare 回退也失败: %s", e2)
             if len(daily_bars) < 5:
                 logger.warning("T+0: 所有数据源均不足 (%d 根)，返回基础快照", len(daily_bars))
             daily_bars = daily_bars[-20:]  # 取最近 20 根
