@@ -43,6 +43,13 @@ from .mental_model_matcher import MentalModelMatcher
 from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
 from .position_state import PositionStateManager  # Phase 12: 实时持仓 HWM + 动态止盈止损
 from src.output.progress import step_start, step_done, info, warn, section as prog_section, header as prog_header
+from src.output.step_output import (
+    print_doctrine, print_admission, print_diagnosis,
+    print_debate, print_munger_models, print_alpha_game_theory,
+    print_verdict, print_positioning, print_risk_control,
+    print_source_citations, print_t0, print_deep_research,
+)
+from src.output.markdown_report import save_markdown_report
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +365,7 @@ class Orchestrator:
         bc = len(doctrine_result.blocked_by)
         wc = len(doctrine_result.warnings)
         step_done("✅", f"通过 {len(all_rules)}/{len(all_rules)}  阻断:{bc} 警告:{wc}")
+        _print_doctrine_compact(result.doctrine_result)
 
         # Step 2: 准入检查 — 尝试从数据源获取实际上市日期
         step_start(3, "准入检查 (ST/次新/流动性/停牌)")
@@ -662,6 +670,8 @@ class Orchestrator:
         result.market_sentiment = sentiment_dict
         scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f}"
         step_done("✅", scores)
+        _print_diagnosis_compact(report, result.mental_model_info)
+        _print_admission_compact(result.gate_status, market_sentiment=sentiment_dict, data_gaps=result.data_gaps, red_lines=result.red_lines)
         if report_source_citations_gap:
             report.source_citations.append(report_source_citations_gap)
 
@@ -749,14 +759,21 @@ class Orchestrator:
             confidence=0.45,
         ))
 
-        # Phase 6+: Munger 思维模型匹配
+        # Phase 6+: Munger 思维模型匹配 — 动态上下文驱动
+        # 从报告提取行业信息（诊断阶段已注入）
+        _sector = getattr(report, "sector", "") or ""
         matched_models = self.mental_model_matcher.match_models(
-            symbol, name, sector="", report=report,
+            symbol, name, sector=_sector, report=report,
+            question=macro_event_desc,
+            macro_context={"desc": macro_event_desc, "category": macro_event_category} if macro_event_desc else None,
         )
         report.mental_models = matched_models
         result.mental_models = matched_models
         debate_detail = f"分歧{debate.agreement_level}  模型{len(matched_models)}个"
         step_done("✅", debate_detail)
+        _print_debate_compact(result.debate_perspectives, result.debate_result)
+        _print_munger_compact(result.mental_models, name)
+        _print_alpha_compact(result.alpha_profile, result.game_theory_info)
         # Munger 思维模型匹配 — 分析解释
         if matched_models:
             report.source_citations.append(make_citation(
@@ -903,6 +920,7 @@ class Orchestrator:
         if quality_report and not quality_report.passed:
             verdict_detail += f"  ⚠️质量{quality_report.overall_score:.0f}"
         step_done("✅", verdict_detail)
+        _print_verdict_compact(verdict, result.enforced_verdict, result.scenario_valuation)
 
         # Step 6: 仓位调度
         step_start(8, "仓位调度 + 风控执行")
@@ -1033,6 +1051,8 @@ class Orchestrator:
         if risk.violations:
             sizing_detail += f"  ⚠️违规{len(risk.violations)}"
         step_done("✅" if risk.passed else "⚠️", sizing_detail)
+        _print_positioning_compact(signal, result.sizing_detail, result.position_limits_summary)
+        _print_risk_compact(risk, result.position_limits_summary)
 
         # Phase 12: 持仓价格追踪（仅更新已有持仓的 HWM/止损预警，不自动开仓/平仓）
         # 实际交易由用户执行，之后通过场景五同步到系统。分析信号仅作参考建议。
@@ -1066,6 +1086,7 @@ class Orchestrator:
                     t0_score = t0.get("score", 0)
                     t0_action = t0.get("action", "hold")
                     step_done("✅", f"得分{t0_score}  建议{t0_action}")
+                    _print_t0_compact(t0)
                 else:
                     step_done("⚠️", "数据不可用")
             except Exception as e:
@@ -1077,10 +1098,21 @@ class Orchestrator:
 
         step_start(10, "数据溯源 + 最终输出")
         step_done("✅", f"来源{len(report.source_citations)}条")
+        _print_sources_compact(report, result.verdict)
+        # 深度研究输出 (仅 mode="full")
+        if mode in ("full", "selection", "deep"):
+            _print_deep_compact(result.sector_research, result.company_deep_research, name)
+
+        # 保存完整 Markdown 报告
+        try:
+            report_path = save_markdown_report(result)
+            print(f"\n  📝 完整报告: {report_path}")
+        except Exception:
+            pass
 
         msg_parts = []
-        for m in result.mental_models[:2] if result.mental_models else []:
-            msg_parts.append(m.get('name_cn', '')[:15])
+        for m in (result.mental_models or [])[:3]:
+            msg_parts.append(m.get('name_cn', '')[:12])
         model_tags = ", ".join(msg_parts) if msg_parts else "-"
         print(f"\n  📊 {'='*56}")
         print(f"  📊 分析完成: {name}({symbol})")
@@ -1901,7 +1933,12 @@ class Orchestrator:
                 pool.submit(self.gt_analyzer.analyze, symbol, name, quote.market_cap if quote else None, ""): "game_theory",
                 pool.submit(self.imm_analyzer.analyze, symbol, name, investor, portfolio, "", quote.market_cap if quote else None, quote.change_pct if quote else None): "mental_model",
                 pool.submit(self.perspective_analyzer.debate, symbol, name, None, quote_dict, fin_list): "debate",
-                pool.submit(self.mental_model_matcher.match_models, symbol, name, "", None): "munger_models",
+                pool.submit(
+                    self.mental_model_matcher.match_models, symbol, name, "",
+                    None,  # report 尚未生成，诊断阶段后会用 report 版本覆盖
+                    "",     # question
+                    {"macro_regime": macro_regime, "nb_profile": nb_profile, "earnings": earnings_factor},
+                ): "munger_models",
             }
             analyses: dict = {}
             for future in as_completed(futures):
@@ -2300,3 +2337,217 @@ def _perspective_to_dict(ps) -> dict:
         "unique_insight": ps.unique_insight,
         "questions": ps.questions_to_ask[:3],
     }
+
+
+# ── 精简终端输出函数 (每段必出，但只出关键信息) ──────────────────
+
+CN_COMPACT = {
+    "emerging": "萌芽期", "spreading": "扩散期", "consensus": "共识期",
+    "crowded": "拥挤期", "fading": "消退期", "dormant": "休眠期",
+    "polarized": "严重对立", "divided": "存在分歧",
+    "PANIC": "恐慌", "EXTREME": "极度恐慌", "NORMAL": "正常", "GREED": "贪婪",
+    "kelly": "凯利", "linear_fallback": "线性回退", "negative_expectation": "负期望",
+}
+PERSPECTIVE_EMOJI_C = {"buffett": "🏰", "li_lu": "🎓", "munger": "🧠", "lynch": "🔍"}
+PERSPECTIVE_NAME_C = {"buffett": "巴菲特", "li_lu": "李录", "munger": "芒格", "lynch": "林奇"}
+
+
+def _print_doctrine_compact(dr: dict) -> None:
+    if not dr or not dr.get("rules"):
+        return
+    bc = dr.get("blocked_count", 0)
+    wc = dr.get("warn_count", 0)
+    ic = dr.get("info_count", 0)
+    print(f"\n  🏥 军规: {'✅通过' if dr.get('passed') else '⛔不通过'} | 阻断{bc} 警告{wc} 信息{ic}")
+    problems = [r for r in dr["rules"] if r.get("status") in ("blocked", "warn")]
+    if problems:
+        for r in problems:
+            print(f"    {'🔴' if r['status']=='blocked' else '🟠'} [{r['id']}] {r['name']}")
+
+
+def _print_diagnosis_compact(report, mm: dict | None = None) -> None:
+    if report is None:
+        return
+    rows = [
+        ("宏观", getattr(report, "macro_score", 0)),
+        ("价值", getattr(report, "value_score", 0)),
+        ("质量", getattr(report, "quality_score", 0)),
+        ("动量", getattr(report, "momentum_score", 0)),
+        ("盈利修正", getattr(report, "earnings_revision_score", 0)),
+        ("估值", getattr(report, "valuation_score", 0)),
+        ("周期", getattr(report, "cycle_score", 0)),
+        ("高管", getattr(report, "executive_score", 0)),
+    ]
+    print(f"\n  📊 多维诊断 {getattr(report, 'confidence', 0):.0%}")
+    scores_str = " | ".join(f"{l} {s:.0f}" for l, s in rows)
+    print(f"    {scores_str}")
+    if mm:
+        fi = mm.get("fit_score", 0)
+        comp = mm.get("competence_match", "")
+        cl = {"in_circle": "✅能力圈内", "edge": "⚠️边缘", "out_of_circle": "❌能力圈外", "not_configured": "⚪未设"}.get(comp, comp)
+        print(f"    👤 匹配度 {fi}/100 {cl}")
+    # 多空
+    bull = getattr(report, "bull_case", "")
+    bear = getattr(report, "bear_case", "")
+    if bull:
+        print(f"    🟢 看多: {bull[:80]}")
+    if bear:
+        print(f"    🔴 看空: {bear[:80]}")
+    # 瓶颈
+    ba = getattr(report, "bottleneck_analysis", None)
+    if ba:
+        layer = str(getattr(ba, "supply_chain_layer", "?")).replace("SupplyChainLayer.", "")
+        print(f"    🏭 供应链: {ba.core_business} | {layer} | 瓶颈{ba.bottleneck_score}/100")
+
+
+def _print_admission_compact(gate_status, market_sentiment=None, data_gaps=None, red_lines=None) -> None:
+    ge = {"ACCEPTED": "✅", "REJECTED": "⛔", "FLAGGED": "⚠️"}.get(gate_status, "❓")
+    gl = {"ACCEPTED": "通过", "REJECTED": "被拦截", "FLAGGED": "标记风险"}.get(gate_status, gate_status)
+    print(f"\n  🚪 准入: {ge} {gl}")
+    if data_gaps:
+        print(f"    📭 {', '.join(data_gaps[:3])}")
+    sent = market_sentiment or {}
+    sl = str(sent.get("level", "NORMAL") if isinstance(sent, dict) else "NORMAL")
+    score = sent.get("score", "?") if isinstance(sent, dict) else "?"
+    print(f"    📡 情绪: {CN_COMPACT.get(sl, sl)} ({score}/100)")
+
+
+def _print_debate_compact(pp, dr) -> None:
+    if not pp or not dr:
+        return
+    print(f"\n  🎭 四大师: 均分{dr.get('avg_score',0):.2f}/5 | 分歧{CN_COMPACT.get(str(dr.get('agreement_level','')), '?')}")
+    if dr.get("recommendation"):
+        print(f"    🎯 {dr['recommendation'][:80]}")
+    for key in ["buffett", "li_lu", "munger", "lynch"]:
+        p = pp.get(key)
+        if not p:
+            continue
+        s = p.get("score", 0)
+        v = p.get("verdict", "")
+        thesis = p.get("one_line_thesis", "")[:60]
+        print(f"    {PERSPECTIVE_EMOJI_C[key]} {PERSPECTIVE_NAME_C[key]}: {s:.1f}/5 {v} — {thesis}")
+
+
+def _print_munger_compact(models, stock_name: str = "") -> None:
+    if not models:
+        return
+    print(f"\n  🧠 Munger 模型 (最相关{len(models)}个):")
+    for i, m in enumerate(models[:5], 1):
+        name = m.get("name_cn", "?")
+        reason = m.get("reason_for_match", "")[:50]
+        print(f"    {i}. {name} — {reason}")
+
+
+def _print_alpha_compact(alpha, gt) -> None:
+    if not alpha and not gt:
+        return
+    parts = []
+    if alpha:
+        parts.append(f"Alpha {getattr(alpha, 'alpha_score', 0):.0f}/100")
+    if gt:
+        parts.append(f"博弈论 {gt.get('score',0)}/100 拥挤{gt.get('crowding_score',0)}")
+    print(f"\n  🔬 辅助: {' | '.join(parts)}")
+
+
+def _print_verdict_compact(verdict, enforced=None, scenario=None) -> None:
+    if verdict is None:
+        return
+    rec = getattr(verdict, "recommendation", "HOLD")
+    rec_emoji = {"BUY": "🟢", "ADD": "🔵", "HOLD": "🟡", "REDUCE": "🟠", "SELL": "🔴"}.get(rec, "⚪")
+    print(f"\n  ⚖️ 裁决: {rec_emoji} {rec} | 评分{verdict.score:.0f}/100 | 置信度{verdict.confidence:.0%}")
+
+    dc = getattr(verdict, "dimension_contributions", None)
+    if dc and isinstance(dc, dict):
+        parts = [f"{k} {v:.1f}" for k, v in dc.items()]
+        print(f"    构成: {' | '.join(parts)}")
+
+    if getattr(verdict, "alpha_rationale", ""):
+        print(f"    Alpha: {verdict.alpha_rationale[:80]}")
+
+    risks = getattr(verdict, "risks", []) or []
+    for r in risks[:4]:
+        if isinstance(r, dict):
+            print(f"    ⚠️ {r.get('severity','?')}: {r['text'][:60]}")
+        else:
+            print(f"    ⚠️ {str(r)[:60]}")
+
+    if enforced:
+        print(f"    💡 {enforced.get('one_line_conclusion','')[:80]}")
+
+    if scenario:
+        u = scenario.get("implied_upside", 0) or 0
+        d = scenario.get("implied_downside", 0) or 0
+        print(f"    📐 三情景: 🟢{scenario.get('bull_target')} 🟡{scenario.get('base_target')} 🔴{scenario.get('bear_target')} | 上{u:+.0f}% 下{d:+.0f}%")
+
+
+def _print_positioning_compact(signal, sizing_detail=None, position_limits=None) -> None:
+    print(f"\n  💰 仓位调度:")
+    if signal:
+        target = getattr(signal, "target_weight", 0)
+        print(f"    目标 {target:.1%}")
+    if sizing_detail:
+        m = CN_COMPACT.get(str(sizing_detail.get("method", "")), str(sizing_detail.get("method", "?")))
+        print(f"    方法: {m}")
+    if position_limits:
+        print(f"    单票≤{position_limits.get('max_single_pct',0):.0%} 总≤{position_limits.get('max_total_exposure',0):.0%}")
+
+
+def _print_risk_compact(risk, position_limits=None) -> None:
+    if risk is None:
+        return
+    print(f"\n  🛡️ 风控: {'✅通过' if getattr(risk, 'passed', False) else '⚠️不通过'} | 调整后 {getattr(risk, 'adjusted_weight', 0):.1%}")
+    violations = getattr(risk, "violations", []) or []
+    for v in violations[:3]:
+        vc = str(v)
+        for en, cn in CN_COMPACT.items():
+            vc = vc.replace(en, cn)
+        print(f"    🚫 {vc[:70]}")
+
+
+def _print_sources_compact(report, verdict=None) -> None:
+    all_cit = list(getattr(report, "source_citations", []) or [])
+    if verdict:
+        seen = {(c.provider, c.field) for c in all_cit}
+        for c in (getattr(verdict, "source_citations", []) or []):
+            if (c.provider, c.field) not in seen:
+                all_cit.append(c)
+    if not all_cit:
+        return
+    from collections import Counter
+    tc = Counter(getattr(c, "source_tier", "?") for c in all_cit)
+    nc = Counter(getattr(c, "nature", "?") for c in all_cit)
+    qs = [getattr(c, "quality_score", 0) for c in all_cit if not getattr(c, "is_data_gap", False)]
+    avg = sum(qs) / len(qs) if qs else 0
+    print(f"\n  📊 数据溯源: T0:{tc.get('T0',0)} T1:{tc.get('T1',0)} T2:{tc.get('T2',0)} T3:{tc.get('T3',0)} | 质量{avg:.2f}")
+
+
+def _print_deep_compact(sector, company, stock_name: str = "") -> None:
+    if sector and sector.get("sector_name") != "未分类":
+        comp = sector.get("competition", {})
+        print(f"\n  🏭 行业: {sector.get('sector_name','?')} | CR5={comp.get('cr5',0):.0f}% | HHI={comp.get('hhi',0):.0f}")
+    if company:
+        moat = company.get("moat", {})
+        overall = company.get("overall_score", 50)
+        if moat:
+            print(f"  🔬 公司: 护城河{moat.get('score',50):.0f}/100 | 综合{overall:.0f}/100")
+
+
+def _print_t0_compact(t0: dict) -> None:
+    if not t0 or not isinstance(t0, dict):
+        return
+    action = str(t0.get("action", "?"))
+    score = t0.get("score", "N/A")
+    emoji = {"add": "🟢", "hold": "🟡", "reduce": "🟠", "cut": "🔴", "no_position": "⚪"}.get(action, "❓")
+    print(f"\n  ⏱️ T+0: {emoji} {action} | 得分 {score}")
+    if t0.get("multi_day_summary"):
+        print(f"    趋势: {t0['multi_day_summary'][:80]}")
+    if t0.get("gap_analysis"):
+        print(f"    缺口: {t0['gap_analysis'][:60]}")
+    if t0.get("overnight_risk"):
+        print(f"    隔夜: {t0['overnight_risk'][:60]}")
+    has_daily = t0.get("ma5", 0) > 0
+    has_intraday = t0.get("vwap", 0) > 0
+    if has_daily:
+        print(f"    日线: MA5={t0.get('ma5',0):.2f} MA20={t0.get('ma20',0):.2f} 支撑={t0.get('support_1',0)} 阻力={t0.get('resistance',0)}")
+    if has_intraday:
+        print(f"    日内: VWAP={t0.get('vwap',0):.2f} 振幅{t0.get('amplitude',0)}%")
