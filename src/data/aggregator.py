@@ -37,6 +37,7 @@ from .schema import (
     ScreeningResult,
 )
 from .source_citation import make_citation, make_data_gap_citation
+from src.information.speed_monitor import SpeedMonitor
 from src.utils.decimal_utils import D, safe_divide
 
 
@@ -60,6 +61,7 @@ class DataAggregator:
         self._miaoxiang: "MiaoXiangProvider | None" = None  # type: ignore[name-defined]
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
+        self.speed_monitor = SpeedMonitor()  # 信息速度优势度量（共享实例）
 
     @property
     def mootdx(self) -> MootdxTencentProvider:
@@ -266,16 +268,24 @@ class DataAggregator:
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:
         """获取单只股票行情。按 registry fallback 链：verified_cache > guosen > mootdx > akshare > tencent。"""
-        cache_key = f"quote:{symbol}"
-        cached = self._cache_get(cache_key)
-        if cached:
-            return cached
+        t0 = self.speed_monitor.time_event("quote_fetch")
+        try:
+            cache_key = f"quote:{symbol}"
+            cached = self._cache_get(cache_key)
+            if cached:
+                self.speed_monitor.end_event("quote_fetch", t0, source="cache")
+                return cached
 
-        q = self._walk_quote_chain(symbol, market)
-        if q is not None:
-            self._cache_set(cache_key, q)
-            return q
-        return None
+            q = self._walk_quote_chain(symbol, market)
+            if q is not None:
+                self._cache_set(cache_key, q)
+                self.speed_monitor.end_event("quote_fetch", t0, source=q.source if hasattr(q, 'source') else "aggregator")
+                return q
+            self.speed_monitor.end_event("quote_fetch", t0, source="none")
+            return None
+        except Exception:
+            self.speed_monitor.end_event("quote_fetch", t0, source="error")
+            raise
 
     def get_quotes_batch(
         self, stocks: list[tuple[str, str]]
@@ -359,9 +369,17 @@ class DataAggregator:
         period: str = "daily",
     ):
         """获取历史K线数据（用于回测）。按 registry fallback 链。"""
-        if not end_date:
-            end_date = datetime.now().strftime("%Y%m%d")
-        return self._walk_history_chain(symbol, start_date, end_date, period)
+        t0 = self.speed_monitor.time_event("history_fetch")
+        try:
+            if not end_date:
+                end_date = datetime.now().strftime("%Y%m%d")
+            result = self._walk_history_chain(symbol, start_date, end_date, period)
+            source = result.attrs.get("source_citation", {}).provider if hasattr(result, 'attrs') and not result.empty else "aggregator"
+            self.speed_monitor.end_event("history_fetch", t0, source=str(source))
+            return result
+        except Exception:
+            self.speed_monitor.end_event("history_fetch", t0, source="error")
+            raise
 
     # ------------------------------------------------------------------
     # Status
