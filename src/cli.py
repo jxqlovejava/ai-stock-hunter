@@ -2844,6 +2844,52 @@ def cmd_sweep(args: list[str]):
 
         print(f"{sym:<8s} {s.get('name', sym):<10s} {price_str:>8s} {chg_str:>8s} {status:<12s}")
 
+    # ── 融资融券监控 (v2.0) ────────────────────────────────────
+    print(f"\n💰 融资融券监控:")
+    try:
+        from src.game_theory.margin import get_margin_analyzer
+        ma = get_margin_analyzer()
+        margin_warnings = []
+        for s in watchlist:
+            sym = s["symbol"]
+            price = quotes.get(sym)
+            try:
+                alerts = ma.get_alerts(sym, s.get("name", sym), close_price=price or 0)
+                if alerts:
+                    margin_warnings.append((sym, s.get("name", sym), alerts))
+            except Exception:
+                continue
+
+        if margin_warnings:
+            for sym, name, alerts in margin_warnings:
+                for a in alerts:
+                    icon = "🔴" if a.severity == "high" else "🟡"
+                    print(f"  {icon} {name}({sym}): {a.message[:80]}")
+        else:
+            profile_002460 = ma.analyze("002460", close_price=quotes.get("002460") or 0)
+            if profile_002460.margin_balance:
+                print(f"  📊 赣锋锂业: 融资余额{profile_002460.margin_balance:.1f}亿 "
+                      f"| 趋势{profile_002460.margin_balance_trend} "
+                      f"| 连续流出{profile_002460.consecutive_outflow_days}天")
+            else:
+                print("  ✅ 自选股无融资预警")
+    except Exception as e:
+        print(f"  ⚠️ 融资数据不可用: {e}")
+
+    # ── Monitor Events 状态 (v2.0) ─────────────────────────────
+    try:
+        from src.monitor import MonitorStore, generate_monitor_signals
+        mon_signals = generate_monitor_signals()
+        triggered = [s for s in mon_signals if s.direction != "neutral"]
+        active = [s for s in mon_signals if s.direction == "neutral"]
+        if triggered or active:
+            print(f"\n📡 Monitor Events: {len(triggered)}触发 | {len(active)}观测中")
+            for sig in triggered[:5]:
+                icon = "🔴" if sig.metadata.get("severity") == "high" else "🟡"
+                print(f"  {icon} {sig.name}: {sig.description[:80]}")
+    except Exception:
+        pass
+
     # 恐慌套利
     if parsed.panic:
         print(f"\n🎯 恐慌套利检查:")

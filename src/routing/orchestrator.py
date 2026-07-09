@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -126,6 +126,10 @@ class OrchestratorResult:
     macro_event: Optional[dict] = None
     # 市场情绪完整对象
     market_sentiment: Optional[object] = None
+    # 融资融券监控 (v2.0)
+    margin_profile: Optional[object] = None
+    margin_alerts: list = field(default_factory=list)
+    monitor_signals: list = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -713,11 +717,84 @@ class Orchestrator:
         step_done("✅", ctx_detail.strip())
         _wf[2] = "🌐增强上下文✅"
 
+        # ── 融资融券 + Monitor Event 检查 (v2.0) ─────────────────
+        margin_profile = None
+        margin_alerts = []
+        monitor_signals = []
+        try:
+            from src.game_theory.margin import get_margin_analyzer
+            from src.monitor import MonitorStore, MonitorSignalGenerator
+
+            margin_analyzer = get_margin_analyzer()
+            margin_profile = margin_analyzer.analyze(
+                symbol, name, close_price=quote.price,
+            )
+            margin_alerts = margin_analyzer.get_alerts(
+                symbol, name, close_price=quote.price,
+            )
+
+            # 检查已有 Monitor Events
+            monitor_store = MonitorStore()
+            monitor_gen = MonitorSignalGenerator(monitor_store)
+            monitor_signals = monitor_gen.generate(symbol)
+
+            if margin_alerts:
+                alert_msgs = [a.message[:60] for a in margin_alerts]
+                info(f"💰 融资: {margin_profile.margin_balance:.1f}亿 | "
+                     f"趋势: {margin_profile.margin_balance_trend} | "
+                     f"5日: {margin_profile.margin_balance_5d_change_pct:+.1f}% | "
+                     f"连续流出: {margin_profile.consecutive_outflow_days}天")
+                for a in margin_alerts:
+                    icon = "🔴" if a.severity == "high" else "🟡"
+                    warn(f"{icon} {a.alert_type}: {a.message[:80]}")
+
+            if monitor_signals:
+                triggered = [s for s in monitor_signals if s.direction != "neutral"]
+                active = [s for s in monitor_signals if s.direction == "neutral"]
+                if triggered:
+                    info(f"📡 Monitor Events: {len(triggered)}个已触发 | {len(active)}个观测中")
+            else:
+                info("📡 Monitor Events: 无活跃监控")
+        except Exception as e:
+            logger.debug("Margin/Monitor check skipped: %s", e)
+
         # Step 3: 多维诊断
         step_start(5, "多维诊断 (宏观/价值/质量/动量/盈利修正/瓶颈/情绪)")
         # 使用真实行情 + 财务数据
         fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
         sentiment_dict = self._get_sentiment(nb_profile)
+
+        # 注入融资融券 + Monitor 信号到增强上下文
+        if margin_profile is not None:
+            enriched_macro["margin_profile"] = {
+                "balance": margin_profile.margin_balance,
+                "trend": margin_profile.margin_balance_trend,
+                "change_5d_pct": margin_profile.margin_balance_5d_change_pct,
+                "change_20d_pct": margin_profile.margin_balance_20d_change_pct,
+                "net_buy": margin_profile.margin_net_buy,
+                "consecutive_outflow_days": margin_profile.consecutive_outflow_days,
+                "consecutive_inflow_days": margin_profile.consecutive_inflow_days,
+                "signal": margin_profile.margin_signal,
+                "sentiment": margin_profile.leverage_sentiment,
+                "divergence": margin_profile.divergence_signal,
+                "score": margin_profile.score,
+                "data_date": margin_profile.data_date,
+            }
+            enriched_macro["margin_alerts"] = [
+                {"type": a.alert_type, "severity": a.severity,
+                 "direction": a.direction, "message": a.message}
+                for a in margin_alerts
+            ]
+            enriched_macro["monitor_signals"] = [
+                {"name": s.name, "direction": s.direction,
+                 "strength": s.strength, "score": s.score,
+                 "description": s.description, "metadata": s.metadata}
+                for s in monitor_signals
+            ]
+            result.margin_profile = margin_profile
+            result.margin_alerts = margin_alerts
+            result.monitor_signals = monitor_signals
+
         report = self.diagnosis.analyze(
             symbol, name,
             quote_dict, fin_list,
@@ -1172,6 +1249,59 @@ class Orchestrator:
         step_start(10, "数据溯源 + 最终输出")
         step_done("✅", f"来源{len(report.source_citations)}条")
         _wf[8] = "📊溯源✅"
+
+        # ── Monitor Event 创建/更新 (v2.0) ──────────────────────
+        if margin_alerts:
+            try:
+                from src.monitor import MonitorStore, MonitorEvent as MEvent
+                ms = MonitorStore()
+                created = 0
+                for a in margin_alerts:
+                    # 检查是否已有同名 active monitor，避免重复创建
+                    existing_active = ms.get_active_for_symbol(symbol)
+                    dup = any(
+                        e.metadata.get("alert_type") == a.alert_type
+                        for e in existing_active
+                    )
+                    if not dup:
+                        me = MEvent.from_margin_alert(
+                            code=symbol, name=name,
+                            alert_type=a.alert_type,
+                            message=a.message,
+                            direction=a.direction,
+                            severity=a.severity,
+                            parent_analysis=f"analyze_{symbol}_{datetime.now().strftime('%Y%m%d')}",
+                        )
+                        # 设置合理的过期时间 (根据类型)
+                        if a.alert_type in ("balance_drop", "price_margin_divergence"):
+                            me.expires_at = (datetime.now() + timedelta(days=5)).isoformat()
+                        else:
+                            me.expires_at = (datetime.now() + timedelta(days=10)).isoformat()
+                        ms.append(me)
+                        created += 1
+                if created:
+                    info(f"📡 创建 {created} 条 Monitor Event (融资监控)")
+                # 检查并关闭已触发的
+                for e in ms.get_active_for_symbol(symbol):
+                    # 检查是否应触发: 例如连续流出天数达到条件
+                    if e.metadata.get("alert_type") == "consecutive_outflow":
+                        if margin_profile and margin_profile.consecutive_outflow_days >= 5:
+                            ms.close_monitor(
+                                e.event_id,
+                                result=f"已触发: 融资连续{margin_profile.consecutive_outflow_days}天净流出, "
+                                       f"5日变化{margin_profile.margin_balance_5d_change_pct:+.1f}%",
+                                direction="bearish", severity="medium",
+                            )
+                    elif e.metadata.get("alert_type") == "price_margin_divergence":
+                        if margin_profile and margin_profile.divergence_signal != "none":
+                            ms.close_monitor(
+                                e.event_id,
+                                result=f"已触发: {margin_profile.divergence_signal}",
+                                direction="bearish", severity="high",
+                            )
+            except Exception as e:
+                logger.debug("Monitor Event creation failed: %s", e)
+
         print_source_citations(report, result.verdict)
         # 深度研究输出 (仅 mode="full")
         if mode in ("full", "selection", "deep"):
