@@ -163,7 +163,6 @@ def cmd_analyze(args: list[str]):
     if not _validate_symbol(symbol):
         return
     from src.routing.orchestrator import Orchestrator
-    from src.output.formatter import format_analysis_result
 
     mode = "full" if parsed.deep else "daily"
     orch = Orchestrator()
@@ -179,9 +178,6 @@ def cmd_analyze(args: list[str]):
         if result.warnings:
             print(f"⚠️  警告: {', '.join(result.warnings)}")
         return
-
-    # 使用详细输出格式化器
-    print(format_analysis_result(result))
     # 生成投资备忘录
     try:
         from src.reporting.memo_renderer import MemoRenderer
@@ -194,10 +190,11 @@ def cmd_analyze(args: list[str]):
 
 
 def cmd_macro():
-    """宏观快照。"""
+    """宏观快照 — 货币信用象限 + 三大根本问题诊断。"""
     from src.macro.output import MacroSystemizedOutput, IndicatorSnapshot, QUADRANT_SECTOR_MAP
 
     print("🌍 宏观货币信用快照")
+    regime = None
     try:
         from src.macro.monetary_credit import MonetaryCreditAnalyzer
         analyzer = MonetaryCreditAnalyzer()
@@ -228,6 +225,95 @@ def cmd_macro():
         print("⚠️ 宏观分析模块未安装, 请检查依赖")
     except Exception as e:
         print(f"⚠️ 宏观分析失败: {e}")
+
+    # ---- 三大根本问题诊断 ----
+    print()
+    print("📋 三大根本问题诊断")
+    print("-" * 50)
+    try:
+        from src.routing.fundamental_diagnosis import FundamentalDiagnosisEngine
+        from src.data.aggregator import DataAggregator
+
+        agg = DataAggregator()
+        fd = FundamentalDiagnosisEngine(speed_monitor=agg.speed_monitor)
+
+        # 拉取上证指数日线
+        index_prices = None
+        try:
+            idx = agg.get_history("000001", "SH", period="daily")
+            if idx is not None and not idx.empty and "close" in idx.columns:
+                index_prices = idx["close"].tolist()
+        except Exception:
+            pass
+
+        # 财政政策
+        fiscal = None
+        try:
+            from src.macro.fiscal import FiscalAnalyzer
+            fiscal = FiscalAnalyzer().analyze()
+        except Exception:
+            pass
+
+        # 政策信号
+        policy_signals = None
+        policy_kw: list[str] = []
+        try:
+            from src.policy.tracker import PolicyTracker
+            policy_signals = PolicyTracker().analyze_current()
+            if policy_signals:
+                for s in policy_signals:
+                    policy_kw.extend(s.get("keywords", []))
+        except Exception:
+            pass
+
+        fd_report = fd.diagnose(
+            macro_regime=regime if regime else None,
+            fiscal_regime=fiscal,
+            policy_signals=policy_signals,
+            index_prices=index_prices,
+            sector_keywords=policy_kw if policy_kw else None,
+        )
+
+        # Q1: 政策市/市场市
+        q1 = fd_report.q1
+        print(f"  ❓ Q1 政策市还是市场市？")
+        print(f"     结论: [{q1.classification}]  置信度 {q1.confidence:.0%}")
+        print(f"     货币象限: {q1.monetary_quadrant} | 市场状态: {q1.market_regime}")
+        print(f"     财政立场: {q1.fiscal_stance} | 政策强度: {q1.policy_intensity}")
+        if q1.evidence:
+            for ev in q1.evidence[:3]:
+                print(f"       • {ev}")
+
+        # Q2: 定价权
+        q2 = fd_report.q2
+        print(f"  ❓ Q2 定价权在谁手里？")
+        print(f"     主导: {q2.dominant_player}  置信度 {q2.dominance_confidence:.0%}")
+        if q2.marginal_pricer_ranking:
+            ranking_str = " > ".join(
+                f"{p['player']}({p['influence']:.0%})" for p in q2.marginal_pricer_ranking[:3]
+            )
+            print(f"     边际定价者排名: {ranking_str}")
+        print(f"     北向: {q2.northbound_direction} | 杠杆情绪: {q2.margin_fear_greed}")
+        if q2.crowding_warning:
+            print(f"     ⚠️ 公募拥挤度偏高 ({q2.crowding_score})")
+
+        # Q3: 信息优势
+        q3 = fd_report.q3
+        print(f"  ❓ Q3 信息优势是否存在？")
+        print(f"     信息优势评分: {q3.information_advantage_score:.0f}/100  置信度 {q3.confidence:.0%}")
+        print(f"     速度: {q3.speed_grade} | 覆盖度: {q3.coverage_grade} | 活跃源: {q3.source_count}")
+        if q3.total_events > 0:
+            print(f"     平均延迟: {q3.avg_latency_seconds:.3f}s | 最快源: {q3.fastest_source}")
+        if q3.bottlenecks:
+            print(f"     瓶颈: {', '.join(q3.bottlenecks[:3])}")
+        if q3.recommendations:
+            for rec in q3.recommendations[:2]:
+                print(f"       • {rec}")
+
+    except ImportError as e:
+        print(f"  ⚠️ 三大诊断模块不可用: {e}")
+    except Exception as e:
+        print(f"  ⚠️ 三大根本问题诊断失败: {e}")
 
 
 @_safe_cmd
@@ -3602,6 +3688,7 @@ def _print_command_detail(cmd: str) -> None:
         "technical": ("python -m src technical <code> [--name 名称]", "技术分析报告（六维评分 + 入场/出场时机）", ["--name: 股票名称（可选）"]),
         "sweep": ("python -m src sweep", "自选股扫雷（检查所有自选股风险）", []),
         "preference": ("python -m src preference <view|setup|edit|reset>", "投资者偏好管理", ["view: 查看当前配置", "setup: 交互式设置向导", "edit: 编辑配置", "reset: 重置为默认"]),
+        "preview-earnings": ("python -m src preview-earnings [code] [--consensus N] [--q2-shipment N]", "业绩先行研判 — 基于锂盐价格等高频公开数据测算Q2业绩", ["code: 股票代码 (默认002460 赣锋锂业)", "--consensus: 机构一致预期Q2净利(亿元)", "--q2-shipment: Q2锂盐出货量(千吨LCE)", "--no-sensitivity: 跳过敏感性分析"]),
     }
 
     if cmd in details:
@@ -3869,6 +3956,80 @@ def cmd_update_watchlist(symbol: str, name: str, stop_price: float = None, alert
           (f" 预警≥{alert_above}" if alert_above is not None else ""))
 
 
+def cmd_preview_earnings(args: list[str]):
+    """业绩先行研判 — 基于碳酸锂价格等先行指标预测Q2业绩。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="业绩先行研判: 基于锂盐价格等高频公开数据，"
+        "在财报发布前测算碳酸锂企业季度业绩 (支持Q1/Q2)",
+    )
+    parser.add_argument(
+        "code", nargs="?", default="002460",
+        help="股票代码 (默认: 002460 赣锋锂业)",
+    )
+    parser.add_argument(
+        "--consensus", type=float, default=None,
+        help="机构一致预期Q2净利(亿元)，用于Beat/Miss对比",
+    )
+    parser.add_argument(
+        "--q2-shipment", type=float, default=None,
+        help="Q2锂盐出货量(万吨LCE)，覆盖默认值",
+    )
+    parser.add_argument(
+        "--no-sensitivity", action="store_true",
+        help="跳过敏感性分析矩阵",
+    )
+    parser.add_argument(
+        "--target-quarter", type=str, default="Q2", choices=["Q1", "Q2"],
+        help="目标预测季度: Q1 或 Q2 (默认: Q2)",
+    )
+    opts = parser.parse_args(args)
+
+    from src.data.commodity.lithium_tracker import LithiumPriceTracker
+    from src.industry.earnings_preview import EarningsPreviewModel
+    from src.output.earnings_preview_fmt import print_earnings_preview
+
+    tq = opts.target_quarter
+    baseline_label = "Q4_2025" if tq == "Q1" else "Q1_2026"
+    target_label = tq
+
+    print(f"🔍 正在获取锂盐价格数据 (基线: {baseline_label} → 目标: {target_label})...")
+    tracker = LithiumPriceTracker()
+
+    # 获取锂盐价格一篮子
+    basket = tracker.get_lithium_basket(target_quarter=tq)
+    basket_price = basket.q2_basket_price  # LithiumBasket: q1=基线, q2=目标
+    print(f"   {target_label} 加权均价: {basket_price:,.0f} 元/吨"
+          if basket_price else f"   {target_label} 加权均价: N/A")
+    print(f"   数据点数: {basket.data_points_q2}")
+    print(f"   数据源: {basket.source}")
+
+    # 创建测算模型
+    if opts.code == "002460":
+        model = EarningsPreviewModel.for_ganfeng(target_quarter=tq)
+    else:
+        model = EarningsPreviewModel.custom(code=opts.code)
+
+    # 覆盖出货量
+    if opts.q2_shipment is not None:
+        model._p.q2_shipment_kt = opts.q2_shipment
+
+    # 执行测算
+    print(f"\n📊 正在测算 Q2 业绩...")
+    result = model.preview_q2(
+        basket, consensus_q2_profit=opts.consensus
+    )
+
+    # 敏感性分析
+    sensitivity = None
+    if not opts.no_sensitivity:
+        sensitivity = model.sensitivity_table(basket)
+
+    # 输出报告
+    print_earnings_preview(result, basket, sensitivity)
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -4065,6 +4226,8 @@ def main():
         # 场景五: 程序化持仓/自选股记录
         "record-position": lambda: cmd_record_position(args[0], args[1], float(args[2]), int(args[3])) if len(args) >= 4 else print("用法: record-position <code> <名称> <价格> <数量>"),
         "update-watchlist": lambda: cmd_update_watchlist(args[0], args[1], float(args[2]) if len(args) >= 3 and args[2] else None, float(args[3]) if len(args) >= 4 and args[3] else None) if args else print("用法: update-watchlist <code> <名称> [止损价] [预警价]"),
+        # 先行指标业绩研判
+        "preview-earnings": lambda: cmd_preview_earnings(args),
     }
 
     handler = commands.get(cmd)
