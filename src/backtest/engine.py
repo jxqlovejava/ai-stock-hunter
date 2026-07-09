@@ -96,7 +96,13 @@ class BacktestEngine:
         # Build custom feed class with extra columns
         extra_params = {}
         extra_cols = []
-        for col in ["pe_pct", "roe", "momentum"]:
+        # 已知因子列 + 动态 vb_* 列 (跳过非数值列)
+        known_cols = ["pe_pct", "roe", "momentum"]
+        vb_cols = [
+            c for c in df.columns
+            if c.startswith("vb_") and df[c].dtype in ("float64", "int64", "float32", "int32")
+        ]
+        for col in known_cols + vb_cols:
             if col in df.columns:
                 idx = list(df.columns).index(col)
                 extra_params[col] = idx

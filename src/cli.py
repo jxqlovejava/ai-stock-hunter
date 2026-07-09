@@ -349,6 +349,24 @@ def cmd_backtest():
         print("   (可能需要完整数据源配置)")
 
 
+def cmd_verdict_backtest():
+    """运行 Verdict 回测 — 实盘 VerdictEngine 多维加权评分。"""
+    from src.backtest.runner import run_verdict_backtest
+
+    print("📊 Verdict 回测 (沪深300, 2019-2024)")
+    print("   评分模型: VerdictEngine 6维加权 (实盘同款)")
+    print("=" * 60)
+    try:
+        result = run_verdict_backtest()
+        print(f"\n✅ 回测完成")
+        print(f"   年化收益: {result.annual_return:.1%}")
+        print(f"   夏普比率: {result.sharpe_ratio:.2f}")
+        print(f"   最大回撤: {result.max_drawdown:.1%}")
+        print(f"   胜率: {result.win_rate:.1%}")
+    except Exception as e:
+        print(f"❌ 回测失败: {e}")
+
+
 @_safe_cmd
 def cmd_patterns(args: list[str]):
     """K线形态识别 — 检测个股最近的蜡烛图形态信号。
@@ -4214,6 +4232,7 @@ def main():
         "macro": cmd_macro,
         "sentiment": cmd_sentiment,
         "backtest": cmd_backtest,
+        "verdict-backtest": cmd_verdict_backtest,
         "backtest-optimize": cmd_backtest_optimize,
         "backtest-compare": cmd_backtest_compare,
         "diagnose": lambda: cmd_diagnose(args) if args else print("用法: diagnose <code> [--deep]"),

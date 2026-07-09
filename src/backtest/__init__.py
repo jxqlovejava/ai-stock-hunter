@@ -32,6 +32,9 @@ from .strategy_registry import StrategyRegistry, StrategyVersion
 from .visualizer import BacktestVisualizer
 from .walkforward import WalkForwardConfig, WalkForwardOptimizer, WalkForwardResult
 
+from .verdict_strategy import VerdictBacktestStrategy
+from .verdict_factors import compute_verdict_factors, WEIGHTS as VERDICT_WEIGHTS
+
 __all__ = [
     # 新 Cerebro 架构
     "BaizeCerebro",
@@ -75,4 +78,8 @@ __all__ = [
     "Holding",
     "OrderDirection",
     "OrderHandler",
+    # Verdict 回测
+    "VerdictBacktestStrategy",
+    "compute_verdict_factors",
+    "VERDICT_WEIGHTS",
 ]
