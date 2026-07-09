@@ -47,6 +47,20 @@ _NEXUS_RULES: list[tuple[tuple[str, ...], tuple[str, ...], str]] = [
     (("GREED", "EXTREME_GREED"), ("lure_bull_dump", "fishing_line"), "greed_distribution"),
     # 贪婪盘面 + 尾盘拉升 → 贪婪收盘推高
     (("GREED", "EXTREME_GREED"), ("closing_manipulation",), "greed_closing_pump"),
+    # ── 洗盘-情绪联动 ──
+    # 恐慌盘面 + 急跌/单边下跌/连续阴线/击穿支撑 → 恐慌洗盘加剧（经典洗盘场景）
+    (("PANIC", "EXTREME_PANIC"),
+     ("washout_sharp_drop", "washout_one_sided_decline", "washout_consecutive_yin",
+      "washout_support_breakdown", "washout_continuous_suppression"),
+     "panic_washout_intensified"),
+    # 恐慌盘面 + 高开低走/低开高走 → 开盘恐慌洗盘
+    (("PANIC", "EXTREME_PANIC"),
+     ("washout_high_open_low", "washout_low_open_high"),
+     "panic_opening_washout"),
+    # 恐慌盘面 + 小涨大跌 → 反复洗盘
+    (("PANIC", "EXTREME_PANIC"),
+     ("washout_small_rise_big_drop",),
+     "panic_repeated_washout"),
 ]
 
 # 情绪分数 FEAR 逻辑（NORMAL 但分数 < 40 + 尾盘 = 恐惧收盘）
@@ -70,6 +84,21 @@ _NEXUS_ADJUSTMENTS: dict[str, dict[str, float]] = {
     },
     "fear_closing": {
         "closing_manipulation": 0.05,
+    },
+    # ── 洗盘-情绪联动调整 ──
+    "panic_washout_intensified": {
+        "washout_sharp_drop": 0.15,
+        "washout_one_sided_decline": 0.15,
+        "washout_consecutive_yin": 0.15,
+        "washout_support_breakdown": 0.15,
+        "washout_continuous_suppression": 0.15,
+    },
+    "panic_opening_washout": {
+        "washout_high_open_low": 0.10,
+        "washout_low_open_high": 0.10,
+    },
+    "panic_repeated_washout": {
+        "washout_small_rise_big_drop": 0.10,
     },
 }
 
@@ -373,6 +402,21 @@ class SentimentManipulationNexus:
                 parts.append(
                     f"市场偏恐惧(score={context.sentiment_score})+尾盘异动 → "
                     f"恐惧收盘，置信度+0.05"
+                )
+            elif pattern == "panic_washout_intensified":
+                parts.append(
+                    f"市场{context.sentiment_level}+单边下跌/连阴/破位 → "
+                    f"恐慌洗盘经典组合，洗盘信号置信度+0.15"
+                )
+            elif pattern == "panic_opening_washout":
+                parts.append(
+                    f"市场{context.sentiment_level}+开盘异常（高开低走/低开高走） → "
+                    f"开盘恐慌洗盘，置信度+0.10"
+                )
+            elif pattern == "panic_repeated_washout":
+                parts.append(
+                    f"市场{context.sentiment_level}+小涨大跌K线形态 → "
+                    f"反复洗盘确认，置信度+0.10"
                 )
 
         # 附加统计
