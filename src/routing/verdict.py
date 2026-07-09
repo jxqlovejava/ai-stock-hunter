@@ -32,6 +32,7 @@ class Verdict:
     game_theory_risks: list[str] = field(default_factory=list)
     mental_model_fit_score: float = 0.0
     mental_model_warnings: list[str] = field(default_factory=list)
+    oversold_position_discount: float = 1.0  # Phase 13: 超跌仓位折扣 (默认1.0=无折扣)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -187,6 +188,38 @@ class VerdictEngine:
             elif status_val == "PULLBACK_ACTIVE":
                 risks.append({"text": "回调进行中 — 距支撑位尚有一段距离，建议等待", "severity": "medium", "source": "pullback_active"})
 
+        # Phase 13: 超跌反弹 gate — 分段处理
+        oversold_position_discount = 1.0  # 默认无折扣
+        if pullback_state is not None:
+            status_val = getattr(getattr(pullback_state, "status", None), "value", "")
+            oversold = getattr(pullback_state, "oversold", None)
+            if status_val == "OVERSOLD_SETUP" and pullback_authentic:
+                # 超跌反弹确认: 比普通回调更强的加分（赔率更高）
+                bonus = min(15.0, 8.0 + pullback_score_pb * 0.07)
+                score += bonus
+                confidence += 0.02  # 超跌反弹确认略微提升置信度
+                oversold_position_discount = 0.5  # 超跌仓位 5 折
+                oversold_decline = getattr(oversold, "phase_decline_pct", 0.0) if oversold else 0.0
+                risks.append({
+                    "text": f"超跌反弹信号确认 — 阶段跌幅 {oversold_decline:.1f}%，反弹质量分 {pullback_score_pb:.0f}/100",
+                    "severity": "low",
+                    "source": f"oversold_setup pullback_score={pullback_score_pb:.0f}"
+                })
+            elif status_val == "OVERSOLD_ACTIVE":
+                risk_text = "超跌进行中 — "
+                if oversold:
+                    risk_text += f"阶段跌幅 {oversold.phase_decline_pct:.1f}%，"
+                risk_text += "等待止跌确认后入场"
+                risks.append({"text": risk_text, "severity": "medium", "source": "oversold_active"})
+            elif status_val == "OVERSOLD_BREAK":
+                # 超跌破位: 强制降级
+                score = min(score, 45.0)
+                confidence = max(0.25, confidence - 0.15)
+                risk_text = "超跌后破位 — 趋势逆转风险极高"
+                if oversold:
+                    risk_text += f"（阶段跌幅 {oversold.phase_decline_pct:.1f}%）"
+                risks.append({"text": risk_text, "severity": "critical", "source": "oversold_break"})
+
         # 置信度 = 信息完整度的函数
         confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
         if gt_profile is not None:
@@ -287,6 +320,7 @@ class VerdictEngine:
             game_theory_risks=gt_risks,
             mental_model_fit_score=mm_score,
             mental_model_warnings=mm_warnings + mm_bias_flags,
+            oversold_position_discount=oversold_position_discount,
         )
 
     def _alpha_multiplier(

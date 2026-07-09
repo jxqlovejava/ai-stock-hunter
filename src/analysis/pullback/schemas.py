@@ -2,11 +2,16 @@
 """回调入场模块 — 数据模型定义。
 
 回调状态分类:
-  PULLBACK_NONE    — 未在回调中（创新高/横盘）
-  PULLBACK_ACTIVE  — 正在回调中（持续下跌，未止跌）
-  PULLBACK_SETUP   — 回调到位+止跌确认（可入场候选）
-  PULLBACK_TRAP    — 回调到位但检测到操纵信号（禁止入场）
-  PULLBACK_BREAK   — 回调失败，破位继续下跌
+  PULLBACK_NONE       — 未在回调中（创新高/横盘）
+  PULLBACK_ACTIVE     — 正在回调中（持续下跌，未止跌）
+  PULLBACK_SETUP      — 回调到位+止跌确认（可入场候选）
+  PULLBACK_TRAP       — 回调到位但检测到操纵信号（禁止入场）
+  PULLBACK_BREAK      — 回调失败，破位继续下跌
+
+超跌反弹状态 (Phase 13):
+  OVERSOLD_ACTIVE     — 阶段跌幅≥25%，但止跌未确认（监控中）
+  OVERSOLD_SETUP      — 超跌+止跌确认+恐慌耗尽+反操纵通过（可入场）
+  OVERSOLD_BREAK      — 超跌但检测到真破位信号（封杀）
 """
 
 from __future__ import annotations
@@ -19,11 +24,15 @@ from typing import Optional
 
 class PullbackStatus(str, Enum):
     """回调状态枚举。"""
-    NONE = "PULLBACK_NONE"       # 未在回调中
-    ACTIVE = "PULLBACK_ACTIVE"   # 正在回调，尚未止跌
-    SETUP = "PULLBACK_SETUP"     # 回调到位 + 止跌确认
-    TRAP = "PULLBACK_TRAP"       # 操纵陷阱，禁止入场
-    BREAK = "PULLBACK_BREAK"     # 破位，回调失败
+    NONE = "PULLBACK_NONE"             # 未在回调中
+    ACTIVE = "PULLBACK_ACTIVE"         # 正在回调，尚未止跌
+    SETUP = "PULLBACK_SETUP"           # 回调到位 + 止跌确认
+    TRAP = "PULLBACK_TRAP"             # 操纵陷阱，禁止入场
+    BREAK = "PULLBACK_BREAK"           # 破位，回调失败
+    # Phase 13: 超跌反弹状态
+    OVERSOLD_ACTIVE = "OVERSOLD_ACTIVE"    # 超跌 ≥25%，止跌未确认
+    OVERSOLD_SETUP = "OVERSOLD_SETUP"     # 超跌到位 + 止跌确认 + 恐慌耗尽
+    OVERSOLD_BREAK = "OVERSOLD_BREAK"     # 超跌但真破位，封杀
 
 
 class PullbackTier(str, Enum):
@@ -53,6 +62,41 @@ class ManipulationCheck:
     sentiment_context: str = ""            # 情绪-操纵联动场景
     confidence_adjustment: float = 0.0     # 联动置信度调整
     suggestion: str = ""                   # 操作建议
+
+
+@dataclass
+class OversoldProfile:
+    """超跌反弹专属数据 (Phase 13)。
+
+    经验规则: 15-30 日最低价，差价 ≥ 25%
+    即阶段最大跌幅 = (30日最高 - 30日最低) / 30日最高 ≥ 0.25
+    """
+
+    # ── Step 0: 筛选数据 ──
+    high_30d: float = 0.0              # 30 日最高价
+    low_30d: float = 0.0               # 30 日最低价
+    phase_decline_pct: float = 0.0      # 阶段最大跌幅 (%)，正值表示跌了多少
+    meets_25pct_rule: bool = False      # 是否满足 25% 经验规则
+
+    # ── Step 1: 跌速 ──
+    decline_days: int = 0               # 从高点到低点的天数
+    decline_speed_pct_day: float = 0.0  # 日均跌幅 (%)
+
+    # ── Step 2: 恐慌量 ──
+    panic_volume_ratio: float = 0.0     # 恐慌日量 / 5日均量
+    panic_date: str = ""                # 恐慌日日期 (YYYY-MM-DD)
+    post_panic_volume_shrink: float = 1.0  # 恐慌后 2-3 日缩量比
+
+    # ── Step 3: RSI ──
+    rsi_14: float = 50.0                # RSI(14) 值
+
+    # ── Step 4: 反弹确认 ──
+    bounce_confirmed: bool = False      # 放量阳线站上 5 日线
+    above_ma5: bool = False             # 收盘价在 MA5 上方
+
+    # ── Step 5: 基本面底线 ──
+    roe_positive: bool = True           # ROE > 0
+    not_st: bool = True                 # 非 ST
 
 
 @dataclass
@@ -86,6 +130,9 @@ class PullbackState:
 
     # ── 操纵检测 ──
     manipulation: Optional[ManipulationCheck] = None
+
+    # ── 超跌反弹 (Phase 13) ──
+    oversold: Optional[OversoldProfile] = None
 
     # ── 综合输出 ──
     pullback_score: float = 50.0        # 回调质量分 0-100

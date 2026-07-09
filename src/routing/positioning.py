@@ -148,6 +148,11 @@ class PositioningEngine:
             manip_discount = D("1.0")
         target_d *= manip_discount
 
+        # Phase 13: 超跌反弹仓位折扣
+        oversold_discount = getattr(verdict, "oversold_position_discount", 1.0) or 1.0
+        if oversold_discount < 1.0:
+            target_d *= D(str(oversold_discount))
+
         # 双创折扣
         if is_gem:
             gem_discount = D("0.8")

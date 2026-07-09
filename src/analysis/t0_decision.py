@@ -237,12 +237,12 @@ class T0DecisionEngine:
         if len(minute_bars) >= 10:
             self._analyze_intraday(result, minute_bars, prev_close)
 
-        # ── 多日趋势 ──
-        self._analyze_multi_day_trend(result, daily_bars)
-
         # ── 跨天分析 ──
         self._analyze_gaps(result, daily_bars)
         self._analyze_overnight_risk(result, daily_bars)
+
+        # ── 多日趋势 (需在 overnight_risk 之后，追加庄家布局信号) ──
+        self._analyze_multi_day_trend(result, daily_bars)
 
         # ── 综合评分 ──
         self._score(result, chg_3d, chg_5d)
@@ -331,37 +331,97 @@ class T0DecisionEngine:
 
     @staticmethod
     def _analyze_multi_day_trend(result: T0Result, daily_bars: list[Bar]) -> None:
-        """分析 5 日和 10 日趋势，填入 result 的多日趋势字段。"""
+        """多日趋势分析 — 3日/5日/10日/15日 + 庄家布局检测。"""
         closes = np.array([b.close for b in daily_bars])
+        highs = np.array([b.high for b in daily_bars])
+        lows = np.array([b.low for b in daily_bars])
         volumes_arr = np.array([b.volume for b in daily_bars])
         n = len(closes)
 
-        # 5 日趋势
+        # ── 各周期涨跌幅 ──
+        def _pct(bars_back: int) -> float:
+            if n > bars_back and closes[-1 - bars_back] > 0:
+                return (closes[-1] / closes[-1 - bars_back] - 1) * 100
+            return 0.0
+
+        def _trend_label(chg: float, threshold: float = 3.0) -> str:
+            return "上升" if chg > threshold else ("下降" if chg < -threshold else "震荡")
+
+        if n >= 3:
+            c3 = _pct(2)
+            result.trend_5d = _trend_label(c3, 3)  # 复用 trend_5d 字段存 3 日趋势
         if n >= 5:
-            chg_5d = (closes[-1] / closes[-5] - 1) * 100
-            result.trend_5d = "上升" if chg_5d > 3 else ("下降" if chg_5d < -3 else "震荡")
-        # 10 日趋势
+            c5 = _pct(4)
+            result.trend_5d = _trend_label(c5, 3)
         if n >= 10:
-            chg_10d = (closes[-1] / closes[-10] - 1) * 100
-            result.trend_10d = "上升" if chg_10d > 5 else ("下降" if chg_10d < -5 else "震荡")
-        # 量能趋势：近 3 日均量 vs 前 7 日均量
-        if len(volumes_arr) >= 10:
-            recent_vol = float(np.mean(volumes_arr[-3:]))
-            prior_vol = float(np.mean(volumes_arr[-10:-3]))
-            if prior_vol > 0:
-                vol_ratio = recent_vol / prior_vol
-                result.volume_trend = "放量" if vol_ratio > 1.3 else ("缩量" if vol_ratio < 0.7 else "平量")
-        # 综合摘要
+            c10 = _pct(9)
+            result.trend_10d = _trend_label(c10, 5)
+        # 15 日趋势 (2~3 周)
+        trend_15d = ""
+        if n >= 15:
+            c15 = _pct(14)
+            trend_15d = _trend_label(c15, 7)
+
+        # ── 量能分析 ──
+        if len(volumes_arr) >= 15:
+            vol_3d = float(np.mean(volumes_arr[-3:]))
+            vol_5d = float(np.mean(volumes_arr[-5:]))
+            vol_10_15d = float(np.mean(volumes_arr[-15:-5]))
+            if vol_10_15d > 0:
+                ratio = vol_5d / vol_10_15d
+                result.volume_trend = "放量" if ratio > 1.3 else ("缩量" if ratio < 0.7 else "平量")
+
+        # ── 庄家布局检测信号 ──
+        manip_signals = []
+        if n >= 10:
+            # 1. 价量背离：价格下跌但放量 → 可能吸筹；价格上涨但缩量 → 诱多
+            price_dir = 1 if closes[-1] > closes[-5] else -1
+            vol_dir = 1 if vol_5d > vol_10_15d else -1
+            if price_dir < 0 and vol_dir > 0:
+                manip_signals.append("⚠️ 近期价跌量增 — 可能有资金在低位吸筹")
+            elif price_dir > 0 and vol_dir < 0:
+                manip_signals.append("⚠️ 近期价涨量缩 — 上涨动力不足，警惕诱多")
+            # 2. 连续缩量阴跌 → 洗盘嫌疑
+            if n >= 5:
+                down_days = sum(1 for i in range(-5, 0) if closes[i] < closes[i-1])
+                vol_shrink = all(volumes_arr[i] < volumes_arr[i-1] for i in range(-5, -1))
+                if down_days >= 4 and vol_shrink:
+                    manip_signals.append("🔍 连续缩量阴跌 — 洗盘震仓特征，关注是否出现放量阳线确认")
+            # 3. 尾盘/集合竞价异常 (简化为收盘价 vs 日内振幅)
+            if n >= 3:
+                daily_ranges = [(highs[i] - lows[i]) / closes[i] * 100 for i in range(-3, 0)]
+                avg_range = np.mean(daily_ranges)
+                if avg_range > 5:
+                    manip_signals.append(f"📊 近3日日均振幅{avg_range:.1f}% — 高波动需警惕短线资金博弈")
+            # 4. 长下影线频率
+            if n >= 5:
+                lower_shadow_count = 0
+                for i in range(-5, 0):
+                    body_high = max(closes[i], closes[i-1] if i > -5 else closes[i])
+                    body_low = min(closes[i], closes[i-1] if i > -5 else closes[i])
+                    lower_shadow = (body_low - lows[i]) / closes[i] * 100 if closes[i] > 0 else 0
+                    if lower_shadow > 3:
+                        lower_shadow_count += 1
+                if lower_shadow_count >= 3:
+                    manip_signals.append("🔍 近5日多根长下影线 — 有资金在低位护盘，需确认是支撑还是诱多")
+
+        # ── 综合摘要 ──
         parts = []
+        trend_icons = {"上升": "📈", "下降": "📉", "震荡": "➡️"}
         if result.trend_5d:
-            trend_icons = {"上升": "📈", "下降": "📉", "震荡": "➡️"}
-            parts.append(f"近5日{trend_icons.get(result.trend_5d, '')}{result.trend_5d}")
-        if result.trend_10d and result.trend_10d != result.trend_5d:
-            parts.append(f"近10日{result.trend_10d}")
+            parts.append(f"近5日{trend_icons.get(result.trend_5d, '')}{result.trend_5d}({_pct(4):+.1f}%)")
+        if result.trend_10d:
+            parts.append(f"近10日{result.trend_10d}({_pct(9):+.1f}%)")
+        if trend_15d:
+            parts.append(f"近15日{trend_15d}({_pct(14):+.1f}%)")
         if result.volume_trend:
             parts.append(f"量能{result.volume_trend}")
-        if parts:
-            result.multi_day_summary = "，".join(parts)
+        result.multi_day_summary = "，".join(parts)
+
+        # 庄家布局信号追加到 overnight_risk
+        if manip_signals:
+            extra = "；".join(manip_signals)
+            result.overnight_risk = f"{result.overnight_risk}；{extra}" if result.overnight_risk else extra
 
     @staticmethod
     def _analyze_gaps(result: T0Result, daily_bars: list[Bar]) -> None:
@@ -508,6 +568,37 @@ class T0DecisionEngine:
             score += 5
             result.signals_bull.append(T0Signal("bull", 5, "daily",
                 f"3日跌{chg_3d:.1f}%，短线超卖有反弹需求"))
+
+        # Phase 13: 超跌反弹信号增强
+        # 5日跌幅（比3日更强的信号）
+        if chg_5d < -15:
+            score += 10
+            result.signals_bull.append(T0Signal("bull", 10, "daily",
+                f"5日跌{chg_5d:.1f}%，深度超卖，反弹动能积累"))
+        elif chg_5d < -10:
+            score += 5
+            result.signals_bull.append(T0Signal("bull", 5, "daily",
+                f"5日跌{chg_5d:.1f}%，短线超卖"))
+
+        # 阶段跌幅：从 30 日最高点计算
+        if hasattr(self, '_daily_bars') and self._daily_bars:
+            try:
+                import numpy as np
+                bars_sorted = sorted(self._daily_bars, key=lambda b: b.timestamp)
+                closes_arr = np.array([b.close for b in bars_sorted])
+                if len(closes_arr) >= 10:
+                    high_30d = float(np.max(closes_arr[-30:]))
+                    phase_decline = (high_30d - closes_arr[-1]) / high_30d * 100
+                    if phase_decline >= 25:
+                        score += 15
+                        result.signals_bull.append(T0Signal("bull", 15, "daily",
+                            f"阶段跌幅{phase_decline:.1f}% — 超跌反弹候选（25%规则触发）"))
+                    elif phase_decline >= 20:
+                        score += 8
+                        result.signals_bull.append(T0Signal("bull", 8, "daily",
+                            f"阶段跌幅{phase_decline:.1f}% — 接近超跌阈值"))
+            except Exception:
+                pass
 
         # ── 日内信号 ──
         if result.vwap > 0:

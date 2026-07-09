@@ -31,6 +31,7 @@ A 股「等回调再入场」全流程:
 
 from .schemas import (
     ManipulationCheck,
+    OversoldProfile,
     PullbackScanResult,
     PullbackState,
     PullbackStatus,
@@ -48,6 +49,7 @@ __all__ = [
     "AntiManipulationGate",
     "EntryConditionMonitor",
     "ManipulationCheck",
+    "OversoldProfile",
     "PullbackDetector",
     "PullbackQualityScorer",
     "PullbackScanResult",
