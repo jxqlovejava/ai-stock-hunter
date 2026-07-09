@@ -35,6 +35,27 @@ class Perspective(str, Enum):
 
 
 @dataclass
+class ManagementTrustAnalysis:
+    """管理层可信度分析结果 (v2.0 — 李录之问自动回答)."""
+    ability_score: float = 50.0       # 能力 0-100
+    integrity_score: float = 50.0     # 诚信 0-100
+    capital_score: float = 50.0       # 资本配置 0-100
+    red_flags: list[str] = field(default_factory=list)
+    green_flags: list[str] = field(default_factory=list)
+    verdict: str = ""                 # 一句话结论
+
+
+@dataclass
+class BearCaseAnalysis:
+    """空头案例分析结果 (v2.0 — 芒格之问自动回答)."""
+    scenarios: list[str] = field(default_factory=list)
+    summary: str = ""
+    top_failure_reason: str = ""
+    total_failure_prob: float = 0.0
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
 class PerspectiveScore:
     """单个大师视角的评分与深度分析."""
     perspective: Perspective
@@ -266,6 +287,11 @@ class PerspectiveAnalyzer:
             elif comp == "out_of_circle":
                 bear.append("❌ 能力圈外 — 李录强烈建议不做能力圈外的投资")
 
+        # ── 管理层深度分析 (v2.0: 自动回答"是否值得托付10年") ──────────
+        mgmt_analysis = cls._analyze_management_trustworthiness(
+            l1, quote, fin, exec_score, mgmt_score,
+        )
+
         ps.score = round(max(0, min(5, score)), 1)
         ps.bull_points = bull
         ps.bear_points = bear
@@ -279,10 +305,23 @@ class PerspectiveAnalyzer:
         else:
             ps.verdict = "回避"
             ps.one_line_thesis = "管理层文化或复利轨道存在隐患 — 宁可错过不可做错"
-        ps.key_concern = ("管理层是否值得托付10年？" if exec_score < 50
-                          else "复利会不会中断？" if er < 60
-                          else "你确定在自己的能力圈内吗？")
-        ps.unique_insight = f"李录3维度: 管理层{mgmt_score:.0f}/100 + 复利{er:.0f}/100 + 能力圈{'✅' if imm and comp=='in_circle' else '⚠️'} → {ps.score:.1f}/5"
+
+        # 将管理层分析注入 key_concern 和 unique_insight
+        if mgmt_analysis.red_flags:
+            ps.key_concern = mgmt_analysis.verdict
+            ps.unique_insight = (
+                f"李录3维度: 管理层{mgmt_score:.0f}/100(能力{mgmt_analysis.ability_score}/诚信{mgmt_analysis.integrity_score}/配置{mgmt_analysis.capital_score}) "
+                f"+ 复利{er:.0f}/100 + 能力圈{'✅' if imm and comp=='in_circle' else '⚠️'} → {ps.score:.1f}/5"
+            )
+            # 添加具体红旗到看空依据
+            for rf in mgmt_analysis.red_flags[:3]:
+                bear.append(rf)
+        else:
+            ps.key_concern = ("管理层是否值得托付10年？" if exec_score < 50
+                              else "复利会不会中断？" if er < 60
+                              else "你确定在自己的能力圈内吗？")
+            ps.unique_insight = f"李录3维度: 管理层{mgmt_score:.0f}/100 + 复利{er:.0f}/100 + 能力圈{'✅' if imm and comp=='in_circle' else '⚠️'} → {ps.score:.1f}/5"
+
         ps.questions_to_ask = [
             "创始人还在管理公司吗？他/她的核心价值观是什么？",
             "10年后这家公司会更大更好吗？什么可能让它消失？",
@@ -381,6 +420,26 @@ class PerspectiveAnalyzer:
             ps.one_line_thesis = "逆向扫描发现多项红旗 — '避免愚蠢比追求聪明更重要'"
         ps.key_concern = ("反着看: 这个投资最可能的失败原因是什么？"
                           if ps.score < 3.5 else "是否遗漏了'未知的未知'？")
+
+        # ── 自动生成空头案例 (v2.0) ──────────────────────────────────
+        bear_case = cls._build_bear_case(l1, quote, fin)
+        if bear_case and ps.score < 3.5:
+            # 注入空头案例到 unique_insight 和 key_concern
+            ps.unique_insight = (
+                f"🧠 芒格逆向分析: {bear_case.summary}"
+                if ps.unique_insight else bear_case.summary
+            )
+            ps.key_concern = bear_case.top_failure_reason
+            # 添加失败场景到看空依据
+            for scenario in bear_case.scenarios[:2]:
+                if scenario not in bear:
+                    bear.append(scenario)
+            ps.bear_points = bear
+            # 补充 evidence
+            ps.evidence = bear_case.evidence[:5]
+        elif len(bear_case_str := (getattr(l1, "bear_case", "") or "")) <= 30:
+            ps.unique_insight = "⚠️ 芒格准则: 你花了多少时间研究'这个投资为什么会失败'？答案: 不够。"
+
         ps.questions_to_ask = [
             "如果这个投资归零，最可能的3个原因是什么？",
             "有哪些风险属于'你自己都不知道你不知道'的范畴？",
@@ -552,4 +611,173 @@ class PerspectiveAnalyzer:
             f"{highest[1]}最乐观({highest[0].score:.1f}), "
             f"{lowest[1]}最悲观({lowest[0].score:.1f})。"
             f"建议: 理解{lowest[1]}的担忧后, 小仓位试探或等待更好价格。"
+        )
+
+    # ═══════════════════════════════════════════════════════════════════
+    # v2.0: 管理层深度分析 + 空头案例自动生成
+    # ═══════════════════════════════════════════════════════════════════
+
+    @classmethod
+    def _analyze_management_trustworthiness(
+        cls, l1, quote, fin, exec_score: float, mgmt_score: float,
+    ) -> "ManagementTrustAnalysis":
+        """自动分析管理层是否值得托付10年.
+
+        从诊断报告、财务数据、高管信息中提取管理层层面的红旗和绿旗。
+        不再只提问，而是给出基于数据的回答。
+        """
+        result = ManagementTrustAnalysis()
+
+        # 基础分
+        result.ability_score = min(100, mgmt_score + 10)  # 能力通常高于综合管理分
+        result.integrity_score = max(20, exec_score - 20) if exec_score > 0 else 30
+        result.capital_score = min(100, mgmt_score)
+
+        # 提取高管风险
+        exec_risks = getattr(l1, "executive_risks", []) or []
+        exec_data = getattr(l1, "executive", None)
+
+        # 检测红旗信号
+        if exec_risks:
+            for risk in exec_risks:
+                risk_str = str(risk).lower()
+                if any(kw in risk_str for kw in ["内幕", "违规", "处罚", "刑事", "调查", "警示函",
+                                                   "减持", "质押", "冻结"]):
+                    result.integrity_score = max(10, result.integrity_score - 20)
+                    result.red_flags.append(f"🔴 合规风险: {str(risk)[:120]}")
+
+        # 高管背景缺失检测
+        if exec_data:
+            has_background = getattr(exec_data, "has_background_check", None)
+            if has_background is False:
+                result.integrity_score = max(10, result.integrity_score - 15)
+                result.red_flags.append("🔴 高管背景信息缺失 — 无法评估诚信风险")
+
+        # 财务检测: 关联交易、商誉、质押
+        if fin and len(fin) > 0:
+            latest = fin[0]
+            goodwill_ratio = latest.get("商誉占比", 0) or 0
+            if goodwill_ratio > 0.3:
+                result.capital_score = max(10, result.capital_score - 15)
+                result.red_flags.append(f"🟠 商誉/净资产>{goodwill_ratio:.0%} — 历史并购质量存疑")
+
+        # 家族传承检测
+        exec_info = getattr(l1, "executive_info", {}) or {}
+        if isinstance(exec_info, dict):
+            has_family = exec_info.get("family_succession", False)
+            if has_family:
+                result.integrity_score = max(10, result.integrity_score - 10)
+                result.red_flags.append("🟡 家族传承迹象 — 非市场化选聘管理层")
+
+        # 生成结论
+        if result.integrity_score < 30:
+            result.verdict = (
+                f"⚠️ 李录之问: 管理层诚信分 {result.integrity_score}/100 — "
+                f"存在重大治理缺陷，不值得托付10年。能力({result.ability_score})越强，"
+                f"诚信缺失造成的破坏越大。"
+            )
+        elif result.integrity_score < 50:
+            result.verdict = (
+                f"⚠️ 李录之问: 管理层诚信分 {result.integrity_score}/100 — "
+                f"能力出众({result.ability_score})但治理有瑕疵，需要持续观察。"
+            )
+        elif result.red_flags:
+            result.verdict = (
+                f"🟡 李录之问: 管理层能力{result.ability_score}/诚信{result.integrity_score}/"
+                f"配置{result.capital_score} — 整体可接受但需关注已标记风险点"
+            )
+        else:
+            result.verdict = (
+                f"✅ 李录之问: 管理层能力{result.ability_score}/诚信{result.integrity_score}/"
+                f"配置{result.capital_score} — 未发现重大治理缺陷，可基本托付"
+            )
+
+        return result
+
+    @classmethod
+    def _build_bear_case(cls, l1, quote, fin) -> "BearCaseAnalysis | None":
+        """自动构建空头案例.
+
+        从现有数据中提取: 估值极端、融资趋势、价格趋势、财务风险、宏观风险。
+        不再依赖外部 bear_case 文本，直接从诊断数据生成。
+        """
+        scenarios: list[str] = []
+        evidence: list[str] = []
+        failure_reasons: list[tuple[str, float]] = []  # (reason, probability)
+
+        pe = (quote.get("pe_ttm") or quote.get("pe") or 0) if quote else 0
+        pb = (quote.get("pb") or 0) if quote else 0
+        price = (quote.get("price") or quote.get("close") or 0) if quote else 0
+
+        # 1. 估值极端风险
+        if pe > 60:
+            prob = min(0.35, (pe - 30) / 200)
+            scenarios.append(f"🔴 估值坍塌: PE={pe:.0f}x，若跌至行业均值20x，股价将跌{((pe-20)/pe*100):.0f}%")
+            failure_reasons.append((f"高估值回归 (PE={pe:.0f}x)", prob))
+            evidence.append(f"PE(TTM)={pe:.1f}, 行业中枢约20-25x")
+
+        if pb > 8:
+            scenarios.append(f"🔴 PB={pb:.1f}x，资产端存在高估风险")
+
+        # 2. 动量持续下行风险
+        mom = getattr(l1, "momentum_score", 50) or 50
+        if mom < 35:
+            prob = 0.25
+            scenarios.append(f"🔴 动量崩溃: 趋势评分{mom}/100，下跌趋势可能自我强化，触发融资盘强平踩踏")
+            failure_reasons.append(("下跌趋势自我强化→融资踩踏", prob))
+            evidence.append(f"动量评分={mom}/100(极弱)")
+
+        # 3. 融资余额趋势 (margin)
+        margin_data = getattr(l1, "margin_profile", None)
+        if margin_data:
+            if hasattr(margin_data, "consecutive_outflow_days") and margin_data.consecutive_outflow_days >= 3:
+                prob = 0.20
+                scenarios.append(
+                    f"🔴 杠杆资金撤退: 融资连续{margin_data.consecutive_outflow_days}天净流出, "
+                    f"5日变化{margin_data.margin_balance_5d_change_pct:+.1f}%"
+                )
+                failure_reasons.append(("杠杆资金持续撤退→流动性枯竭", prob))
+                evidence.append(
+                    f"融资余额{margin_data.margin_balance:.1f}亿, "
+                    f"趋势{margin_data.margin_balance_trend}"
+                )
+
+        # 4. 财务风险
+        if fin and len(fin) > 0:
+            latest = fin[0]
+            debt_ratio = latest.get("资产负债率", 0) or 0
+            if debt_ratio > 0.55:
+                prob = 0.15
+                scenarios.append(f"🟠 高杠杆风险: 资产负债率{debt_ratio:.0%}，若锂价持续下跌可能触发债务危机")
+                failure_reasons.append(("高杠杆+锂价下行→偿债压力", prob))
+                evidence.append(f"资产负债率={debt_ratio:.1%}")
+
+        # 5. 宏观-行业周期风险
+        val_score = getattr(l1, "value_score", 50) or 50
+        macro_score = getattr(l1, "macro_score", 50) or 50
+        if val_score < 40:
+            scenarios.append("🟡 估值偏高: 当前价格可能未充分反映锂价下行风险")
+            failure_reasons.append(("估值未反映锂价下行", 0.15))
+        if macro_score < 45:
+            scenarios.append("🟡 宏观逆风: 宽货币紧信用环境不利于周期股")
+
+        if not scenarios:
+            return None
+
+        # 取 top failure reason
+        failure_reasons.sort(key=lambda x: x[1], reverse=True)
+        top_reason = failure_reasons[0][0] if failure_reasons else "多因素叠加"
+
+        total_prob = min(0.80, sum(f[1] for f in failure_reasons))
+        summary = (
+            f"芒格空头案例: {len(scenarios)}个独立失败场景, 综合概率~{total_prob:.0%}. "
+            f"最可能: {top_reason}"
+        )
+
+        return BearCaseAnalysis(
+            scenarios=scenarios,
+            summary=summary,
+            top_failure_reason=top_reason,
+            total_failure_prob=total_prob,
+            evidence=evidence,
         )
