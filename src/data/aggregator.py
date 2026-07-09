@@ -59,6 +59,7 @@ class DataAggregator:
         self._guosen: GuosenProvider | None = None
         self._akshare: AKShareProvider | None = None
         self._miaoxiang: "MiaoXiangProvider | None" = None  # type: ignore[name-defined]
+        self._cninfo: "CninfoProvider | None" = None  # type: ignore[name-defined]
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
         self.speed_monitor = SpeedMonitor()  # 信息速度优势度量（共享实例）
@@ -106,6 +107,21 @@ class DataAggregator:
             except Exception:
                 self._miaoxiang = None
         return self._miaoxiang
+
+    @property
+    def cninfo(self) -> "CninfoProvider | None":  # type: ignore[name-defined]
+        """懒加载 cninfo 适配器。零鉴权，永远可用。"""
+        if self._cninfo is None:
+            try:
+                from .cninfo import CninfoProvider
+                provider = CninfoProvider()
+                if provider.health_check():
+                    self._cninfo = provider
+                else:
+                    self._cninfo = provider  # orgId 加载失败也可用（有硬编码回退）
+            except Exception:
+                self._cninfo = None
+        return self._cninfo
 
     # ------------------------------------------------------------------
     # Loader helpers
@@ -486,24 +502,25 @@ class DataAggregator:
                 logger.debug("mx-search 公告失败: %s", e)
 
         # 2. 巨潮 cninfo (降级)
-        try:
-            from .eastmoney_fallback import fetch_cninfo_announcements
-            raw = fetch_cninfo_announcements(symbol)
-            if raw:
-                items = []
-                for entry in raw:
-                    items.append(NewsItem(
-                        title=entry.get("title", ""),
-                        source="cninfo",
-                        date=entry.get("date", ""),
-                        content=entry.get("type", ""),
-                        url=entry.get("url", ""),
-                        provider="cninfo",
-                    ))
-                if items:
-                    return items
-        except Exception as e:
-            logger.debug("巨潮公告降级失败 (%s): %s", symbol, e)
+        cninfo = self.cninfo
+        if cninfo is not None:
+            try:
+                raw = cninfo.search_announcements(symbol)
+                if raw:
+                    items = []
+                    for entry in raw:
+                        items.append(NewsItem(
+                            title=entry.get("title", ""),
+                            source="cninfo",
+                            date=entry.get("date", ""),
+                            content=entry.get("type", ""),
+                            url=entry.get("url", ""),
+                            provider="cninfo",
+                        ))
+                    if items:
+                        return items
+            except Exception as e:
+                logger.debug("巨潮公告降级失败 (%s): %s", symbol, e)
 
         return []
 
@@ -644,29 +661,30 @@ class DataAggregator:
                 logger.debug("mx-data 董事会变更失败: %s", e)
 
         # 2. 巨潮 cninfo (降级) — 搜索董监高相关公告
-        try:
-            from .eastmoney_fallback import fetch_cninfo_announcements
-            # 搜索董事/监事/高管变动公告
-            raw = fetch_cninfo_announcements(symbol)
-            if raw:
-                items = []
-                board_keywords = ["董事", "监事", "高管", "总裁", "副总裁", "总经理",
-                                  "董秘", "辞职", "聘任", "选举", "任命", "变更"]
-                for entry in raw:
-                    title = entry.get("title", "")
-                    if any(kw in title for kw in board_keywords):
-                        items.append(BoardChange(
-                            person_name="",  # 公告标题通常不包含具体人名
-                            old_position="",
-                            new_position="",
-                            change_date=entry.get("date", ""),
-                            reason=title[:200],
-                            provider="cninfo",
-                        ))
-                if items:
-                    return items
-        except Exception as e:
-            logger.debug("巨潮董事会变更降级失败 (%s): %s", symbol, e)
+        cninfo = self.cninfo
+        if cninfo is not None:
+            try:
+                # 搜索董事/监事/高管变动公告
+                raw = cninfo.search_announcements(symbol)
+                if raw:
+                    items = []
+                    board_keywords = ["董事", "监事", "高管", "总裁", "副总裁", "总经理",
+                                      "董秘", "辞职", "聘任", "选举", "任命", "变更"]
+                    for entry in raw:
+                        title = entry.get("title", "")
+                        if any(kw in title for kw in board_keywords):
+                            items.append(BoardChange(
+                                person_name="",  # 公告标题通常不包含具体人名
+                                old_position="",
+                                new_position="",
+                                change_date=entry.get("date", ""),
+                                reason=title[:200],
+                                provider="cninfo",
+                            ))
+                    if items:
+                        return items
+            except Exception as e:
+                logger.debug("巨潮董事会变更降级失败 (%s): %s", symbol, e)
 
         return []
 

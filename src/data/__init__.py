@@ -3,6 +3,7 @@
 
 from .aggregator import DataAggregator
 from .base import DataProvider
+from .cninfo import CninfoProvider
 from .consolidators import (
     RenkoBar,
     RenkoConsolidator,
@@ -37,6 +38,7 @@ __all__ = [
     # 数据源
     "DataProvider",
     "DataAggregator",
+    "CninfoProvider",
     # 行情模型
     "Quote",
     "Bar",

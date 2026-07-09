@@ -106,49 +106,48 @@ PUSH2_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 CNINFO_ANNOUNCE_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_ORGID_URL = "http://www.cninfo.com.cn/new/data/szse_stock.json"
 
-# ── 巨潮 orgId 缓存 ────────────────────────────────────────────────
+# ── 巨潮 orgId 缓存（deprecated，委托给 CninfoProvider） ────────────
 _cninfo_orgid_map: dict[str, str] = {}
 _cninfo_orgid_loaded: bool = False
 
 
 def _load_cninfo_orgid_map():
-    """从巨潮官方 JSON 加载 股票代码 → orgId 映射（6198 只，懒加载一次）。"""
+    """[deprecated] 委托给 CninfoProvider._load_orgid_map()。"""
     global _cninfo_orgid_loaded, _cninfo_orgid_map
-    if _cninfo_orgid_loaded:
-        return
-    _cninfo_orgid_loaded = True
     try:
-        r = requests.get(
-            CNINFO_ORGID_URL,
-            headers={"User-Agent": UA},
-            timeout=15,
-        )
-        _cninfo_orgid_map = {
-            s["code"]: s["orgId"] for s in r.json().get("stockList", [])
-        }
-    except Exception as e:
-        logger.warning("巨潮 orgId 映射表加载失败，回退硬编码规则: %s", e)
+        from .cninfo import _get_default_provider
+        p = _get_default_provider()
+        p._load_orgid_map()
+        _cninfo_orgid_map = p._orgid_map
+        _cninfo_orgid_loaded = p._orgid_loaded
+    except Exception:
+        if not _cninfo_orgid_loaded:
+            _cninfo_orgid_loaded = True
 
 
 def _cninfo_orgid(code: str) -> str:
-    """查股票真实 orgId。优先查官方映射表，查不到回退硬编码。"""
-    _load_cninfo_orgid_map()
-    org = _cninfo_orgid_map.get(code)
-    if org:
-        return org
-    # fallback
-    if code.startswith("6"):
-        return f"gssh0{code}"
-    elif code.startswith("8") or code.startswith("4"):
-        return f"gsbj0{code}"
-    return f"gssz0{code}"
+    """[deprecated] 委托给 CninfoProvider._get_orgid()。"""
+    try:
+        from .cninfo import _get_default_provider
+        return _get_default_provider()._get_orgid(code)
+    except Exception:
+        if code.startswith("6"):
+            return f"gssh0{code}"
+        elif code.startswith("8") or code.startswith("4"):
+            return f"gsbj0{code}"
+        return f"gssz0{code}"
 
 
 def _cninfo_ts_to_date(ts) -> str:
-    """巨潮 announcementTime: Unix 毫秒 → YYYY-MM-DD"""
-    if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
-    return str(ts)[:10] if ts else ""
+    """[deprecated] 委托给 CninfoProvider._ts_to_date()。"""
+    try:
+        from .cninfo import _get_default_provider
+        return _get_default_provider()._ts_to_date(ts)
+    except Exception:
+        from datetime import datetime
+        if isinstance(ts, (int, float)):
+            return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+        return str(ts)[:10] if ts else ""
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -258,6 +257,8 @@ def fetch_em_global_news(page_size: int = 50) -> list[dict]:
 def fetch_cninfo_announcements(symbol: str, page_size: int = 30) -> list[dict]:
     """巨潮 cninfo 公告检索 (POST, 零鉴权)。
 
+    委托给 CninfoProvider.search_announcements()。
+
     Args:
         symbol: 6 位股票代码
         page_size: 返回条数
@@ -265,50 +266,9 @@ def fetch_cninfo_announcements(symbol: str, page_size: int = 30) -> list[dict]:
     Returns:
         [{title, type, date, url}, ...]
     """
-    org_id = _cninfo_orgid(symbol)
-
-    payload = {
-        "stock": f"{symbol},{org_id}",
-        "tabName": "fulltext",
-        "pageSize": str(page_size),
-        "pageNum": "1",
-        "column": "",
-        "category": "",
-        "plate": "",
-        "seDate": "",
-        "searchkey": "",
-        "secid": "",
-        "sortName": "",
-        "sortType": "",
-        "isHLtitle": "true",
-    }
-    headers = {
-        "User-Agent": UA,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": "https://www.cninfo.com.cn/new/disclosure",
-        "Origin": "https://www.cninfo.com.cn",
-    }
-
     try:
-        r = requests.post(
-            CNINFO_ANNOUNCE_URL,
-            data=payload,
-            headers=headers,
-            timeout=15,
-        )
-        d = r.json()
-        rows = []
-        for item in d.get("announcements", []) or []:
-            aid = item.get("announcementId", "")
-            rows.append(
-                {
-                    "title": item.get("announcementTitle", ""),
-                    "type": item.get("announcementTypeName", ""),
-                    "date": _cninfo_ts_to_date(item.get("announcementTime")),
-                    "url": f"https://www.cninfo.com.cn/new/disclosure/detail?annoId={aid}",
-                }
-            )
-        return rows
+        from .cninfo import _get_default_provider
+        return _get_default_provider().search_announcements(symbol, page_size=page_size)
     except Exception as e:
         logger.debug("巨潮公告获取失败 (%s): %s", symbol, e)
         return []
