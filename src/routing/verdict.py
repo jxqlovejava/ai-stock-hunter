@@ -93,11 +93,13 @@ class VerdictEngine:
         # Phase 4: Alpha Lens 乘数调整
         alpha_mult, alpha_rationale, consensus_challenge = self._alpha_multiplier(report)
 
-        # Phase 3: 主题生命周期调整
+        # Phase 3: 主题生命周期调整（传入 quality_score 用于结构性升级检测）
         adjusted_sector = sector_score
         topic_info: dict = {}
         if topic_adj:
-            adjusted_sector, topic_info = self._apply_topic_adjustment(sector_score, topic_adj)
+            adjusted_sector, topic_info = self._apply_topic_adjustment(
+                sector_score, topic_adj, quality_score=report.quality_score
+            )
 
         # 解析权重
         weights = self.WEIGHTS.copy()
@@ -132,6 +134,12 @@ class VerdictEngine:
 
         # Phase 4: Alpha Lens 乘数 — Alpha 放大/缩小总评分
         score = max(0, min(100, raw_score * alpha_mult))
+
+        # Phase 4b: Alpha 高分加成 — Alpha≥70 标的额外 +5 分
+        #   (寒武纪案例：国产唯一性 Alpha 极高，但基本面偏弱被 HOLD 阈值拦截)
+        alpha_score = getattr(report, "alpha_score", 0) or 0
+        if alpha_score >= 70:
+            score += 5.0
 
         # Phase 6: 博弈论 + 投资思维模型乘数
         gt_profile = getattr(report, "game_theory_profile", None)
@@ -245,7 +253,7 @@ class VerdictEngine:
         # 建议映射
         if score >= 75:
             rec = "BUY"
-        elif score >= 60:
+        elif score >= 55:
             rec = "ADD"
         elif score >= 40:
             rec = "HOLD"
@@ -395,7 +403,8 @@ class VerdictEngine:
         )
 
     def _apply_topic_adjustment(
-        self, sector_score: float, topic_adj: dict
+        self, sector_score: float, topic_adj: dict,
+        quality_score: float = 50.0,
     ) -> tuple[float, dict]:
         """主题生命周期 -> 行业权重调整。
 
@@ -406,10 +415,21 @@ class VerdictEngine:
           CROWDED (-0.2): 过度拥挤 -> 降权 20%
           FADING (-1.0): 主题消退 -> 行业评分中性化
 
+        P0 修复 (2026-07-09): 结构性升级豁免。
+          当主题 CROWDED 但公司 quality_score >= 70，表示公司在行业拥挤中
+          具有真实的产品结构升级（高 ROE + 强盈利修正），CROWDED 罚金从
+          -0.20 减半至 -0.10（视同 CONSENSUS 级别）。
+          案例: 沪电股份 PCB 单台价值量 $35k→$117k (+233%)。
+
         Returns:
             (adjusted_sector_score, topic_info_dict)
         """
-        info: dict = {"crowded_topics": [], "fading_topics": [], "emerging_topics": []}
+        # 检测结构性升级：高质量公司在拥挤行业中仍在增长
+        structural_upgrade = quality_score >= 70.0
+        info: dict = {
+            "crowded_topics": [], "fading_topics": [],
+            "emerging_topics": [], "structural_upgrade": structural_upgrade,
+        }
         max_bonus = 0.0
         has_fading = False
 
@@ -418,8 +438,14 @@ class VerdictEngine:
                 has_fading = True
                 info["fading_topics"].append(topic_id)
             elif bonus <= -0.15:  # CROWDED
-                max_bonus = min(max_bonus, bonus)
-                info["crowded_topics"].append(topic_id)
+                if structural_upgrade:
+                    # 结构性升级公司：CROWDED 罚金减半 (-0.20 → -0.10)
+                    reduced_bonus = -0.10
+                    max_bonus = min(max_bonus, reduced_bonus)
+                    info["crowded_topics"].append(f"{topic_id}(升级豁免,罚金减半)")
+                else:
+                    max_bonus = min(max_bonus, bonus)
+                    info["crowded_topics"].append(topic_id)
             elif bonus <= -0.05:  # CONSENSUS
                 max_bonus = min(max_bonus, bonus)
             elif bonus >= 0.05:  # EMERGING
