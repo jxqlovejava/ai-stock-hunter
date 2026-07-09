@@ -1,6 +1,6 @@
 # 系统迭代备忘录
 
-> 最后更新: 2026-07-05
+> 最后更新: 2026-07-09
 
 ---
 
@@ -53,6 +53,16 @@
 - [ ] **无实盘接口** — 远期规划
 - [x] **可视化** — `src/backtest/visualizer.py` 新建：权益曲线/回撤图/月度热力图/因子归因/HTML 报告 (07-05)
 
+### ⚠️ 已知 Stub / 技术债（07-09 审计发现）
+
+| 文件 | 位置 | 问题 | 状态 |
+|------|------|------|:--:|
+| ~~`macro/cycle_valuer.py`~~ | L365, L381 | PB 分位数 & Shiller PE 分位数为 stub | ✅ 已修复 (07-09) |
+| ~~`routing/diagnosis.py`~~ | L518 | `_score_executive()` 死代码 stub（真实实现 L615 覆盖） | ✅ 已删除 (07-09) |
+| ~~`llm/compactor.py`~~ | L59 | LLM 调用未接入 | ✅ 已修复 (07-09) |
+
+> 以上 3 项已修复。cycle_valuer 现在通过 AKShare 历史数据→东财行业分位→启发式回退三级降级；compactor 通过 stdlib urllib 调用 LLM API，无依赖，失败时回退到规则压缩。
+
 ---
 
 ## 🔴 高优先级
@@ -71,7 +81,7 @@
 - [x] **参数优化加速** — optimizer.py 已有 BayesianOptimizer；walkforward.py 提供滚动窗口验证防过拟合 (07-05)
 - [x] **策略注册表完善** — MVP1/MVP2/MVP2+/MVP3 四个策略已实现 (07-05)
 - [x] **回测报告 HTML 输出** — visualizer.py 提供 full_report()：权益曲线 + 回撤图 + 月度热力图 + 因子归因 (07-05)
-- [ ] **日内/分钟级回测** — 当前仅日线，高频策略需要 tick/min 粒度
+- [x] **日内/分钟级回测** — `intraday_engine.py` 408 行，事件驱动的分钟级回测引擎已存在（参照 LEAN AlgorithmManager），待集成到主流程 (07-09)
 
 ### 财报分析
 
@@ -82,7 +92,7 @@
 - [ ] **估值分位可视化** — PE/PB/PS 历史分位数图表，行业对比百分位
 - [x] **财务健康度评分** — `financial_statements.py`：Z-score/利息保障倍数/流动比率/有息负债率 (07-05)
 - [x] **财报事件日历** — `financial_statements.py`：业绩预告+业绩快报，`stock_yjyg_em`/`stock_yjkb_em` (07-05)
-- [x] **周期与估值框架** — `src/macro/cycle_valuer.py` 新建：四阶段周期检测/席勒PE/PEG/PB×ROE 自适应估值 (07-05)
+- [x] **周期与估值框架** — `src/macro/cycle_valuer.py` 新建：四阶段周期检测/席勒PE/PEG/PB×ROE 自适应估值。⚠️ PB 分位数 & Shiller PE 分位数为 stub（需 10 年盈利历史）(07-05)
 
 ### 数据层
 
@@ -161,11 +171,17 @@
 
 ### 基建 & DevOps
 
-- [ ] **CLI 完善** — cli.py 补充子命令: `backtest-compare`, `factor-update`, `alert-test`
+- [ ] **CLI 完善** — cli.py 补充子命令: `factor-update`, `alert-test`（`backtest-compare` 已在 cli.py:517 实现）
 - [ ] **定时任务调度** — cron/Luigi/Airflow 自动跑因子更新 + 回测
 - [ ] **Docker 化部署** — Dockerfile + docker-compose
 - [ ] **单元测试补充** — 当前 152 用例，回测/因子/行业模块需补测
 - [ ] **GitHub Actions CI** — lint + test + coverage 自动门禁
+- [ ] **并行优化（参考 ai-gold-miner）** — 借鉴 `src/gold_miner/pipeline/analysis.py` 的并行模式优化全链路吞吐：
+  - **数据采集并行化** — 参考 `_step_collect()` 7 路 `ThreadPoolExecutor` 并行获取 (gold/intl/dxy/rate/silver/breakeven)，每路独立 fetcher 实例保证线程安全；当前 `data/aggregator.py` 多为串行调用
+  - **信号生成并行化** — 参考 `_step_generate_signals()` 10 路并行信号生成器 (技术面/基本面/消息面/情绪面/ETF/日历/事件/近期事件/Monitor)，`as_completed()` 先到先收；当前 diagnosis 7 维度仍为串行
+  - **独立阶段并行合并** — 参考 `_step_source_truth_and_debate()` 将无依赖的阶段 (来源验证 + Agent 辩论) 合并到同一 `ThreadPoolExecutor` 并行跑，只读共享 bundle、写不同字段
+  - **拓扑依赖调度** — 参考 `signals/pipeline.py` 的 `PipelineStep` + `depends_on` 声明式依赖图，自动识别可并行步骤；当前 `orchestrator.py` 硬编码串行顺序
+  - **状态缓存** — 参考 `AdvisorState` 的 `is_fresh(minutes=30)` 中间结果缓存，避免重复计算
 
 ---
 
@@ -176,4 +192,4 @@
 | 07-08 | 🔄 L0-L4 skill 目录重命名：l0-gate→admission, l1-analyze→diagnosis, l2-judge→verdict, l3-trade→positioning, l4-risk→risk-control；所有交叉引用同步更新 |
 | 07-08 | 🔒 信息源质量框架固化：sentiment-analysis SKILL.md 新增 Step 0.1-0.5 强制前置检查（T0-T3/时效性/STALE排除/交叉验证/A-B-C可得性）；stock-hunter SKILL.md 引用；guardrails.md 新增时效性校验规则+交叉验证要求+信息可得性分级+归因输出强制格式 |
 | 07-05 | 🏆 PK增强：白泽 82分(原77)。因子72→85(17因子)/NLP68→78(多源聚合)/基本面78→86(Piotroski+Beneish+FCF)。新建19模块+修改11文件。452测试通过 |
-| 07-04 | 回测引擎新增 `load_data()` AKShare 自动加载；因子管道 MVP 完成 6 个月 PE 快照；行业/策略/输出模块骨架创建；三大底层问题系统诊断→TODO 战略优化方向；8 新模块+5 文件修改+82 测试全通过 |
+| 07-09 | 🔍 代码审计：逐文件核对 TODO.md 完成状态。发现 3 个 stub（cycle_valuer×2 + diagnosis 高管因子 + llm compactor）；`intraday_engine.py` 408 行已存在但 TODO 标记未完成→已修正为 [x]；`backtest-compare` CLI 已实现→从待办移除；`panic_arb_scout.py` 确认未创建。更新最后更新日期 |
