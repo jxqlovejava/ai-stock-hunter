@@ -17,6 +17,13 @@ from .position_state import (  # Phase 12: 实时持仓 HWM + 动态止盈止损
     AlertType,
 )
 from .orchestrator import Orchestrator
+from .fundamental_diagnosis import (
+    FundamentalDiagnosisEngine,
+    FundamentalDiagnosisReport,
+    Q1Answer,
+    Q2Answer,
+    Q3Answer,
+)
 from .signal import (
     Direction,
     PortfolioTarget,
@@ -84,5 +91,11 @@ __all__ = [
     "AnalysisContext",
     "TokenCounter",
     "create_context",
+    # -- 三大根本问题诊断 --
+    "FundamentalDiagnosisEngine",
+    "FundamentalDiagnosisReport",
+    "Q1Answer",
+    "Q2Answer",
+    "Q3Answer",
 ]
 
