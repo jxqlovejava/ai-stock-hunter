@@ -7,6 +7,7 @@ Answers: "Is our information processing fast enough to create alpha?"
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -42,25 +43,27 @@ class SpeedMonitor:
         self._records: list[dict] = []
         self._benchmarks: dict[str, list[float]] = defaultdict(list)
         self._max_records = 1000  # Prevent unbounded growth
+        self._lock = threading.Lock()  # Thread safety for concurrent access
 
     # ------------------------------------------------------------------
     # Recording
     # ------------------------------------------------------------------
 
     def record_latency(self, source: str, stage: str, elapsed_ms: float) -> None:
-        """Record a latency measurement for a source+stage pair."""
-        self._records.append({
-            "source": source,
-            "stage": stage,
-            "elapsed_ms": elapsed_ms,
-            "timestamp": datetime.now(),
-        })
-        # Track per-source benchmarks
-        self._benchmarks[f"{source}:{stage}"].append(elapsed_ms)
+        """Record a latency measurement for a source+stage pair (thread-safe)."""
+        with self._lock:
+            self._records.append({
+                "source": source,
+                "stage": stage,
+                "elapsed_ms": elapsed_ms,
+                "timestamp": datetime.now(),
+            })
+            # Track per-source benchmarks
+            self._benchmarks[f"{source}:{stage}"].append(elapsed_ms)
 
-        # Prune old records
-        if len(self._records) > self._max_records:
-            self._records = self._records[-self._max_records // 2 :]
+            # Prune old records
+            if len(self._records) > self._max_records:
+                self._records = self._records[-self._max_records // 2 :]
 
     def time_event(self, event_type: str) -> float:
         """Start timing an event. Returns start timestamp."""
@@ -77,33 +80,36 @@ class SpeedMonitor:
     # ------------------------------------------------------------------
 
     def get_metrics(self) -> SpeedMetrics:
-        """Compute aggregate speed metrics from recorded data."""
-        metrics = SpeedMetrics(total_events=len(self._records))
+        """Compute aggregate speed metrics from recorded data (thread-safe)."""
+        with self._lock:
+            records_snapshot = list(self._records)
 
-        if not self._records:
+        metrics = SpeedMetrics(total_events=len(records_snapshot))
+
+        if not records_snapshot:
             return metrics
 
         # Average latency
-        total_ms = sum(r["elapsed_ms"] for r in self._records)
-        metrics.avg_latency_seconds = total_ms / len(self._records) / 1000.0
+        total_ms = sum(r["elapsed_ms"] for r in records_snapshot)
+        metrics.avg_latency_seconds = total_ms / len(records_snapshot) / 1000.0
 
         # Event type tracking
-        for r in self._records:
+        for r in records_snapshot:
             stage = r["stage"]
             metrics.event_types_tracked[stage] = metrics.event_types_tracked.get(stage, 0) + 1
 
         # Fastest source
         source_avgs: dict[str, list[float]] = defaultdict(list)
-        for r in self._records:
+        for r in records_snapshot:
             source_avgs[r["source"]].append(r["elapsed_ms"])
         if source_avgs:
             avg_by_source = {s: sum(v) / len(v) for s, v in source_avgs.items()}
             metrics.fastest_source = min(avg_by_source, key=avg_by_source.get)  # type: ignore[arg-type]
 
         # Bottlenecks: stages with avg latency > 2x overall average
-        overall_avg = total_ms / len(self._records)
+        overall_avg = total_ms / len(records_snapshot)
         stage_avgs: dict[str, list[float]] = defaultdict(list)
-        for r in self._records:
+        for r in records_snapshot:
             stage_avgs[r["stage"]].append(r["elapsed_ms"])
         for stage, latencies in stage_avgs.items():
             stage_avg = sum(latencies) / len(latencies)

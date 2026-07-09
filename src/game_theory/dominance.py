@@ -25,6 +25,7 @@ class DominanceProfile:
     small_cap_strength: Optional[float] = None  # 小盘 vs 大盘相对强度
     volatility_regime: str = "medium"  # "high" / "medium" / "low"
     recommended_strategy: str = ""
+    player_scores: dict[str, float] = field(default_factory=dict)  # {HOT_MONEY: 85.0, INSTITUTIONAL: 60.0, ...}
     updated_at: datetime = field(default_factory=datetime.now)
 
 
@@ -92,6 +93,9 @@ class DominanceClassifier:
             p for p, (score, _) in evidence_all.items()
             if p != best_player and score > best_score * 0.6
         ]
+
+        # Expose all player scores for marginal-pricer ranking (Q2)
+        profile.player_scores = {k: v[0] for k, v in evidence_all.items()}
 
         # Map to market regime
         profile.market_regime = self._to_market_regime(best_player)

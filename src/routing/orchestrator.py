@@ -98,6 +98,8 @@ class OrchestratorResult:
     # Phase 6+: 数据缺口与红线
     data_gaps: list[str] = field(default_factory=list)
     red_lines: list[str] = field(default_factory=list)
+    # Phase 3+: 三大根本问题诊断
+    fundamental_diagnosis: Optional[dict] = None
     cross_validated: bool = False
     # CogAlpha: 多 Agent 质量审查报告
     quality_report: Optional[dict] = None
@@ -474,6 +476,12 @@ class Orchestrator:
         fiscal_regime = self._get_fiscal_regime()
         policy_signals = self._get_policy_signals()
 
+        # Phase 3+: 市场状态分类 (RegimeClassifier, 原死代码)
+        market_regime_profile = self._get_market_regime(self.data)
+
+        # Phase 3+: 政策→板块传导链 (SectorTransmissionAnalyzer, 原死代码)
+        policy_transmission = self._get_policy_transmission(policy_signals)
+
         # 增强宏观 dict
         enriched_macro = macro or {}
         if fiscal_regime is not None:
@@ -497,6 +505,52 @@ class Orchestrator:
                 "quadrant": macro_regime.quadrant.value,
                 "confidence": macro_regime.confidence,
             }
+
+        # ---- 注入市场状态 + 政策传导 ----
+        if market_regime_profile is not None:
+            enriched_macro["market_regime"] = getattr(market_regime_profile, "regime", None)
+            if hasattr(enriched_macro["market_regime"], "value"):
+                enriched_macro["market_regime"] = enriched_macro["market_regime"].value
+            enriched_macro["market_regime_confidence"] = getattr(market_regime_profile, "confidence", 0.5)
+            enriched_macro["market_volatility"] = getattr(market_regime_profile, "volatility", None)
+            enriched_macro["market_trend"] = getattr(market_regime_profile, "ma_signal", "neutral")
+            enriched_macro["recommended_exposure"] = getattr(market_regime_profile, "recommended_exposure", 0.6)
+        if policy_transmission:
+            enriched_macro["policy_transmission"] = policy_transmission
+
+        # ---- Phase 3+: 三大根本问题诊断 ----
+        try:
+            from src.routing.fundamental_diagnosis import FundamentalDiagnosisEngine
+            fd_engine = FundamentalDiagnosisEngine(speed_monitor=getattr(self.data, "speed_monitor", None))
+            # 构建 index_prices
+            index_prices = None
+            try:
+                idx_df = self.data.get_history("000001", "SH", period="daily")
+                if idx_df is not None and not idx_df.empty and "close" in idx_df.columns:
+                    index_prices = idx_df["close"].tolist()
+            except Exception:
+                pass
+            # 提取关键词
+            policy_keywords: list[str] = []
+            if policy_signals:
+                for sig in policy_signals:
+                    policy_keywords.extend(sig.get("keywords", []))
+            fd_report = fd_engine.diagnose(
+                macro_regime=macro_regime,
+                fiscal_regime=fiscal_regime,
+                policy_signals=policy_signals,
+                index_prices=index_prices,
+                sector_keywords=policy_keywords if policy_keywords else None,
+            )
+            result.fundamental_diagnosis = fd_report.to_dict()
+            # 注入关键字段到 enriched_macro 供下游 diagnosis/verdict 使用
+            enriched_macro["q1_classification"] = fd_report.q1.classification
+            enriched_macro["q1_primary_driver"] = fd_report.q1.primary_driver
+            enriched_macro["q2_dominant_player"] = fd_report.q2.dominant_player
+            enriched_macro["q2_marginal_ranking"] = fd_report.q2.marginal_pricer_ranking
+            enriched_macro["q3_info_advantage"] = fd_report.q3.information_advantage_score
+        except Exception as e:
+            logger.debug("Fundamental diagnosis unavailable: %s", e)
 
         # Phase 5: 周期 + 估值信息
         if cycle_analysis is not None:
@@ -2413,9 +2467,66 @@ class Orchestrator:
         try:
             from src.policy.tracker import PolicyTracker
             tracker = PolicyTracker()
-            return tracker.get_recent_signals()
+            return tracker.analyze_current()
         except Exception as e:
             logger.debug("Policy tracker unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_market_regime(agg) -> Optional[object]:
+        """获取市场状态分类 (RegimeClassifier).
+
+        从 DataAggregator 拉取上证指数日线，
+        调用 RegimeClassifier 做 6 状态技术分类。
+        """
+        try:
+            from src.macro.market_regime import RegimeClassifier
+            index_df = agg.get_history("000001", "SH", period="daily")
+            if index_df is None or index_df.empty:
+                logger.debug("Market regime: no index data available")
+                return None
+            prices = index_df["close"].tolist() if "close" in index_df.columns else None
+            if not prices or len(prices) < 20:
+                logger.debug("Market regime: insufficient data points (%d)", len(prices or []))
+                return None
+            classifier = RegimeClassifier()
+            return classifier.classify(prices=prices)
+        except Exception as e:
+            logger.debug("Market regime classification unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_policy_transmission(policy_signals: list[dict] | None) -> dict | None:
+        """政策关键词→板块传导链分析 (SectorTransmissionAnalyzer)."""
+        if not policy_signals:
+            return None
+        try:
+            from src.policy.transmission import SectorTransmissionAnalyzer
+            all_keywords: list[str] = []
+            all_sectors_raw: list[tuple[str, float]] = []
+            for signal in policy_signals:
+                all_keywords.extend(signal.get("keywords", []))
+                for s in signal.get("affected_sectors", []):
+                    all_sectors_raw.append((s, 1.0))
+                for s in signal.get("affected_sectors_neg", []):
+                    all_sectors_raw.append((s, -1.0))
+            if not all_keywords:
+                return None
+            analyzer = SectorTransmissionAnalyzer()
+            impacts = analyzer.analyze_policy(all_keywords, all_sectors_raw)
+            if not impacts:
+                return None
+            # 序列化为纯 dict
+            return {
+                sector: {
+                    "net_strength": impact.net_strength,
+                    "avg_time_lag": impact.avg_time_lag,
+                    "confidence": impact.confidence,
+                }
+                for sector, impact in impacts.items()
+            }
+        except Exception as e:
+            logger.debug("Policy transmission analysis unavailable: %s", e)
         return None
 
     @staticmethod
