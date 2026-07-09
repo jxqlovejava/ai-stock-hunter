@@ -71,6 +71,9 @@ class DiagnosisReport:
     pullback_score: float = 50.0             # 回调质量分 0-100
     pullback_state: Optional[object] = None  # PullbackState (lazy import)
     pullback_authentic: bool = True          # 回调是否通过反操纵验证
+    # Phase 12: 大宗交易机构资金
+    block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
+    block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
     dimension_synthesis: str = ""            # 多维诊断综述
 
 
@@ -104,6 +107,7 @@ class DiagnosisEngine:
         cycle_analysis: Optional[object] = None,       # Phase 5: CycleAnalysis
         regime_adjustments: Optional[object] = None,   # Phase 11: RegimeAdjustments
         manipulation_scan: Optional[object] = None,    # Phase 11: ManipulationScan
+        block_trade_profile: Optional[object] = None,  # Phase 12: BlockTradeProfile
     ) -> DiagnosisReport:
         report = DiagnosisReport(symbol=symbol, name=name)
 
@@ -252,6 +256,11 @@ class DiagnosisEngine:
         report.momentum_score = self._apply_weight(
             report.momentum_score,
             0.6 + 0.4 * (report.pullback_score / 100.0),
+        )
+
+        # Phase 12: 大宗交易机构资金信号
+        report.block_trade_score, report.block_trade_signal = (
+            self._score_block_trade(block_trade_profile)
         )
 
         # Phase 1: 填充数据溯源和信心度
@@ -513,13 +522,6 @@ class DiagnosisEngine:
             return 50.0
         return float(getattr(cycle_analysis, "cycle_score", 50.0))
 
-    @staticmethod
-    def _score_executive(executive: Optional[dict] = None) -> dict:
-        """V4: 高管因子评分（stub）。"""
-        if not executive:
-            return {"score": 50.0, "risks": []}
-        return {"score": executive.get("average_score", 50.0), "risks": executive.get("red_flags", [])}
-
     def _score_quality(self, financials: list, earnings_factor: Optional[object] = None) -> float:
         """质量评分（增强版）：ROE + 盈利修正因子。"""
         if not financials:
@@ -723,6 +725,27 @@ class DiagnosisEngine:
         if change_pct < -3:
             parts.append(f"当日跌{change_pct:+.1f}%技术面偏弱")
         return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著风险"
+
+    @staticmethod
+    def _score_block_trade(profile: Optional[object] = None) -> tuple[float, str]:
+        """大宗交易机构资金评分 0-100 + 信号方向。
+
+        评分逻辑:
+          - 机构净买入 → +15~25
+          - 高溢价成交 (≥5%) → +10~15
+          - 目标标的机构买入 → +10
+          - 连续大宗建仓 → +5~10
+          - 深度折价 (≤-10%) → -10~20
+          - 机构净卖出 → -15~25
+
+        返回 (score, signal): score 0-100, signal ∈ {bullish, bearish, neutral}
+        """
+        if profile is None:
+            return 50.0, "neutral"
+
+        score = float(getattr(profile, "score", 50))
+        signal = str(getattr(profile, "signal", "neutral"))
+        return score, signal
 
     @staticmethod
     def _synthesize_dimensions(report: DiagnosisReport) -> str:

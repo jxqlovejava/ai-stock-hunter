@@ -472,6 +472,55 @@ class AttributionEngine:
         except Exception as e:
             logger.warning("融资融券数据获取失败: %s", e)
 
+        # 4d: 大宗交易 (T1) — Phase 12
+        try:
+            from src.game_theory.block_trade import BlockTradeAnalyzer
+            bt_analyzer = BlockTradeAnalyzer()
+            bt_profile = bt_analyzer.analyze(symbol=symbol)
+            if bt_profile is not None and bt_profile.total_count > 0:
+                citation = SourceCitation(
+                    provider="eastmoney",
+                    field="block_trade",
+                    fetch_timestamp=now,
+                    data_freshness=timedelta(hours=24),
+                    confidence=0.85,
+                    source_tier=SOURCE_TIER_T1,
+                    nature=NATURE_FACT,
+                )
+                # 构建有信息量的描述
+                bt_parts = [f"大宗交易: 全市场{bt_profile.total_count}笔/{bt_profile.total_amount}亿"]
+                if bt_profile.symbol_records:
+                    bt_parts.append(
+                        f"该股{len(bt_profile.symbol_records)}笔"
+                        f"(均溢价{bt_profile.symbol_premium_avg:+.1f}%)"
+                    )
+                if bt_profile.institution_net_direction == "buying":
+                    bt_parts.append(
+                        f"机构净买入({bt_profile.institution_buy_count}买vs{bt_profile.institution_sell_count}卖)"
+                    )
+                elif bt_profile.institution_net_direction == "selling":
+                    bt_parts.append(
+                        f"机构净卖出({bt_profile.institution_sell_count}卖vs{bt_profile.institution_buy_count}买)"
+                    )
+                if bt_profile.symbol_institution_buy:
+                    bt_parts.append("⚠️ 该股获机构大宗买入")
+                if bt_profile.symbol_institution_sell:
+                    bt_parts.append("⚠️ 该股遭机构大宗卖出")
+                if bt_profile.symbol_consecutive_days >= 3:
+                    bt_parts.append(f"连续{bt_profile.symbol_consecutive_days}天出现")
+
+                points.append(
+                    AttributionDataPoint(
+                        category="capital_flow",
+                        description="; ".join(bt_parts),
+                        source_citation=citation,
+                        is_stale=False,
+                        cross_validated=False,
+                    )
+                )
+        except Exception as e:
+            logger.warning("大宗交易数据获取失败: %s", e)
+
         # 如果所有资金面数据都获取失败，标记 DATA_GAP
         capital_points = [p for p in points if p.category == "capital_flow"]
         if not capital_points:

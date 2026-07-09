@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from . import block_trade  # noqa: F401 — register BlockTradeAnalyzer
 from . import margin  # noqa: F401 — register MarginAnalyzer
 from .comparative import MARKET_COMPARISONS, compare_markets, asymmetry_report
 from .dominance import DominanceClassifier, DominanceProfile
@@ -57,6 +58,7 @@ from .daily_manipulation import (
     DailyManipulationResult,
     PATTERN_LABELS,
 )
+from .block_trade import BlockTradeAnalyzer, BlockTradeProfile, BlockTradeRecord
 from .capital_flow import (
     TOP_3_RULES,
     RuleCapitalFlowModel,
@@ -140,6 +142,8 @@ __all__ = [
     # Capital Flow (Phase 11: 资金面深度追踪)
     "CapitalFlowAnalyzer", "CapitalFlowResult", "DivergenceType",
     "get_capital_flow_risk",
+    # Block Trade (Phase 12: 大宗交易机构资金)
+    "BlockTradeAnalyzer", "BlockTradeProfile", "BlockTradeRecord",
     # Summary
     "get_game_theory_summary",
 ]

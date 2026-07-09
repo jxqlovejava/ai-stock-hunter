@@ -166,6 +166,7 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
         ("估值综合", getattr(report, "valuation_score", 0)),
         ("周期适配", getattr(report, "cycle_score", 0)),
         ("高管因子", getattr(report, "executive_score", 0)),
+        ("大宗交易", getattr(report, "block_trade_score", 50)),
     ]
     for label, score in rows:
         bar = "▓" * int(score / 5) + "░" * (20 - int(score / 5))
@@ -551,6 +552,50 @@ def print_t0(t0_result: dict | None) -> None:
 
 # ── 行业+公司深度研究 ───────────────────────────────────────────────
 
+def print_sector_impact_summary(impact: dict | None) -> None:
+    """输出行业→个股影响综述 (短期情绪 vs 中长期基本面双层分析)。
+
+    impact 结构:
+        {"stock": "赣锋锂业",
+         "short_term": [{"factor": "...", "reason": "...", "impact": "negative"}],
+         "long_term": [{"factor": "...", "reason": "...", "impact": "negative"}],
+         "summary": "一句话总结"}
+    """
+    if not impact:
+        return
+    stock = impact.get("stock", "")
+    short = impact.get("short_term", [])
+    long_term_item = impact.get("long_term", [])
+    if not short and not long_term_item:
+        return
+
+    print(f"\n  {'─' * 56}")
+    print(f"  🎯 {stock} 行业环境影响综述")
+    print(f"  {'─' * 56}")
+
+    if short:
+        print(f"\n  🔴 短期情绪利空 (会消退):")
+        for item in short:
+            factor = item.get("factor", "")
+            reason = item.get("reason", "")
+            print(f"     · {factor}")
+            if reason:
+                print(f"       └ {reason}")
+
+    if long_term_item:
+        print(f"\n  🟠 中长期基本面利空 (不会自动消失):")
+        for item in long_term_item:
+            factor = item.get("factor", "")
+            reason = item.get("reason", "")
+            print(f"     · {factor}")
+            if reason:
+                print(f"       └ {reason}")
+
+    summary = impact.get("summary", "")
+    if summary:
+        print(f"\n  💡 {summary}")
+
+
 def print_deep_research(sector_research: dict | None, company_deep_research: dict | None, stock_name: str = "") -> None:
     """输出行业深度研究 + 公司深度研究 (含 Workflow Checklist)。"""
     sector = sector_research
@@ -558,6 +603,12 @@ def print_deep_research(sector_research: dict | None, company_deep_research: dic
         print(f"\n{'='*60}")
         print(f"  🏭 行业深度研究")
         print(f"{'='*60}")
+
+        # ── 行业→个股影响综述 (优先展示) ──
+        impact = sector.get("stock_impact") or (
+            sector.get("global_commodity", {}) or {}
+        ).get("_stock_impact")
+        print_sector_impact_summary(impact)
 
         # Workflow Checklist
         data_gaps = sector.get("data_gaps", [])

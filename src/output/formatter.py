@@ -327,6 +327,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             ("质量因子", report.quality_score), ("动量因子", report.momentum_score),
             ("盈利修正", report.earnings_revision_score), ("估值综合", report.valuation_score),
             ("周期适配", report.cycle_score), ("高管因子", report.executive_score),
+            ("大宗交易", getattr(report, "block_trade_score", 50)),
         ]
         for label, score in rows:
             bar = "▓" * int(score / 5) + "░" * (20 - int(score / 5))
@@ -681,48 +682,57 @@ def format_analysis_result(result: OrchestratorResult) -> str:
     _section(lines, 11)
 
     if t0 and isinstance(t0, dict):
-        has_data = t0.get("ma5", 0) > 0 or t0.get("vwap", 0) > 0
+        has_intraday = t0.get("vwap", 0) > 0
+        has_daily = t0.get("ma5", 0) > 0
+        is_trading_hours = has_intraday
 
-        # 多日趋势上下文
+        # ── 多日趋势 (始终显示，基于日线数据) ──
         if t0.get("multi_day_summary"):
-            lines.append(f"  📈 {t0['multi_day_summary']}")
+            lines.append(f"  📈 多日趋势: {t0['multi_day_summary']}")
         if t0.get("volume_trend"):
             lines.append(f"     量能: {t0['volume_trend']}")
-        # 隔夜风险
-        if t0.get("overnight_risk"):
-            lines.append(f"  🌙 隔夜风险: {t0['overnight_risk']}")
+
+        # ── 缺口分析 ──
         if t0.get("gap_analysis"):
             lines.append(f"  🔽 缺口分析: {t0['gap_analysis']}")
 
-        # 操作建议
+        # ── 隔夜风险 + 庄家布局检测 ──
+        if t0.get("overnight_risk"):
+            lines.append(f"  🌙 隔夜 & 布局检测: {t0['overnight_risk']}")
+
+        # ── 操作建议 ──
         emoji = T0_EMOJI.get(t0.get("action", ""), "❓")
         text = CN.get(t0.get("action", ""), "未知")
-        score_str = f"得分: {t0.get('score', 0)}" if has_data else "得分: N/A (非交易时段，日线数据未拉取)"
+        if is_trading_hours:
+            score_str = f"得分: {t0.get('score', 0)}"
+        elif has_daily:
+            score_str = f"得分: {t0.get('score', 0)} (基于最近收盘数据)"
+        else:
+            score_str = "得分: N/A (数据不足)"
         lines.append(f"  {emoji} {text}  {score_str}")
 
-        # 日内细节
-        if t0.get("vwap", 0) > 0:
+        # ── 日线技术位 (始终显示) ──
+        if has_daily:
+            lines.append(f"  日线: MA5={t0['ma5']:.2f} MA10={t0.get('ma10',0):.2f} MA20={t0.get('ma20',0):.2f} 支撑={t0.get('support_1',0)} 阻力={t0.get('resistance',0)}")
+
+        # ── 日内细节 (仅交易时段) ──
+        if has_intraday:
             lines.append(f"  日内: VWAP={t0['vwap']:.2f} 振幅{t0.get('amplitude',0)}% 反弹{t0.get('rebound_from_low',0):+.1f}%")
-        if t0.get("ma5", 0) > 0:
-            lines.append(f"  日线: MA5={t0['ma5']:.2f} MA10={t0.get('ma10',0):.2f} 支撑={t0.get('support_1',0)}")
-        if not has_data:
-            lines.append(f"  💡 提示: 当前非交易时段，T+0日内数据不可用。请在 9:30-15:00 盘中运行以获取日内时机分析。")
-
-        # 反弹质量
-        if t0.get("rebound_quality"):
-            lines.append(f"  {t0['rebound_quality']}")
-
-        # 信号分类展示
-        bear_signals = t0.get("signals_bear", [])
-        bull_signals = t0.get("signals_bull", [])
-        if bear_signals:
-            lines.append(f"  🔴 空头信号 ({len(bear_signals)}):")
-            for s in bear_signals[:3]:
-                lines.append(f"     · {s}")
-        if bull_signals:
-            lines.append(f"  🟢 多头信号 ({len(bull_signals)}):")
-            for s in bull_signals[:2]:
-                lines.append(f"     · {s}")
+            if t0.get("rebound_quality"):
+                lines.append(f"  {t0['rebound_quality']}")
+            # 日内信号
+            bear_signals = t0.get("signals_bear", [])
+            bull_signals = t0.get("signals_bull", [])
+            if bear_signals:
+                lines.append(f"  🔴 空头信号 ({len(bear_signals)}):")
+                for s in bear_signals[:3]:
+                    lines.append(f"     · {s}")
+            if bull_signals:
+                lines.append(f"  🟢 多头信号 ({len(bull_signals)}):")
+                for s in bull_signals[:2]:
+                    lines.append(f"     · {s}")
+        elif not has_daily:
+            lines.append(f"  💡 提示: 当前非交易时段且无历史数据。请在 9:30-15:00 盘中运行以获取完整日内分析。")
 
         # 触发条件
         if t0.get("trigger_condition"):
