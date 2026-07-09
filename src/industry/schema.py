@@ -135,6 +135,56 @@ class StepStatus:
 
 
 # ---------------------------------------------------------------------------
+# Executive Summary (Step 0 — 报告开头综述)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExecutiveSummary:
+    """报告开头综述 DTO。
+
+    由 SectorResearchReporter._build_executive_summary() 从各步骤提取关键数据，
+    供 AI 撰写综述时参考。最终输出为 narrative markdown。
+    """
+
+    # 7 步关键指标快照
+    sector_name: str = ""
+    sw_classification: str = ""          # Step 1: 申万分类路径
+    lifecycle: str = ""                  # Step 1: 生命周期阶段
+    tam_yi: float = 0.0                  # Step 2: A 股行业总市值 (亿元)
+    cagr_3y: float = 0.0                 # Step 2: 近 3 年 CAGR
+    cr5: float = 0.0                     # Step 2: CR5 集中度
+    top_players: list[str] = field(default_factory=list)  # Step 3: 头部玩家
+    key_competitive_insight: str = ""    # Step 3: 竞争核心洞察
+    pe_current: Optional[float] = None   # Step 4: 当前 PE (TTM)
+    pb_current: Optional[float] = None   # Step 4: 当前 PB
+    crowding_score: float = 50.0         # Step 4: 拥挤度 0-100
+    top_catalysts: list[str] = field(default_factory=list)   # Step 5: Top 3 催化剂
+    catalyst_score: float = 50.0         # Step 5: 催化剂强度
+    policy_direction: str = "neutral"    # Step 5: 政策方向 (favorable/neutral/headwind)
+    supply_chain_position: str = ""      # Step 6: 在产业链中的位置
+    bottleneck_rating: str = ""          # Step 6: 瓶颈评级 (OWNER/ADJACENT/DERIVATIVE/NONE)
+    global_supply_demand: str = ""       # Step 7: 全球供需一句话总结
+    global_supply_gap: str = ""          # Step 7: 供需缺口方向 (surplus/balanced/deficit)
+
+    # 综合评分
+    overall_score: float = 50.0          # 0-100
+    rating: str = ""                     # 超配/标配/低配
+    confidence: float = 0.7
+
+    # 预判 (由 AI 撰写 narrative，此处为结构化要点)
+    short_term_outlook: str = ""         # 短期预判 (1-3 个月)
+    medium_long_term_outlook: str = ""   # 中长期预判 (6-12 个月)
+    three_month_opportunities: list[str] = field(default_factory=list)  # 3 个月机会
+    three_month_risks: list[str] = field(default_factory=list)          # 3 个月风险
+
+    # 宏观背景
+    macro_quadrant: str = ""             # 货币-信用象限
+    macro_sector_favor: str = ""         # 宏观是否利好此行业
+
+    created_at: datetime = field(default_factory=datetime.now)
+
+
+# ---------------------------------------------------------------------------
 # Sector Report (综合)
 # ---------------------------------------------------------------------------
 
@@ -169,6 +219,9 @@ class SectorReport:
 
     # Workflow 执行追踪
     step_status: dict[str, StepStatus] = field(default_factory=dict)
+
+    # Step 0 综述
+    executive_summary: Optional[ExecutiveSummary] = None
 
     # 综合
     overall_score: float = 50.0      # 0-100

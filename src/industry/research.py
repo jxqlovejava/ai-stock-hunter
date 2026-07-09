@@ -15,8 +15,9 @@ from typing import Optional
 
 from src.industry.classifier import SectorClassifier
 from src.industry.competition import CompetitionAnalyzer
+from src.industry.factor_extractor import FactorExtractor
 from src.industry.global_commodity import GlobalCommodityAnalyzer, is_global_commodity_industry
-from src.industry.schema import SectorReport
+from src.industry.schema import ExecutiveSummary, SectorReport
 from src.industry.supply_chain import SupplyChainDeepMapper
 from src.industry.valuation import SectorValuationFramework
 from src.industry.workflow_validator import SectorWorkflowValidator
@@ -45,6 +46,7 @@ class SectorResearchReporter:
         self._supply_chain_mapper = SupplyChainDeepMapper()
         self._validator = SectorWorkflowValidator()
         self._global_analyzer = GlobalCommodityAnalyzer()
+        self._factor_extractor = FactorExtractor()
 
     def generate(
         self,
@@ -158,8 +160,38 @@ class SectorResearchReporter:
             policy_impact,
         )
 
+        # ---- 自动因子提取 (生成 stock_impact) ----
+        try:
+            # 构造 sector_data dict 供 FactorExtractor 消费
+            sc_data = {"in_chain": False} if not symbol else sc_data
+            sector_data_for_extract = {
+                "catalysts": catalysts,
+                "catalyst_score": catalyst_score,
+                "policy_notes": policy_notes,
+                "policy_impact": policy_impact,
+                "global_commodity": report.global_commodity,
+                "supply_chain": sc_data,
+                "tam_estimate": report.tam_estimate,
+            }
+            impact = self._factor_extractor.analyze(
+                sector_name=sector_name,
+                stock_name=symbol if symbol else "",
+                sector_data=sector_data_for_extract,
+            )
+            # 将 stock_impact 存入 global_commodity 便于后续输出
+            if report.global_commodity is None:
+                report.global_commodity = {}
+            report.global_commodity["_stock_impact"] = impact
+        except Exception as exc:
+            logger.debug("Factor extraction failed: %s", exc)
+
         # ---- Workflow 验证 ----
         self._validator.validate(report, is_global=is_global, strict=strict_workflow)
+
+        # ---- Step 0: 综述 (在 validate 之后，使用完整数据) ----
+        report.executive_summary = self._build_executive_summary(
+            report, sector_name, is_global, sc_data
+        )
 
         return report
 
@@ -167,6 +199,133 @@ class SectorResearchReporter:
         """生成 Workflow checklist 文本。"""
         is_global = report.global_commodity is not None and report.global_commodity.get("enabled", False)
         return self._validator.format_checklist(report, is_global=is_global)
+
+    # ------------------------------------------------------------------
+    # Step 0: 综述生成
+    # ------------------------------------------------------------------
+
+    def _build_executive_summary(
+        self,
+        report: SectorReport,
+        sector_name: str,
+        is_global: bool,
+        sc_data: dict,
+    ) -> ExecutiveSummary:
+        """从各步骤提取关键数据，构建结构化综述 DTO。
+
+        为 AI 撰写报告开头综述提供结构化数据点。
+        叙事性内容 (short_term_outlook / medium_long_term_outlook /
+        three_month_opportunities / three_month_risks) 由 AI 在输出时填充。
+        """
+        summary = ExecutiveSummary()
+
+        # Step 1: 行业定位
+        summary.sector_name = sector_name
+        if report.sector:
+            sw_parts = [report.sector.sw1_name]
+            if report.sector.sw2_name:
+                sw_parts.append(report.sector.sw2_name)
+            summary.sw_classification = " → ".join(sw_parts)
+            summary.lifecycle = getattr(report.sector, "lifecycle", "未判定")
+
+        # Step 2: 市场规模
+        if report.tam_estimate:
+            summary.tam_yi = float(report.tam_estimate.get("tam_yi", 0))
+            summary.cagr_3y = float(report.tam_estimate.get("cagr_3y", 0))
+            summary.cr5 = float(report.tam_estimate.get("cr5", 0))
+
+        # Step 3: 竞争格局
+        if report.competition:
+            summary.key_competitive_insight = (
+                f"CR5={report.competition.cr5:.0f}%, "
+                f"壁垒={report.competition.entry_barrier.value}, "
+                f"护城河潜力={report.competition.moat_potential:.0f}/100"
+            )
+        summary.top_players = report.representative_stocks[:5]
+
+        # Step 4: 估值
+        if report.valuation:
+            summary.pe_current = None  # 行业 PE 分位由 valuation 对象提供
+            summary.pb_current = None
+            summary.crowding_score = 50.0  # 默认，实际由外部数据填充
+
+        # Step 5: 催化剂
+        if report.catalysts:
+            summary.top_catalysts = report.catalysts[:3]
+        summary.catalyst_score = report.catalyst_score
+        summary.policy_direction = (
+            "favorable" if report.policy_impact > 10
+            else "headwind" if report.policy_impact < -10
+            else "neutral"
+        )
+
+        # Step 6: 供应链
+        summary.supply_chain_position = report.supply_chain_summary
+        if sc_data:
+            bottleneck = sc_data.get("bottleneck_rating", "")
+            summary.bottleneck_rating = bottleneck
+
+        # Step 7: 全球供需
+        if is_global and report.global_commodity:
+            gd = report.global_commodity
+            summary.global_supply_demand = gd.get("summary", "")
+            summary.global_supply_gap = gd.get("supply_gap_direction", "")
+        elif not is_global:
+            summary.global_supply_demand = f"{sector_name} 非全球定价大宗商品，跳过 Step 7"
+            summary.global_supply_gap = "n/a"
+
+        # 综合
+        summary.overall_score = report.overall_score
+        summary.confidence = report.confidence
+        summary.rating = self._score_to_rating(report.overall_score)
+
+        # 宏观
+        macro = self._infer_macro_context(sector_name)
+        summary.macro_quadrant = macro.get("quadrant", "")
+        summary.macro_sector_favor = macro.get("sector_favor", "")
+
+        return summary
+
+    @staticmethod
+    def _score_to_rating(score: float) -> str:
+        """综合评分 → 行业评级。"""
+        if score >= 80:
+            return "超配 (OVERWEIGHT)"
+        elif score >= 60:
+            return "标配 (EQUAL WEIGHT)"
+        else:
+            return "低配 (UNDERWEIGHT)"
+
+    @staticmethod
+    def _infer_macro_context(sector_name: str) -> dict:
+        """推断宏观货币-信用象限及对该行业的态度。"""
+        try:
+            from src.macro.monetary_credit import MonetaryCreditAnalyzer  # noqa: PLC0415
+            mc = MonetaryCreditAnalyzer()
+            result = mc.analyze()
+            quadrant = str(getattr(result, "quadrant", "未知"))
+            recs = mc.get_sector_recommendations()
+            favored = recs[0] if recs and len(recs) > 0 else []
+            avoided = recs[1] if recs and len(recs) > 1 else []
+            # 检查当前行业是否受宏观推荐
+            favor_status = "中性"
+            for group in favored:
+                if sector_name in str(group) or any(
+                    kw in sector_name for kw in ["新能源", "有色", "金属", "科技", "医药"]
+                ):
+                    favor_status = f"宏观利好 ({quadrant}象限推荐新能源/成长)"
+                    break
+            if any(kw in sector_name for kw in ["银行", "地产", "周期"]):
+                if sector_name in str(avoided):
+                    favor_status = f"宏观逆风 ({quadrant}象限规避)"
+            return {
+                "quadrant": quadrant,
+                "sector_favor": favor_status,
+                "favored_groups": favored,
+                "avoided_groups": avoided,
+            }
+        except Exception:
+            return {"quadrant": "未知", "sector_favor": "无法判定"}
 
     # ------------------------------------------------------------------
     # Step 2: TAM/CAGR/CR5 估算
