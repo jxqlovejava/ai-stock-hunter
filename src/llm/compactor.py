@@ -20,10 +20,94 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import urllib.request
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# LLM provider configs (mirrors providers.py for stdlib use)
+# ---------------------------------------------------------------------------
+
+_LLM_PROVIDERS: dict[str, dict] = {
+    "deepseek": {
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com/v1/chat/completions",
+        "fast_model": "deepseek-chat",
+    },
+    "openai": {
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1/chat/completions",
+        "fast_model": "gpt-4o-mini",
+    },
+    "qwen": {
+        "api_key_env": "QWEN_API_KEY",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "fast_model": "qwen-turbo",
+    },
+    "moonshot": {
+        "api_key_env": "MOONSHOT_API_KEY",
+        "base_url": "https://api.moonshot.cn/v1/chat/completions",
+        "fast_model": "moonshot-v1-8k",
+    },
+}
+
+
+def _resolve_api(model_name: str) -> tuple[str, str] | None:
+    """Resolve (base_url, api_key) for the given model name.
+
+    Returns None if no API key is configured.
+    """
+    name_lower = model_name.lower()
+    for provider_id, cfg in _LLM_PROVIDERS.items():
+        if name_lower.startswith(provider_id):
+            api_key = os.environ.get(cfg["api_key_env"], "")
+            if api_key:
+                return cfg["base_url"], api_key
+    return None
+
+
+def _call_llm_compact(prompt: str, model: str = "deepseek-chat", max_tokens: int = 2048) -> str | None:
+    """Call LLM API for compaction. Returns None on any failure.
+
+    Uses stdlib urllib — no external dependencies.
+    """
+    resolved = _resolve_api(model)
+    if not resolved:
+        logger.debug("compactor: no API key configured, skipping LLM compaction")
+        return None
+
+    base_url, api_key = resolved
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        base_url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if content:
+                logger.info("compactor: LLM compaction succeeded (%d chars)", len(content))
+                return content
+    except Exception as e:
+        logger.debug("compactor: LLM call failed — %s", e)
+
+    return None
 
 
 class Compactor:
@@ -42,6 +126,11 @@ class Compactor:
     def compact_results(self, results: list[dict], query: str) -> str:
         """将累计的分析结果压缩为紧凑的 5 段式 Markdown。
 
+        Tries LLM compaction first, falls back to rule-based if:
+          - No API key configured
+          - API call fails (network, timeout, rate-limit)
+          - Empty response
+
         Args:
             results: 分析阶段累积的结果列表，每个元素是 dict，
                      至少应包含 "stage"、"content"、"score" 等字段。
@@ -55,20 +144,13 @@ class Compactor:
 
         prompt = self.build_compaction_prompt(results, query)
 
-        # --------------------------------------------------------------
-        # TODO: 接入实际的 LLM 调用 (fast model) 以执行压缩。
-        #
-        # 当前实现使用基于规则的内置压缩，适用于原型阶段。
-        # 生产环境应替换为:
-        #
-        #   from src.llm.client import call_llm
-        #   response = call_llm(
-        #       model=self._fast_model,
-        #       messages=[{"role": "user", "content": prompt}],
-        #       max_tokens=2048,
-        #   )
-        #   return response.choices[0].message.content
-        # --------------------------------------------------------------
+        # Try LLM compaction
+        llm_result = _call_llm_compact(prompt, model=self._fast_model)
+        if llm_result:
+            return llm_result
+
+        # Fall back to rule-based compaction
+        logger.debug("compactor: using rule-based fallback")
         return self._compact_internal(results, query)
 
     def build_compaction_prompt(self, results: list[dict], query: str) -> str:
