@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .bottleneck import BottleneckType, SupplyChainLayer
 
@@ -25,6 +25,8 @@ class SupplyChainNode:
     description: str                   # 描述
     a_share_tickers: list[str]         # A 股关联标的
     constraint: str = ""               # 绑定约束（若是瓶颈）
+    overseas_tickers: list[str] = field(default_factory=list)   # 海外对标标的
+    global_data_available: bool = False  # 是否有全球供需数据
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,8 @@ NEW_ENERGY = [
         bottleneck_type=BottleneckType.ADJACENT,
         description="锂资源集中在澳洲/南美/中国盐湖",
         a_share_tickers=["002460", "002466", "000408"],
+        overseas_tickers=["SQM", "ALB", "PLS.AX", "LTM.N"],
+        global_data_available=True,
         constraint="优质锂矿开发周期 3-5 年",
     ),
     SupplyChainNode(
@@ -230,17 +234,54 @@ class SupplyChainDeepMapper:
         }
         return labels.get(layer, "未知")
 
+    # 层级 → 排序索引 (0=最上游原材料)
+    _LAYER_ORDER: dict = {
+        SupplyChainLayer.MATERIAL: 0,
+        SupplyChainLayer.SUBSTRATE: 1,
+        SupplyChainLayer.EQUIPMENT: 2,
+        SupplyChainLayer.PACKAGING: 3,
+        SupplyChainLayer.DEVICE: 4,
+        SupplyChainLayer.MODULE: 5,
+        SupplyChainLayer.SYSTEM: 6,
+        SupplyChainLayer.END_DEMAND: 7,
+    }
+
+    def _get_chain_for_symbol(self, symbol: str) -> list[SupplyChainNode] | None:
+        """找到标的所属的供应链列表。"""
+        for chain_name, nodes in SUPPLY_CHAINS.items():
+            for node in nodes:
+                if symbol in node.a_share_tickers:
+                    return nodes
+        return None
+
     def find_upstream(self, symbol: str) -> list[str]:
-        """推断上游标的。"""
-        node = classify_stock(symbol)
-        if node is None:
+        """查找上游标的（同链条中层数更低的节点上的所有 ticker）。"""
+        nodes = self._get_chain_for_symbol(symbol)
+        if nodes is None:
             return []
-        # 简单规则：同链条中层数更低的节点
-        return []
+        current_node = classify_stock(symbol)
+        if current_node is None:
+            return []
+        current_order = self._LAYER_ORDER.get(current_node.layer, 99)
+        upstream: list[str] = []
+        for node in nodes:
+            if self._LAYER_ORDER.get(node.layer, 99) < current_order:
+                upstream.extend(node.a_share_tickers)
+                upstream.extend(node.overseas_tickers)
+        return upstream
 
     def find_downstream(self, symbol: str) -> list[str]:
-        """推断下游标的。"""
-        node = classify_stock(symbol)
-        if node is None:
+        """查找下游标的（同链条中层数更高的节点上的所有 ticker）。"""
+        nodes = self._get_chain_for_symbol(symbol)
+        if nodes is None:
             return []
-        return []
+        current_node = classify_stock(symbol)
+        if current_node is None:
+            return []
+        current_order = self._LAYER_ORDER.get(current_node.layer, -1)
+        downstream: list[str] = []
+        for node in nodes:
+            if self._LAYER_ORDER.get(node.layer, 99) > current_order:
+                downstream.extend(node.a_share_tickers)
+                downstream.extend(node.overseas_tickers)
+        return downstream

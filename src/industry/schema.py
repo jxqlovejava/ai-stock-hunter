@@ -119,6 +119,22 @@ class SupplyChainNode:
 
 
 # ---------------------------------------------------------------------------
+# Workflow Step Status
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StepStatus:
+    """单个 Workflow 步骤的执行状态。"""
+    step_id: str = ""             # "step1".."step7"
+    name: str = ""                # 步骤中文名称
+    completed: bool = False       # 是否已完成
+    confidence: float = 0.7       # 该步骤数据置信度 0-1
+    source_tier: str = "T2"       # T0/T1/T2/T3
+    freshness_hours: int = 24     # 数据时效（小时）
+    error: str = ""               # 失败/跳过原因
+
+
+# ---------------------------------------------------------------------------
 # Sector Report (综合)
 # ---------------------------------------------------------------------------
 
@@ -130,7 +146,10 @@ class SectorReport:
     valuation: Optional[SectorValuation] = None
     supply_chain_summary: str = ""
 
-    # 催化剂
+    # 市场规模 (Step 2)
+    tam_estimate: Optional[dict] = None  # {tam_yi, cagr_3y, cr5, cr10, source_tier}
+
+    # 催化剂 (Step 5)
     catalysts: list[str] = field(default_factory=list)
     catalyst_score: float = 50.0     # 催化剂强度 0-100
 
@@ -142,8 +161,14 @@ class SectorReport:
     policy_impact: float = 0.0       # -100 到 +100 (负=不利, 正=有利)
     policy_notes: list[str] = field(default_factory=list)
 
+    # 全球供需 (Step 7, 仅全球定价大宗商品)
+    global_commodity: Optional[dict] = None
+
     # 代表标的
     representative_stocks: list[str] = field(default_factory=list)
+
+    # Workflow 执行追踪
+    step_status: dict[str, StepStatus] = field(default_factory=dict)
 
     # 综合
     overall_score: float = 50.0      # 0-100

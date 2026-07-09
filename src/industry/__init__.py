@@ -15,6 +15,7 @@ from .schema import (
     SectorLevel,
     SectorReport,
     SectorValuation,
+    StepStatus,
     SupplyChainNode as DeepSupplyChainNode,
     SupplyChainPosition,
     ValuationMethod,
@@ -29,7 +30,7 @@ __all__ = [
     # New: Schema
     "SectorLevel", "SectorClass", "BarrierLevel", "CompetitionProfile",
     "ValuationMethod", "SectorValuation", "SupplyChainPosition",
-    "DeepSupplyChainNode", "SectorReport",
+    "DeepSupplyChainNode", "SectorReport", "StepStatus",
     # New: Engines
     "SectorClassifier", "CompetitionAnalyzer",
     "SectorValuationFramework", "SupplyChainDeepMapper",
