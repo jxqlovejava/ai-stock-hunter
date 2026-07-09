@@ -22,6 +22,24 @@ from .base import DataProvider
 from .schema import Financials, Quote
 
 
+def _to_tx_symbol(symbol: str) -> str:
+    """将纯数字代码转为腾讯格式（带市场前缀 sz/sh/bj）。"""
+    if not symbol or len(symbol) < 6:
+        return symbol
+    # 已有前缀
+    if symbol.startswith(("sz", "sh", "bj")):
+        return symbol
+    code = symbol[-6:] if len(symbol) > 6 else symbol
+    first = code[0]
+    if first in ("0", "2", "3"):
+        return f"sz{code}"
+    elif first in ("6", "9"):
+        return f"sh{code}"
+    elif first in ("4", "8"):
+        return f"bj{code}"
+    return f"sz{code}"  # 默认深交所
+
+
 class AKShareProvider(DataProvider):
     """AKShare 数据适配器。"""
 
@@ -166,11 +184,29 @@ class AKShareProvider(DataProvider):
     def get_history(
         self, symbol: str, period: str = "daily", start_date: str = "", end_date: str = ""
     ) -> pd.DataFrame:
-        """获取历史 K 线。"""
+        """获取历史 K 线（腾讯源，push2.eastmoney.com 不可用时降级）。
+
+        注意：stock_zh_a_hist (东财 push2) 在部分网络环境被阻断，
+        改用 stock_zh_a_hist_tx (腾讯) 作为 AKShare 的 K 线数据源。
+        """
         try:
-            return ak.stock_zh_a_hist(
-                symbol=symbol, period=period, start_date=start_date, end_date=end_date
+            # 优先尝试东财源（数据更全），失败则降级到腾讯源
+            try:
+                return ak.stock_zh_a_hist(
+                    symbol=symbol, period=period,
+                    start_date=start_date, end_date=end_date,
+                )
+            except Exception:
+                pass
+            # 降级：腾讯源 — symbol 需要市场前缀
+            tx_symbol = _to_tx_symbol(symbol)
+            df = ak.stock_zh_a_hist_tx(
+                symbol=tx_symbol, start_date=start_date, end_date=end_date,
             )
+            # 腾讯源列名: date/open/close/high/low/amount → 统一为 volume
+            if "amount" in df.columns:
+                df = df.rename(columns={"amount": "volume"})
+            return df
         except Exception:
             return pd.DataFrame()
 
@@ -181,7 +217,8 @@ class AKShareProvider(DataProvider):
     def get_dragon_tiger(self) -> pd.DataFrame:
         """获取今日龙虎榜数据（独有）。"""
         try:
-            return ak.stock_lhb_detail_em(date=datetime.now().strftime("%Y%m%d"))
+            today = datetime.now().strftime("%Y%m%d")
+            return ak.stock_lhb_detail_em(start_date=today, end_date=today)
         except Exception:
             return pd.DataFrame()
 
@@ -195,7 +232,7 @@ class AKShareProvider(DataProvider):
     def get_northbound_flow(self) -> pd.DataFrame:
         """获取北向资金流向。"""
         try:
-            return ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
+            return ak.stock_hsgt_fund_flow_summary_em()
         except Exception:
             return pd.DataFrame()
 
