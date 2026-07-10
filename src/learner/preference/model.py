@@ -60,15 +60,23 @@ class BoardAccess(str, Enum):
 def get_board_from_symbol(symbol: str) -> BoardAccess | None:
     """根据股票代码推断所属板块。
 
+    支持两种格式：
+      - 6 位纯数字代码（如 "600519"）— 来自东财/通达信
+      - 带交易所前缀的代码（如 "sh600519"、"SZ000001"、"BJ920000"）— 来自 AKShare
+
     Args:
-        symbol: 6 位股票代码字符串
+        symbol: 股票代码字符串
 
     Returns:
         BoardAccess 枚举值，无法识别时返回 None
 
     >>> get_board_from_symbol("600519")
     <BoardAccess.MAIN_SH: 'main_sh'>
+    >>> get_board_from_symbol("sh600519")
+    <BoardAccess.MAIN_SH: 'main_sh'>
     >>> get_board_from_symbol("000001")
+    <BoardAccess.MAIN_SZ: 'main_sz'>
+    >>> get_board_from_symbol("sz000001")
     <BoardAccess.MAIN_SZ: 'main_sz'>
     >>> get_board_from_symbol("300750")
     <BoardAccess.GEM: 'gem'>
@@ -76,10 +84,17 @@ def get_board_from_symbol(symbol: str) -> BoardAccess | None:
     <BoardAccess.STAR: 'star'>
     >>> get_board_from_symbol("838402")
     <BoardAccess.BSE: 'bse'>
+    >>> get_board_from_symbol("bj920000")
+    <BoardAccess.BSE: 'bse'>
     """
-    if not symbol or len(symbol) < 6:
+    if not symbol or len(symbol) < 4:
         return None
     code = symbol.strip().upper()
+    # 去除交易所前缀 (AKShare 格式: sh600000 / sz000001 / bj920000)
+    for prefix in ("SH", "SZ", "BJ"):
+        if code.startswith(prefix) and len(code) > len(prefix):
+            code = code[len(prefix):]
+            break
     if code.startswith("60"):
         return BoardAccess.MAIN_SH
     if code.startswith("00") or code.startswith("002") or code.startswith("003"):
@@ -88,7 +103,8 @@ def get_board_from_symbol(symbol: str) -> BoardAccess | None:
         return BoardAccess.GEM
     if code.startswith("68"):
         return BoardAccess.STAR
-    if code.startswith(("8", "4")):
+    # 北交所: 8xxxxx / 4xxxxx / 920xxx
+    if code.startswith(("8", "4", "92")):
         return BoardAccess.BSE
     return None
 
