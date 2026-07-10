@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 # 默认配置路径
 DEFAULT_CONFIG_DIR = Path("data/paper_trading")
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
+DEFAULT_WATCHLIST_PATH = DEFAULT_CONFIG_DIR / "watchlist.json"
 PORTFOLIO_CONFIG_PATH = Path("data/portfolio.yaml")
+MAIN_WATCHLIST_PATH = Path("data/watchlist.json")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -302,6 +304,8 @@ class PaperTradingConfigManager:
 
         # 持久化
         self.save(config)
+        # 克隆主系统自选股
+        self.clone_watchlist_if_needed()
         logger.info("模拟交易独立配置已初始化: %s (本金 %.0f 元)", self._path, config.position_limits.total_capital)
         return config
 
@@ -331,6 +335,104 @@ class PaperTradingConfigManager:
                 Dumper=yaml.SafeDumper,
             )
         logger.info("模拟交易配置已保存到 %s", self._path)
+
+    # ------------------------------------------------------------------
+    # 自选股管理 (独立于主系统)
+    # ------------------------------------------------------------------
+
+    def clone_watchlist_if_needed(self) -> Path:
+        """首次启动时从主系统 watchlist.json 克隆自选股。
+
+        之后模拟交易独立维护自己的自选股，与主系统互不干扰。
+        """
+        if DEFAULT_WATCHLIST_PATH.exists():
+            logger.debug("自选股已存在，跳过克隆: %s", DEFAULT_WATCHLIST_PATH)
+            return DEFAULT_WATCHLIST_PATH
+
+        if MAIN_WATCHLIST_PATH.exists():
+            import shutil
+            import json as _json
+            try:
+                DEFAULT_WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(MAIN_WATCHLIST_PATH, DEFAULT_WATCHLIST_PATH)
+                logger.info("自选股已克隆: %s → %s", MAIN_WATCHLIST_PATH, DEFAULT_WATCHLIST_PATH)
+            except Exception as e:
+                # fallback: 创建空自选股
+                logger.warning("克隆自选股失败: %s，创建空列表", e)
+                DEFAULT_WATCHLIST_PATH.write_text(
+                    _json.dumps({"stocks": [], "updated_at": ""}, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        else:
+            import json as _json
+            DEFAULT_WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+            DEFAULT_WATCHLIST_PATH.write_text(
+                _json.dumps({"stocks": [], "updated_at": ""}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        return DEFAULT_WATCHLIST_PATH
+
+    @staticmethod
+    def load_watchlist() -> list[dict]:
+        """加载模拟交易独立自选股。"""
+        import json as _json
+        if not DEFAULT_WATCHLIST_PATH.exists():
+            return []
+        try:
+            data = _json.loads(DEFAULT_WATCHLIST_PATH.read_text(encoding="utf-8"))
+            return data.get("stocks", [])
+        except (_json.JSONDecodeError, KeyError) as e:
+            logger.warning("无法加载自选股: %s", e)
+            return []
+
+    @staticmethod
+    def save_watchlist(stocks: list[dict]) -> None:
+        """保存模拟交易独立自选股。"""
+        import json as _json
+        from datetime import datetime
+        DEFAULT_WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "stocks": stocks,
+            "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        DEFAULT_WATCHLIST_PATH.write_text(
+            _json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("自选股已保存: %d 只", len(stocks))
+
+    @staticmethod
+    def add_to_watchlist(symbol: str, name: str = "", stop_price: float | None = None) -> bool:
+        """添加股票到模拟交易自选股。
+
+        Returns:
+            True 添加成功，False 已存在
+        """
+        stocks = PaperTradingConfigManager.load_watchlist()
+        existing = [s for s in stocks if s.get("symbol") == symbol]
+        if existing:
+            logger.debug("%s 已在自选股中", symbol)
+            return False
+        stocks.append({
+            "symbol": symbol,
+            "name": name,
+            "stop_price": stop_price,
+            "alert_above": None,
+        })
+        PaperTradingConfigManager.save_watchlist(stocks)
+        logger.info("已添加 %s (%s) 到模拟交易自选股", symbol, name)
+        return True
+
+    @staticmethod
+    def remove_from_watchlist(symbol: str) -> bool:
+        """从模拟交易自选股移除。"""
+        stocks = PaperTradingConfigManager.load_watchlist()
+        new_stocks = [s for s in stocks if s.get("symbol") != symbol]
+        if len(new_stocks) == len(stocks):
+            return False
+        PaperTradingConfigManager.save_watchlist(new_stocks)
+        logger.info("已从模拟交易自选股移除 %s", symbol)
+        return True
 
     # ------------------------------------------------------------------
     # 更新能力圈 (周/月复盘时调用)

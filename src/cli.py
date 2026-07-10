@@ -74,6 +74,89 @@ def _infer_market(symbol: str) -> str:
     return "SZ"
 
 
+def _gather_market_context(agg) -> None:
+    """扫描前搜集大盘资讯背景 (7×24快讯 + 宏观 + 政策信号)。
+
+    所有通道独立拉取，单通道失败不影响其他通道。
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _fetch_flash():
+        try:
+            from src.data.eastmoney_fallback import fetch_em_global_news
+            raw = fetch_em_global_news(page_size=20)
+            if raw:
+                titles = [item.get("title", "")[:60] for item in raw[:8]]
+                return titles
+        except Exception:
+            pass
+        return []
+
+    def _fetch_macro():
+        try:
+            from src.macro.monetary_credit import MonetaryCreditAnalyzer
+            mca = MonetaryCreditAnalyzer()
+            regime = mca.get_current_regime()
+            if regime:
+                return f"{regime.quadrant.value} | 置信度{regime.confidence:.0%}"
+        except Exception:
+            pass
+        return ""
+
+    def _fetch_policy():
+        try:
+            from src.policy.nlp import PolicyNLPAnalyzer
+            nlp = PolicyNLPAnalyzer()
+            signals = nlp.get_latest_signals(limit=3)
+            if signals:
+                return [s.get("title", "")[:50] for s in signals]
+        except Exception:
+            pass
+        return []
+
+    def _fetch_topic():
+        try:
+            from src.information.topic_manager import TopicManager
+            tm = TopicManager()
+            topics = tm.list_active()
+            if topics:
+                return [(t.name, t.lifecycle_stage.value) for t in topics[:5]]
+        except Exception:
+            pass
+        return []
+
+    tasks = {
+        "7×24快讯": _fetch_flash,
+        "宏观象限": _fetch_macro,
+        "政策信号": _fetch_policy,
+        "热点主题": _fetch_topic,
+    }
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(fn): key for key, fn in tasks.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                result = future.result()
+                if result:
+                    if key == "7×24快讯" and isinstance(result, list):
+                        print(f"  ⚡ {key}: {len(result)}条")
+                        for t in result[:3]:
+                            print(f"      · {t}")
+                    elif key == "宏观象限" and result:
+                        print(f"  📊 {key}: {result}")
+                    elif key == "政策信号" and isinstance(result, list):
+                        print(f"  📜 {key}: {len(result)}条")
+                        for t in result[:2]:
+                            print(f"      · {t}")
+                    elif key == "热点主题" and isinstance(result, list):
+                        print(f"  🔥 {key}: {len(result)}个")
+                        for name, stage in result[:3]:
+                            print(f"      · {name} [{stage}]")
+            except Exception:
+                pass
+
+
 def _safe_cmd(func: Callable) -> Callable:
     """统一错误处理 — 捕获异常并打印双语消息 / Unified error handler with bilingual messages."""
 
@@ -123,6 +206,11 @@ def cmd_scan(args: list[str]):
     agg = DataAggregator()
     status = agg.source_status()
     print(f"数据源: {status}")
+
+    # ── Phase 0: 市场资讯上下文 ──
+    # 在全市场扫描前拉取大盘资讯背景，为后续选股提供叙事校验
+    print(f"\n🌐 资讯背景搜集...")
+    _gather_market_context(agg)
 
     stocks = agg.scan_all_stocks() or []
 
@@ -1526,6 +1614,9 @@ def cmd_paper_trade(args: list[str]):
   paper-trade report daily   生成今日报告
   paper-trade report weekly  生成本周复盘
   paper-trade report monthly 生成本月复盘
+  paper-trade watchlist      查看模拟交易独立自选股
+  paper-trade watchlist-add <code> <name>  添加自选股
+  paper-trade watchlist-rm <code>          移除自选股
   paper-trade history        查看最近交易
   paper-trade reset          重置账户 (需确认)
         """,
@@ -1535,6 +1626,7 @@ def cmd_paper_trade(args: list[str]):
         choices=[
             "start", "run", "status",
             "report", "review", "history", "reset",
+            "watchlist", "watchlist-add", "watchlist-rm",
             # 保留旧命令兼容
             "positions", "balance", "orders",
         ],
@@ -1547,6 +1639,8 @@ def cmd_paper_trade(args: list[str]):
                         help="报告类型 (默认 daily)")
     parser.add_argument("--limit", type=int, default=20, help="显示条数")
     parser.add_argument("--yes", action="store_true", help="确认重置")
+    parser.add_argument("--code", type=str, default="", help="股票代码 (watchlist-add/rm 使用)")
+    parser.add_argument("--name", type=str, default="", help="股票名称 (watchlist-add 使用)")
     parsed = parser.parse_args(args)
 
     action = parsed.action
@@ -1668,6 +1762,45 @@ def cmd_paper_trade(args: list[str]):
             return
         engine.reset()
         print("✅ 模拟交易账户已重置。初始资金 ¥200,000。")
+
+    elif action == "watchlist":
+        stocks = engine._config_mgr.load_watchlist()
+        if not stocks:
+            print("📭 模拟交易自选股为空")
+            print("   Alpha 扫描会自动发现新股票并加入自选股")
+            print("   手动添加: paper-trade watchlist-add <代码> <名称>")
+        else:
+            print(f"📋 模拟交易独立自选股 ({len(stocks)} 只):")
+            for s in stocks:
+                sym = s.get("symbol", "")
+                name = s.get("name", "")
+                stop = s.get("stop_price")
+                stop_str = f" 止损¥{stop:.2f}" if stop else ""
+                print(f"   {sym} {name}{stop_str}")
+            print(f"\n💡 与主系统 watchlist.json 独立，互不干扰")
+
+    elif action == "watchlist-add":
+        code = getattr(parsed, "code", "")
+        name = getattr(parsed, "name", "")
+        if not code:
+            print("❌ 请提供 --code <股票代码>")
+            return
+        ok = engine._config_mgr.add_to_watchlist(code, name=name)
+        if ok:
+            print(f"✅ {code} {name} 已加入模拟交易自选股")
+        else:
+            print(f"⚠️  {code} 已在自选股中")
+
+    elif action == "watchlist-rm":
+        code = getattr(parsed, "code", "")
+        if not code:
+            print("❌ 请提供 --code <股票代码>")
+            return
+        ok = engine._config_mgr.remove_from_watchlist(code)
+        if ok:
+            print(f"✅ {code} 已从模拟交易自选股移除")
+        else:
+            print(f"⚠️  {code} 不在自选股中")
 
 
 def _cmd_paper_trade_legacy(action: str):

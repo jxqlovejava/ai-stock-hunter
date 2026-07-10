@@ -280,24 +280,29 @@ class PaperTradingEngine:
 
         优先级:
           1. 现有持仓 (必须检查是否需要止损/止盈)
-          2. 自选股列表 (从 watchlist.json)
-          3. 超跌反弹机会? (后续迭代)
+          2. 模拟交易独立自选股 (可自主添加/移除)
+          3. Alpha 扫描发现新机会 (高分候选自动加入自选股)
         """
         candidates: list[str] = []
 
         # 1. 现有持仓
         candidates.extend(state.positions.keys())
 
-        # 2. 自选股
-        watchlist = self._load_watchlist()
+        # 2. 模拟交易独立自选股
+        watchlist = self._config_mgr.load_watchlist()
         for item in watchlist:
             sym = item.get("symbol", "")
             if sym and sym not in candidates:
                 candidates.append(sym)
 
-        # 限制数量
+        # 3. Alpha 扫描 — 发现新股票 (最多 2 支)
+        new_discoveries = self._discover_new_candidates(state, existing=set(candidates))
+        for sym in new_discoveries:
+            if sym not in candidates:
+                candidates.append(sym)
+
+        # 限制数量，持仓优先
         if len(candidates) > self.MAX_CANDIDATES_PER_DAY:
-            # 优先保留持仓，其余截断
             position_syms = set(state.positions.keys())
             priority = [s for s in candidates if s in position_syms]
             others = [s for s in candidates if s not in position_syms]
@@ -305,18 +310,64 @@ class PaperTradingEngine:
 
         return candidates
 
-    def _load_watchlist(self) -> list[dict]:
-        """加载自选股。"""
-        import json
-        watchlist_path = Path("data/watchlist.json")
-        if not watchlist_path.exists():
-            return []
+    def _discover_new_candidates(
+        self,
+        state: PortfolioState,
+        existing: set[str],
+        max_new: int = 2,
+    ) -> list[str]:
+        """通过 Alpha 扫描发现新的候选股票。
+
+        使用现有 CLI alpha-scan 功能扫描高 Alpha 股票，
+        将高分候选自动加入模拟交易独立自选股。
+
+        Args:
+            existing: 已有候选集合 (避免重复)
+            max_new: 最多发现数量
+        """
+        new_syms: list[str] = []
         try:
-            data = json.loads(watchlist_path.read_text(encoding="utf-8"))
-            return data.get("stocks", [])
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning("无法加载自选股: %s", e)
-            return []
+            from src.alpha.lens import AlphaLens
+            from src.data.aggregator import DataAggregator
+
+            lens = AlphaLens()
+            data = DataAggregator()
+            config = self.config
+
+            # 获取高 Alpha 候选
+            scan_result = lens.scan(
+                data,
+                limit=10,
+                boards=config.accessible_boards,
+            )
+            if not scan_result or not hasattr(scan_result, "profiles"):
+                return []
+
+            for profile in scan_result.profiles[:max_new * 2]:
+                sym = profile.symbol if hasattr(profile, "symbol") else ""
+                if not sym or sym in existing:
+                    continue
+                if sym in state.positions:
+                    continue
+                if len(new_syms) >= max_new:
+                    break
+
+                # Alpha 质量筛选: 评分 ≥ 65 才考虑
+                alpha_score = getattr(profile, "score", 0)
+                if alpha_score >= 65:
+                    new_syms.append(sym)
+                    # 自动加入自选股
+                    name = getattr(profile, "name", "")
+                    self._config_mgr.add_to_watchlist(sym, name=name)
+                    logger.info(
+                        "🆕 Alpha 扫描发现新候选: %s %s (Alpha %.0f/100)",
+                        sym, name, alpha_score,
+                    )
+
+        except Exception as e:
+            logger.debug("Alpha 扫描跳过 (可能模块未初始化): %s", e)
+
+        return new_syms
 
     # ------------------------------------------------------------------
     # 步骤 4: 分析候选 — 复用 Orchestrator 全链路

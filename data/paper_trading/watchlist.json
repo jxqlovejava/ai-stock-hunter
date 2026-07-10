@@ -1,0 +1,59 @@
+{
+  "stocks": [
+    {
+      "symbol": "600765",
+      "name": "中航重机",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "600862",
+      "name": "中航高科",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "002463",
+      "name": "沪电股份",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "000938",
+      "name": "紫光股份",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "603986",
+      "name": "兆易创新",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "600845",
+      "name": "宝信软件",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "002415",
+      "name": "海康威视",
+      "stop_price": null,
+      "alert_above": null
+    },
+    {
+      "symbol": "002460",
+      "name": "赣锋锂业",
+      "stop_price": 53.93,
+      "alert_above": 70.0
+    },
+    {
+      "symbol": "600089",
+      "name": "特变电工",
+      "stop_price": null,
+      "alert_above": null
+    }
+  ],
+  "updated_at": "2026-07-10T23:01:37"
+}
