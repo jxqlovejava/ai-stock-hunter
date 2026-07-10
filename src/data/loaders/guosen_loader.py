@@ -24,13 +24,24 @@ class GuosenLoader(DataLoader):
 
     def __init__(self):
         self._provider: Optional[GuosenProvider] = None
+        self._provider_attempted: bool = False
 
     def _provider_instance(self) -> Optional[GuosenProvider]:
-        """每次重新尝试创建（不缓存失败状态）。"""
+        """缓存 Provider 实例，保留 _exhausted 等运行时状态。
+
+        每次新建实例会导致 _exhausted 丢失，已耗尽的 Key 被反复重试，
+        浪费 API 配额。缓存后同一进程生命周期内 Key 切换状态得以保持。
+        """
+        if self._provider is not None:
+            return self._provider
+        if self._provider_attempted:
+            return None
+        self._provider_attempted = True
         try:
-            return GuosenProvider()
+            self._provider = GuosenProvider()
         except RuntimeError:
             return None
+        return self._provider
 
     def is_available(self) -> bool:
         prov = self._provider_instance()

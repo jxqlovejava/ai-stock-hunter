@@ -39,7 +39,11 @@ from .schema import Financials, Quote
 
 
 class GuosenProvider(DataProvider):
-    """国信证券数据适配器。"""
+    """国信证券数据适配器。
+
+    Key 耗尽状态为类级别，跨实例共享，避免每次新建实例时
+    已耗尽的 Key 被反复重试浪费配额。
+    """
 
     source_name = "guosen"
 
@@ -47,6 +51,10 @@ class GuosenProvider(DataProvider):
     TIMEOUT = 15
 
     QUOTA_EXCEEDED_CODE = 197006  # 日限额耗尽
+
+    # 类级别 Key 耗尽状态 (按 Key 字符串索引，跨实例共享)
+    _class_exhausted: set[str] = set()
+    _class_last_reset_date: datetime | None = None
 
     def __init__(self, api_key: str | None = None):
         # 支持多 Key: 逗号分隔 或 GS_API_KEY_2/3 环境变量
@@ -67,23 +75,22 @@ class GuosenProvider(DataProvider):
                 " 支持多 Key 逗号分隔: GS_API_KEY=key1,key2"
             )
 
-        self._active_idx: int = 0
-        self._exhausted: set[int] = set()
-        self._last_reset_date = datetime.now().date()
         self._session = requests.Session()
         self._session.mount("https://", _LegacySSLAdapter())
-        logger.info("国信: %d 个 Key 已加载", len(self._api_keys))
+        # 首个可用 Key 作为初始 active
+        self._active_idx = self._first_available_idx()
+        logger.info("国信: %d 个 Key 已加载，当前 Key #%d", len(self._api_keys), self._active_idx + 1)
 
-    # ── Key 管理 ──────────────────────────────────────────────
+    # ── Key 管理 (类级别状态) ─────────────────────────────────
 
-    def _maybe_reset_quota(self):
-        """跨日自动重置 Key 耗尽状态。"""
+    @classmethod
+    def _maybe_reset_quota(cls):
+        """跨日自动重置 Key 耗尽状态（类级别）。"""
         today = datetime.now().date()
-        if self._last_reset_date != today:
-            self._exhausted.clear()
-            self._active_idx = 0
-            self._last_reset_date = today
-            logger.info("国信: 新的一天，%d 个 Key 配额已重置", len(self._api_keys))
+        if cls._class_last_reset_date != today:
+            cls._class_exhausted.clear()
+            cls._class_last_reset_date = today
+            logger.info("国信: 新的一天，Key 配额已重置")
 
     @property
     def _active_key(self) -> str:
@@ -92,6 +99,15 @@ class GuosenProvider(DataProvider):
     @property
     def _params(self) -> dict:
         return {"softName": "agent_skills", "apiKey": self._active_key}
+
+    def _first_available_idx(self) -> int:
+        """找到第一个未被类级别标记为耗尽的 Key 索引。"""
+        self._maybe_reset_quota()
+        for i, k in enumerate(self._api_keys):
+            if k not in self._class_exhausted:
+                return i
+        # 全部耗尽也返回 0，后续 _switch_key 会处理
+        return 0
 
     def _is_quota_exceeded(self, response_data: dict) -> bool:
         """检查响应是否为日限额耗尽。"""
@@ -105,15 +121,40 @@ class GuosenProvider(DataProvider):
     def _switch_key(self) -> bool:
         """日限额耗尽时切换 Key。返回 False=全部耗尽。"""
         self._maybe_reset_quota()
-        self._exhausted.add(self._active_idx)
+        # 标记当前 Key 为耗尽 (类级别，跨实例生效)
+        self._class_exhausted.add(self._active_key)
         logger.warning("国信 Key #%d 日限额耗尽，切换", self._active_idx + 1)
-        for i in range(len(self._api_keys)):
-            if i not in self._exhausted:
+        for i, k in enumerate(self._api_keys):
+            if k not in self._class_exhausted:
                 self._active_idx = i
                 logger.info("国信 → Key #%d", i + 1)
                 return True
         logger.error("国信: 全部 %d 个 Key 日限额已耗尽", len(self._api_keys))
         return False
+
+    def _try_request(self, url: str, params: dict, timeout: int = 0) -> tuple[Optional[dict], bool]:
+        """发起请求，返回 (响应 dict, 是否全部 Key 耗尽)。
+
+        若响应为 197006 日限额耗尽，自动切换 Key 并重试。
+        调用方根据返回值决定是否继续。
+        """
+        timeout = timeout or self.TIMEOUT
+        while True:
+            try:
+                r = self._session.get(
+                    url,
+                    params={**self._params, **params},
+                    timeout=timeout,
+                    proxies={"http": None, "https": None},
+                )
+                d = r.json()
+                if self._is_quota_exceeded(d):
+                    if not self._switch_key():
+                        return None, True  # 全部耗尽
+                    continue  # 切换成功，用新 Key 重试
+                return d, False
+            except Exception:
+                return None, False
 
     # ------------------------------------------------------------------
     # Quote
@@ -123,21 +164,12 @@ class GuosenProvider(DataProvider):
         """获取单只股票实时行情。"""
         set_code = self._market_to_set_code(market)
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0"
+        d, exhausted = self._try_request(url, {
+            "code": symbol, "setCode": set_code, "target": 0,
+        })
+        if exhausted or d is None:
+            return None
         try:
-            r = self._session.get(
-                url,
-                params={
-                    **self._params,
-                    "code": symbol,
-                    "setCode": set_code,
-                    "target": 0,
-                },
-                timeout=self.TIMEOUT,
-                proxies={"http": None, "https": None},
-            )
-            d = r.json()
-            # 单个查询返回 {"result":..., "object":{...}}
-            # 批量查询返回 {"result":..., "data":[...]} 或 {"result":..., "object":{...}}
             data = d.get("object") or d.get("data", {})
             if not data or not isinstance(data, dict):
                 return None
@@ -163,19 +195,15 @@ class GuosenProvider(DataProvider):
         """批量获取实时行情（最多 10 只/次）。"""
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryCombHQ/1.0"
         set_codes = [str(self._market_to_set_code(m)) for m in markets]
+        d, exhausted = self._try_request(url, {
+            "code": ",".join(symbols),
+            "setCode": ",".join(set_codes),
+            "target": 0,
+        })
+        if exhausted or d is None:
+            return []
         try:
-            r = self._session.get(
-                url,
-                params={
-                    **self._params,
-                    "code": ",".join(symbols),
-                    "setCode": ",".join(set_codes),
-                    "target": 0,
-                },
-                timeout=self.TIMEOUT,
-                proxies={"http": None, "https": None},
-            )
-            data_list = r.json().get("data", [])
+            data_list = d.get("data", [])
             if not isinstance(data_list, list):
                 return []
             results = []
@@ -212,20 +240,15 @@ class GuosenProvider(DataProvider):
     ) -> list[Financials]:
         """获取最近 N 期利润表数据。"""
         url = f"{self.BASE_URL}/gsnews/gsf10/financial/incomeStatement/1.0"
+        d, exhausted = self._try_request(url, {
+            "code": symbol, "market": market, "count": str(count),
+        })
+        if exhausted or d is None:
+            return []
         try:
-            r = self._session.get(
-                url,
-                params={
-                    **self._params,
-                    "code": symbol,
-                    "market": market,
-                    "count": str(count),
-                },
-                timeout=self.TIMEOUT,
-                proxies={"http": None, "https": None},
-            )
-            d = r.json()
-            if d.get("result", [{}])[0].get("code") != 0 if isinstance(d.get("result"), list) else True:
+            result = d.get("result", [{}])
+            first_code = result[0].get("code") if isinstance(result, list) else result.get("code")
+            if first_code != 0:
                 return []
             # API 返回 income (利润表) / balance (资产负债表) / cashflow (现金流量表)
             income_data = d.get("income") or d.get("data", {})
@@ -282,19 +305,13 @@ class GuosenProvider(DataProvider):
         """获取历史 K 线数据。"""
         url = f"{self.BASE_URL}/gsnews/market/agentbot/queryPastHQInfo/1.0"
         set_code = self._market_to_set_code(market)
+        d, exhausted = self._try_request(url, {
+            "code": symbol, "setCode": str(set_code), "wantNums": days,
+        })
+        if exhausted or d is None:
+            return []
         try:
-            r = self._session.get(
-                url,
-                params={
-                    **self._params,
-                    "code": symbol,
-                    "setCode": str(set_code),
-                    "wantNums": days,
-                },
-                timeout=self.TIMEOUT,
-                proxies={"http": None, "https": None},
-            )
-            data = r.json().get("data", {})
+            data = d.get("data", {})
             if isinstance(data, dict):
                 return data.get("kLines", data.get("records", []))
             return []
@@ -308,14 +325,10 @@ class GuosenProvider(DataProvider):
     def get_macro(self, query: str) -> str | None:
         """查询宏观经济数据。返回 Markdown 文本。"""
         url = f"{self.BASE_URL}/gsnews/macro/queryMacro/1.0"
+        d, exhausted = self._try_request(url, {"query": query}, timeout=30)
+        if exhausted or d is None:
+            return None
         try:
-            r = self._session.get(
-                url,
-                params={**self._params, "query": query},
-                timeout=30,
-                proxies={"http": None, "https": None},
-            )
-            d = r.json()
             return d.get("data", {}).get("content", "") if d.get("data") else None
         except Exception:
             return None
@@ -363,31 +376,18 @@ class GuosenProvider(DataProvider):
             return 0
 
     def health_check(self) -> bool:
-        """测试 API 连通性（支持多 Key fallback）。"""
-        tried = 0
-        while tried < len(self._api_keys):
-            tried += 1
-            try:
-                r = self._session.get(
-                    f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0",
-                    params={**self._params, "code": "600519", "setCode": 1, "target": 0},
-                    timeout=10,
-                    proxies={"http": None, "https": None},
-                )
-                d = r.json()
-                # 日限额耗尽 → 切换 Key 重试
-                if self._is_quota_exceeded(d):
-                    if self._switch_key():
-                        continue
-                    return False
-                code = (
-                    d.get("result", [{}])[0].get("code", -1)
-                    if isinstance(d.get("result"), list)
-                    else d.get("result", {}).get("code", -1)
-                )
-                return code == 0
-            except Exception:
-                return False
+        """测试 API 连通性（自动 fallback 到可用 Key）。"""
+        url = f"{self.BASE_URL}/gsnews/market/agentbot/queryHQInfo/1.0"
+        d, exhausted = self._try_request(url, {
+            "code": "600519", "setCode": 1, "target": 0,
+        }, timeout=10)
+        if exhausted or d is None:
+            return False
+        result = d.get("result", {})
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get("code", -1) == 0
+        if isinstance(result, dict):
+            return result.get("code", -1) == 0
         return False
 
     # ------------------------------------------------------------------
