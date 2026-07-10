@@ -15,6 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -348,9 +349,11 @@ class DataAggregator:
             raise
 
     def get_quotes_batch(
-        self, stocks: list[tuple[str, str]]
+        self, stocks: list[tuple[str, str]], max_workers: int = 1
     ) -> list[Quote]:
-        """批量获取行情。按 registry fallback 链逐源补全，并附加 citation。"""
+        """批量获取行情。按 registry fallback 链逐源补全，并附加 citation。
+
+        max_workers > 1 时，将剩余标的拆分到多个线程并行查询同一 loader。"""
         symbols = [s[0] for s in stocks]
         markets = [s[1] for s in stocks]
         results: list[Quote] = []
@@ -372,10 +375,32 @@ class DataAggregator:
             remaining = [(s, m) for s, m in zip(symbols, markets) if s not in got]
             batch_symbols = [s for s, _ in remaining]
             batch_markets = [m for _, m in remaining]
-            try:
-                batch_results = loader.get_quotes_batch(batch_symbols, batch_markets)
-            except Exception:
-                batch_results = []
+
+            if max_workers > 1 and len(batch_symbols) > 1:
+                chunk_size = max(1, len(batch_symbols) // max_workers)
+                chunks = [
+                    (
+                        batch_symbols[i : i + chunk_size],
+                        batch_markets[i : i + chunk_size],
+                    )
+                    for i in range(0, len(batch_symbols), chunk_size)
+                ]
+                batch_results: list[Quote] = []
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {
+                        pool.submit(loader.get_quotes_batch, c_syms, c_mkts): i
+                        for i, (c_syms, c_mkts) in enumerate(chunks)
+                    }
+                    for fut in as_completed(futures):
+                        try:
+                            batch_results.extend(fut.result())
+                        except Exception:
+                            pass
+            else:
+                try:
+                    batch_results = loader.get_quotes_batch(batch_symbols, batch_markets)
+                except Exception:
+                    batch_results = []
 
             citation = make_citation(
                 provider=loader.name,
