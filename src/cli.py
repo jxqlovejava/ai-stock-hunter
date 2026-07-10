@@ -22,7 +22,7 @@
   python -m src search-news <query>           # 金融资讯搜索
   python -m src screen <conditions>           # 条件选股
   python -m src related <symbol>              # 关联关系查询
-  python -m src paper-trade <action>          # 模拟交易管理
+  python -m src paper-trade <action>          # 模拟交易引擎 (start/run/status/report/history)
   python -m src poster --title --text         # AI 社区发帖
   python -m src evolution <sub>               # 策略进化（论文驱动）
   python -m src trade-track <add|list|kelly>  # 交易追踪（凯利公式）
@@ -1508,79 +1508,187 @@ def cmd_related(args: list[str]):
 
 
 def cmd_paper_trade(args: list[str]):
-    """mx-moni 模拟交易管理。"""
+    """白泽自包含模拟交易引擎 — 长期实盘模拟炒股。
+
+    复用现有全链路分析管道 (Orchestrator)，20 万初始资金，
+    日频盯盘→分析→决策→成交→报告，周/月自动复盘。
+    """
     import argparse
-    parser = argparse.ArgumentParser(description="模拟交易管理")
-    parser.add_argument("action", nargs="?", default="status",
-                        choices=["status", "positions", "balance", "orders", "buy", "sell", "cancel"])
-    parser.add_argument("--code", type=str, help="股票代码")
-    parser.add_argument("--price", type=float, help="委托价格")
-    parser.add_argument("--qty", type=int, default=100, help="委托数量")
-    parser.add_argument("--market", action="store_true", help="以市价委托")
-    parser.add_argument("--order-id", type=str, help="委托单ID（撤单时使用）")
-    parser.add_argument("--cancel-all", action="store_true", help="一键撤单")
+    parser = argparse.ArgumentParser(
+        description="白泽模拟交易引擎 — 长期实盘模拟炒股 (20万本金)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  paper-trade start          初始化/恢复模拟交易
+  paper-trade run            手动执行一次每日循环
+  paper-trade run --dry-run  仅分析不执行交易
+  paper-trade status         查看组合状态
+  paper-trade report daily   生成今日报告
+  paper-trade report weekly  生成本周复盘
+  paper-trade report monthly 生成本月复盘
+  paper-trade history        查看最近交易
+  paper-trade reset          重置账户 (需确认)
+        """,
+    )
+    parser.add_argument(
+        "action", nargs="?", default="status",
+        choices=[
+            "start", "run", "status",
+            "report", "review", "history", "reset",
+            # 保留旧命令兼容
+            "positions", "balance", "orders",
+        ],
+        help="操作类型"
+    )
+    parser.add_argument("--dry-run", action="store_true", help="仅分析不执行交易")
+    parser.add_argument("--force", action="store_true", help="强制运行 (非交易日也执行)")
+    parser.add_argument("--type", type=str, default="daily",
+                        choices=["daily", "weekly", "monthly"],
+                        help="报告类型 (默认 daily)")
+    parser.add_argument("--limit", type=int, default=20, help="显示条数")
+    parser.add_argument("--yes", action="store_true", help="确认重置")
     parsed = parser.parse_args(args)
 
+    action = parsed.action
+
+    # -- 旧 mx-moni 命令兼容 --
+    if action in ("positions", "balance", "orders"):
+        _cmd_paper_trade_legacy(action)
+        return
+
+    # -- 新自包含引擎 --
+    from src.paper_trading import PaperTradingEngine
+    engine = PaperTradingEngine()
+
+    if action == "start":
+        print("🚀 初始化白泽模拟交易账户...")
+        config_mgr = __import__(
+            "src.paper_trading.config", fromlist=["PaperTradingConfigManager"]
+        ).PaperTradingConfigManager()
+        config = config_mgr.load_or_initialize()
+        state = engine.state
+        print(engine.status())
+        print(f"\n✅ 模拟交易账户已就绪。")
+        print(f"   配置: {config_mgr.path}")
+        print(f"   状态: data/paper_trading/state.json")
+        print(f"   交易历史: data/paper_trading/trades.jsonl")
+        print(f"\n💡 运行 'python -m src paper-trade run' 执行每日分析")
+
+    elif action == "run":
+        print("🔍 开始每日模拟交易循环...")
+        if parsed.dry_run:
+            print("   (干运行模式 — 不实际成交)")
+        result = engine.run_daily_cycle(
+            force=parsed.force,
+            dry_run=parsed.dry_run,
+        )
+        if not result.is_trading_day:
+            print(f"⏸️  {result.date} 非交易日，跳过。使用 --force 强制执行。")
+            return
+        print(f"\n📊 每日循环结果:")
+        print(f"   分析候选: {result.candidates_analyzed} 支")
+        print(f"   生成订单: {result.orders_generated} 个")
+        print(f"   实际执行: {result.orders_executed} 个")
+        print(f"   跳过:     {result.orders_skipped} 个")
+        if result.errors:
+            print(f"   ⚠️ 错误: {len(result.errors)}")
+            for e in result.errors:
+                print(f"      - {e}")
+        if result.report_path:
+            print(f"   📄 报告: {result.report_path}")
+        if result.trades:
+            print(f"\n   当日交易:")
+            for t in result.trades:
+                direction = "🟢买入" if t.action == "buy" else "🔴卖出"
+                print(f"   {direction} {t.symbol} {t.name} "
+                      f"{t.quantity}股 @¥{t.price:.2f} "
+                      f"成本¥{t.total_cost:.2f}")
+
+    elif action == "status":
+        print(engine.status())
+
+    elif action == "report":
+        rtype = parsed.type
+        state = engine.state
+        from src.paper_trading.reporter import ReportGenerator
+        reporter = ReportGenerator()
+
+        if rtype == "daily":
+            from datetime import date
+            today = date.today().strftime("%Y-%m-%d")
+            trades = engine.get_recent_trades(50)
+            path = reporter.generate_daily(state, trades, report_date=today)
+            print(f"📄 日度报告已生成: {path}")
+        elif rtype == "weekly":
+            from src.paper_trading.scheduler import trading_days_this_week
+            wdays = trading_days_this_week()
+            if wdays:
+                ws, we = wdays[0].strftime("%Y-%m-%d"), wdays[-1].strftime("%Y-%m-%d")
+                trades = engine._state_mgr.get_trades_for_period(ws, we)
+                path = reporter.generate_weekly(state, trades, ws, we)
+                print(f"📄 周度复盘已生成: {path}")
+            else:
+                print("本周无交易日")
+        elif rtype == "monthly":
+            from datetime import date
+            mk = date.today().strftime("%Y-%m")
+            from src.paper_trading.scheduler import trading_days_this_month
+            mdays = trading_days_this_month()
+            if mdays:
+                ms, me = mdays[0].strftime("%Y-%m-%d"), mdays[-1].strftime("%Y-%m-%d")
+                trades = engine._state_mgr.get_trades_for_period(ms, me)
+                path = reporter.generate_monthly(state, trades, mk)
+                print(f"📄 月度复盘已生成: {path}")
+            else:
+                print("本月无交易日")
+
+    elif action == "review":
+        # 手动触发复盘
+        print("🔍 手动触发复盘...")
+        engine._maybe_trigger_review(engine.state)
+        print("✅ 复盘完成，报告已保存到 data/paper_trading/")
+
+    elif action == "history":
+        trades = engine.get_recent_trades(parsed.limit)
+        if not trades:
+            print("📭 暂无交易记录")
+        else:
+            print(f"📋 最近 {len(trades)} 笔交易:")
+            for t in reversed(trades):
+                direction = "🟢买" if t.action == "buy" else "🔴卖"
+                pnl_str = f" {t.pnl_pct:+.2%}" if t.pnl_pct != 0 else ""
+                print(f"  {t.timestamp[:16]} {direction} {t.symbol} {t.name} "
+                      f"{t.quantity}股 @¥{t.price:.2f}{pnl_str} "
+                      f"成本¥{t.total_cost:.2f}")
+
+    elif action == "reset":
+        if not parsed.yes:
+            print("⚠️  这将清空所有模拟交易数据 (状态/交易历史)。")
+            print("   如需确认，请添加 --yes 参数。")
+            return
+        engine.reset()
+        print("✅ 模拟交易账户已重置。初始资金 ¥200,000。")
+
+
+def _cmd_paper_trade_legacy(action: str):
+    """旧 mx-moni 模拟交易命令 (保留兼容)。"""
     try:
         from src.data.miaoxiang_provider import MiaoXiangProvider
         mx = MiaoXiangProvider()
     except Exception as e:
         print(f"❌ 妙想 Provider 不可用: {e}")
+        print("   请使用 'paper-trade status' 查看自包含模拟交易状态。")
         return
 
-    action = parsed.action
-
-    if action == "status":
-        balance = mx.moni_get_balance()
-        positions = mx.moni_get_positions()
-        if balance:
-            data = balance.get("data", balance)
-            print(f"💰 资金: 总资产 {data.get('totalAssets', 'N/A')}  可用 {data.get('availBalance', 'N/A')}")
-        if positions:
-            data = positions.get("data", positions)
-            pos_list = data.get("posList", [])
-            print(f"📊 持仓: {data.get('posCount', len(pos_list))} 只")
-            for p in (pos_list or []):
-                print(f"  {p.get('secCode', '')} {p.get('secName', '')} "
-                      f"数量:{p.get('count', 0)} 成本:{p.get('costPrice', 0)} 盈亏:{p.get('profit', 0)}")
-
-    elif action == "positions":
+    if action == "positions":
         result = mx.moni_get_positions()
         print(result or "获取持仓失败")
-
     elif action == "balance":
         result = mx.moni_get_balance()
         print(result or "获取资金失败")
-
     elif action == "orders":
         result = mx.moni_get_orders()
         print(result or "获取委托失败")
-
-    elif action in ("buy", "sell"):
-        if not parsed.code:
-            print("❌ 请提供股票代码 --code")
-            return
-        if not parsed.market and not parsed.price:
-            print("❌ 请提供委托价格 --price 或使用 --market 市价委托")
-            return
-        result = mx.moni_place_trade(
-            stock_code=parsed.code,
-            trade_type=action,
-            price=parsed.price or 0.0,
-            quantity=parsed.qty,
-            use_market_price=parsed.market,
-        )
-        print(result or "委托失败")
-
-    elif action == "cancel":
-        if not parsed.cancel_all and not parsed.order_id:
-            print("❌ 请提供 --order-id 或 --cancel-all 一键撤单")
-            return
-        result = mx.moni_cancel_order(
-            order_id=parsed.order_id or "",
-            cancel_all=parsed.cancel_all,
-        )
-        print(result or "撤单失败")
 
 
 def cmd_poster(args: list[str]):
@@ -4357,7 +4465,7 @@ def main():
         print("  backtest                运行回测")
         print("  backtest-optimize       参数优化")
         print("  backtest-compare        多策略对比")
-        print("  paper-trade <action>    模拟交易管理")
+        print("  paper-trade <action>    模拟交易引擎 (start/run/status/report/history)")
         print("  trade-track <add|list|kelly>  交易追踪")
         print()
         print("📊 持仓监控 (NEW):")

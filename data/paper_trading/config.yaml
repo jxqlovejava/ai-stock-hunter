@@ -1,0 +1,40 @@
+# 白泽模拟交易 — 独立账户配置
+# 风格字段初始从 portfolio.yaml 拷贝，后续独立演化。
+# 账户字段 (position_limits) 完全独立，不与主系统互扰。
+
+risk_profile: balanced
+investment_goal: absolute_return
+trading_style: mixed
+holding_period: long
+investment_horizon: 3-5年
+benchmark: 沪深300
+circle_of_competence:
+  新能源: 4
+  科技: 4
+  半导体: 3
+  AI: 4
+  航天: 3
+score_weights:
+  fundamental: null
+  technical: null
+  macro: null
+  sector: null
+  sentiment: null
+accessible_boards:
+- main_sh
+- main_sz
+position_limits:
+  total_capital: 200000.0
+  max_single_pct: 0.2
+  max_sector_pct: 0.4
+  max_total_exposure: 0.8
+  min_cash_pct: 0.2
+  single_stop_loss_pct: 0.02
+  portfolio_drawdown_pct: 0.15
+  max_total_loss_pct: 0.25
+  gem_discount: 0.8
+  kelly_fraction: 0.5
+  breakeven_trigger_pct: 0.2
+  trailing_trigger_pct: 0.3
+created_at: '2026-07-10 22:43:25'
+last_updated: '2026-07-10 22:43:25'
