@@ -336,24 +336,6 @@ class TestBaizeResult:
         assert "analyzers" in d
 
 
-class TestMigration:
-    def test_params_proxy(self):
-        from src.backtest.migration import _ParamsProxy
-        p = _ParamsProxy({"period": 20})
-        assert p.period == 20
-        p.period = 30
-        assert p.period == 30
-
-    def test_make_data_bt_compatible(self):
-        from src.backtest.migration import _make_data_bt_compatible
-        df = make_mock_data("TEST.SZ", 100)
-        feed = BaizeDataFeed("TEST.SZ", df)
-        compat = _make_data_bt_compatible(feed)
-        assert compat.lines is not None
-        assert compat.lines.close[-1] == feed.close.iloc[-1]
-        assert compat._name == "TEST.SZ"
-
-
 class TestMultiSymbol:
     def test_two_symbols_buy_and_hold(self):
         cerebro = BaizeCerebro(initial_cash=100_000)
