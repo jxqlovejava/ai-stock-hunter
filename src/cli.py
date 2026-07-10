@@ -1821,10 +1821,13 @@ def cmd_alpha_scan(args: list[str]):
 
     # ── 主板过滤 ──
     def _is_main_board(symbol: str) -> bool:
-        """主板: 上证60xxxx, 深证00xxxx/002xxx/003xxx"""
-        if symbol.startswith('sh60'):
+        """主板: 上证60xxxx, 深证00xxxx/002xxx/003xxx (兼容纯代码/sh前缀/sz前缀)"""
+        code = symbol
+        if code.startswith('sh') or code.startswith('sz'):
+            code = code[2:]
+        if code.startswith('60'):
             return True
-        if symbol.startswith('sz00') or symbol.startswith('sz002') or symbol.startswith('sz003'):
+        if code.startswith('00') or code.startswith('002') or code.startswith('003'):
             return True
         return False
 
