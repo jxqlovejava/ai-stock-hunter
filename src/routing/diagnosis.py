@@ -75,6 +75,9 @@ class DiagnosisReport:
     block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
     block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
     dimension_synthesis: str = ""            # 多维诊断综述
+    # 主题驱动检测
+    sector_warnings: list[str] = field(default_factory=list)  # 行业级风险提示
+    is_theme_driven: bool = False            # 是否处于主题驱动阶段
 
 
 class DiagnosisEngine:
@@ -276,6 +279,18 @@ class DiagnosisEngine:
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
         report.confidence = self._calc_confidence(report, quote, financials)
         report.data_freshness = datetime.now()
+        # 主题驱动检测 (传入行业PE中位数等上下文)
+        sector_pe_median = quote.get("sector_pe_median") if quote else None
+        sector_q1_ratio = quote.get("sector_q1_ratio") if quote else None
+        sector_name = quote.get("sector_name", "") if quote else ""
+        report.sector_warnings = self.detect_theme_driven(
+            report,
+            sector_pe_median=sector_pe_median,
+            sector_q1_ratio=sector_q1_ratio,
+            sector_name=sector_name,
+        )
+        if report.sector_warnings:
+            report.is_theme_driven = any("主题驱动" in w for w in report.sector_warnings)
         report.dimension_synthesis = self._synthesize_dimensions(report)
         return report
 
@@ -417,6 +432,55 @@ class DiagnosisEngine:
         else:
             stability = 0.5
         return round(coverage * 0.4 + stability * 0.6, 2)
+
+    @staticmethod
+    def detect_theme_driven(
+        report: DiagnosisReport,
+        sector_pe_median: float | None = None,
+        sector_abnormal_pe_ratio: float | None = None,
+        sector_q1_ratio: float | None = None,
+        sector_name: str = "",
+    ) -> list[str]:
+        """检测行业是否处于主题驱动阶段，基本面评分参考价值有限。
+
+        触发条件:
+          行业级: PE>100或亏损占比 > 40% 且 Q1利润占比 < 20%
+          单票级: PE > 200 且 ROE < 3%
+
+        Returns:
+            警告信息列表
+        """
+        warnings = []
+        pe_score = getattr(report, 'value_score', 50.0)
+
+        # 单票极端PE+微利
+        if pe_score < 30:
+            roe = getattr(report, 'quality_score', 50.0)
+            if roe < 25:
+                warnings.append(
+                    "⚠️ 主题驱动: PE极端+ROE极低，"
+                    "该标的可能处于主题炒作阶段，基本面评分参考价值有限"
+                )
+
+        # 行业级: PE异常占比 > 40% + Q1季节性
+        if (sector_abnormal_pe_ratio is not None
+                and sector_abnormal_pe_ratio > 0.4):
+            if sector_q1_ratio is not None and sector_q1_ratio < 0.20:
+                warnings.append(
+                    f"⚠️ 主题驱动行业({sector_name}): "
+                    f"PE>100或亏损占比={sector_abnormal_pe_ratio:.0%}, "
+                    f"Q1利润仅占全年={sector_q1_ratio:.0%}. "
+                    "行业处于主题炒作阶段，常规基本面框架不适用，"
+                    "评分仅做同行业相对排序参考"
+                )
+            else:
+                warnings.append(
+                    f"⚠️ 高估值行业({sector_name}): "
+                    f"PE>100或亏损占比={sector_abnormal_pe_ratio:.0%}, "
+                    "行业整体估值偏高，关注催化剂而非PE"
+                )
+
+        return warnings
 
     def _analyze_bottleneck(self, symbol: str, name: str) -> Optional[BottleneckAnalysis]:
         node = classify_stock(symbol)

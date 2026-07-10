@@ -237,6 +237,7 @@ class Orchestrator:
         macro_event_category: str = "",
         skip_t0: bool = False,
         as_of_date: str = "",
+        selection_mode: bool = False,
     ) -> OrchestratorResult:
         """执行全链路分析。
 
@@ -246,8 +247,7 @@ class Orchestrator:
             macro_event_category: 事件类型 hint (monetary/geopolitical/trade_policy/...)
             skip_t0: True=跳过 T+0 日内时机分析（Alpha/中长期机会搜索时建议禁用）
             as_of_date: 历史回测日期 (YYYY-MM-DD)，替代当前日期。
-                        启用后: 北向/融资/互动易/AlphaLens 降级为默认值，
-                        K线/财务使用历史数据。
+            selection_mode: True=选股模式，Alpha使用压缩版(保留相对排名,不因赛道无差全体打折)
         """
         result = OrchestratorResult(
             symbol=symbol, name=name,
@@ -1013,7 +1013,10 @@ class Orchestrator:
             return result
 
         # Step 4: 综合裁决
-        verdict = self.verdict_engine.judge(report, topic_adj=topic_adj, weights_override=weights)
+        alpha_mode = "selection" if selection_mode else "trading"
+        verdict = self.verdict_engine.judge(
+            report, topic_adj=topic_adj, weights_override=weights, mode=alpha_mode,
+        )
         result.verdict = verdict
         if verdict.confidence < VerdictEngine.MIN_CONFIDENCE:
             result.passed = False
@@ -3051,6 +3054,7 @@ class Orchestrator:
                     macro=shared_macro,
                     skip_t0=skip_t0,
                     as_of_date=as_of_date,
+                    selection_mode=True,
                 )
             except Exception as e:
                 logger.error("批量诊断 %s 失败: %s", symbol, e)

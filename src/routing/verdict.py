@@ -72,6 +72,7 @@ class VerdictEngine:
         sector_score: float = 50.0,
         topic_adj: Optional[dict] = None,
         weights_override: Optional[dict] = None,
+        mode: str = "trading",
     ) -> Verdict:
         """综合评分，生成裁决。
 
@@ -81,6 +82,7 @@ class VerdictEngine:
             topic_adj: 主题生命周期权重调整 {topic_id: bonus}, bonus in [-0.2, +0.1]
             weights_override: 自定义权重 dict，覆盖 class-level WEIGHTS。
                               None 时使用默认权重。非 None 时自动归一化。
+            mode: "trading"=择时(Alpha完整版,默认), "selection"=选股(Alpha压缩版)
         """
         fundamental = (report.value_score + report.quality_score) / 2
         valuation = report.valuation_score
@@ -91,7 +93,7 @@ class VerdictEngine:
         sentiment = self._sentiment_adj(report.sentiment_signal)
 
         # Phase 4: Alpha Lens 乘数调整
-        alpha_mult, alpha_rationale, consensus_challenge = self._alpha_multiplier(report)
+        alpha_mult, alpha_rationale, consensus_challenge = self._alpha_multiplier(report, mode=mode)
 
         # Phase 3: 主题生命周期调整（传入 quality_score 用于结构性升级检测）
         adjusted_sector = sector_score
@@ -340,17 +342,20 @@ class VerdictEngine:
     def _alpha_multiplier(
         self,
         report: DiagnosisReport,
+        mode: str = "trading",
     ) -> tuple[float, str, str]:
         """Phase 4: Alpha Lens — 基于 AlphaProfile 计算评分乘数。
 
-        Alpha 视角调整:
-          - alpha_score >= 60: 乘数 1.2 (高 Alpha → 放大)
-          - alpha_score >= 40: 乘数 1.0 (中等 Alpha)
-          - alpha_score < 40:  乘数 0.7 (低 Alpha → 缩小)
-          - 叙事 CROWDED:       乘数 0.5 (拥挤 → 强制降权)
-          - 共识噪音源:          乘数 0.8
-          - 🍃 紫苏叶标的:      乘数 +0.1 (市场尚未充分发现)
-          - 🐟 金枪鱼+CROWDED: 乘数 ×0.85 (已被充分定价)
+        trading 模式 (择时/建仓): Alpha 完整版，范围 [0.3, 1.5]
+          - alpha_score >= 70: 乘数 1.3
+          - alpha_score >= 60: 乘数 1.2
+          - alpha_score < 40:  乘数 0.7
+          - CROWDED: cap 0.5, CONSENSUS_NOISE: cap 0.8
+
+        selection 模式 (选股/扫描): Alpha 压缩版，范围 [0.55, 1.15]
+          - 保留同赛道内相对排名，但不因"赛道无信息差"而全体打折
+          - 公式: multiplier = 0.85 + 0.3 × (α - 50) / 50
+          - CROWDED: cap 0.6 (而非 0.5)
 
         Returns:
             (multiplier, rationale, consensus_challenge)
@@ -361,8 +366,33 @@ class VerdictEngine:
 
         multiplier = 1.0
 
+        if mode == "selection":
+            # ── 选股压缩版: 保留相对排名, 整体冲击温和 ──
+            base = profile.alpha_score
+            multiplier = 0.85 + 0.3 * (base - 50.0) / 50.0
+            # 叙事阶段只做温和 cap
+            from src.alpha.schema import NarrativeLifecycle
+            if profile.narrative.stage == NarrativeLifecycle.CROWDED:
+                multiplier = min(multiplier, 0.60)
+            elif profile.narrative.stage == NarrativeLifecycle.FADING:
+                multiplier = min(multiplier, 0.65)
+            # 紫苏叶 + 共识缺口 加分保留
+            if profile.supply_chain.is_shiso_leaf:
+                multiplier += 0.05
+            if profile.consensus_gap.is_market_wrong:
+                multiplier += 0.05
+            multiplier = max(0.55, min(1.15, multiplier))
+            return (
+                round(multiplier, 2),
+                f"选股Alpha压缩: α={base:.0f} → ×{multiplier:.2f}",
+                "",
+            )
+
+        # ── trading 完整版: 信息差判断 ──
         # Alpha 评分调整
-        if profile.alpha_score >= 60:
+        if profile.alpha_score >= 70:
+            multiplier += 0.3
+        elif profile.alpha_score >= 60:
             multiplier += 0.2
         elif profile.alpha_score < 40:
             multiplier -= 0.3

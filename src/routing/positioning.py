@@ -6,7 +6,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from src.kelly.base import Sizer
 
 from .signal import Direction, PortfolioTarget, Signal, signal_from_verdict, target_from_signal
 from .verdict import Verdict
@@ -68,11 +71,12 @@ class PositioningEngine:
       - 负期望 (f*≤0): target = 0，不建仓
     """
 
-    def __init__(self, kelly_sizer=None):
+    def __init__(self, kelly_sizer: "Sizer | None" = None):
         """初始化仓位调度引擎。
 
         Args:
-            kelly_sizer: KellyPositionSizer 实例 (可选)。None 时仅使用线性公式。
+            kelly_sizer: Sizer 实例 (KellyPositionSizer / VolatilityTargetSizer 等)。
+                         None 时仅使用线性公式。
         """
         self._kelly_sizer = kelly_sizer
 

@@ -21,6 +21,7 @@ from .tracker import (
     consistency_check,
 )
 from .sizer import KellyPositionSizer, VolatilityTargetSizer
+from .base import Sizer
 
 __all__ = [
     "TradeTracker",
@@ -35,4 +36,5 @@ __all__ = [
     "build_exit_trades",
     "build_positions",
     "consistency_check",
+    "Sizer",
 ]
