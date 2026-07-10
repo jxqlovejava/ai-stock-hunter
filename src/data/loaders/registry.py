@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import time
 from typing import Any, Type
 
 from src.data.loaders.base import DataLoader, NoAvailableSourceError
@@ -21,11 +22,15 @@ LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 # 腾讯(免费不封IP) > mootdx(TCP行情免费) > AKShare(爬虫免费) > 华泰(HT_APIKEY) > 国信(GS_API_KEY)
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share": ["verified_cache", "tencent", "mootdx", "akshare", "huatai", "guosen"],
-    # 财务数据：同花顺(akshare)有直接ROE/ROA → 腾讯 → mootdx → 付费源兜底
-    "a_share_financials": ["verified_cache", "akshare", "tencent", "mootdx", "huatai", "guosen"],
+    # 财务数据：mootdx/tencent 优先（快速失败），akshare 放后面（代理超时风险）
+    "a_share_financials": ["verified_cache", "mootdx", "tencent", "akshare", "huatai", "guosen"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }
+
+# 会话级可用性缓存：避免对同一不可用源反复探测
+_availability_cache: dict[str, tuple[bool, float]] = {}
+_AVAIL_CACHE_TTL: float = 300.0  # 5 分钟内不重复探测
 
 VALID_SOURCES: set[str] = set(FALLBACK_CHAINS.get("a_share", [])) | {"local", "auto"}
 
@@ -73,6 +78,14 @@ def resolve_loader(market: str) -> DataLoader:
     tried: list[str] = []
     for name in chain:
         tried.append(name)
+        # 会话级可用性缓存：避免重复探测不可用源
+        cached = _availability_cache.get(name)
+        if cached is not None:
+            avail, ts = cached
+            if time.time() - ts < _AVAIL_CACHE_TTL:
+                if not avail:
+                    continue  # 上次探测不可用，跳过
+                # avail=True 仍需实例化（缓存只记"不可用"）
         loader_cls = LOADER_REGISTRY.get(name)
         if loader_cls is None:
             continue
@@ -80,10 +93,13 @@ def resolve_loader(market: str) -> DataLoader:
             loader = loader_cls()
         except Exception as exc:
             logger.debug("loader %s failed to construct: %s", name, exc)
+            _availability_cache[name] = (False, time.time())
             continue
         if loader.is_available():
             logger.debug("resolved loader for %s: %s", market, name)
             return loader
+        else:
+            _availability_cache[name] = (False, time.time())
 
     raise NoAvailableSourceError(
         f"No available loader for {market}; tried: {tried}"
