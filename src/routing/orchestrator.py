@@ -296,6 +296,25 @@ class Orchestrator:
 
         # 加载投资者偏好
         investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
+
+        # ── 板块可交易性检查 (P0) ──
+        # 在进入军规/准入/诊断等昂贵管道之前，先检查投资者是否开通了该标的所属板块。
+        # 若板块不可交易，立即拦截，避免浪费 API 配额和分析成本。
+        if investor is not None:
+            from src.learner.preference.adapter import is_board_accessible
+            from src.learner.preference.model import get_board_from_symbol
+            if not is_board_accessible(investor, symbol):
+                board = get_board_from_symbol(symbol)
+                board_name = board.value if board else "未知板块"
+                accessible_names = [b.value for b in investor.accessible_boards]
+                result.passed = False
+                result.blocked_by.append(
+                    f"板块限制: {symbol} 属于 {board_name}，"
+                    f"不在可交易板块 {accessible_names} 内"
+                )
+                step_done("⛔", f"板块 {board_name} 未开通交易权限")
+                return result
+
         position_limits = None
         weights = None
         risk_mult = 1.0
@@ -3028,6 +3047,26 @@ class Orchestrator:
         shared_macro = None
         shared_sentiment = None
 
+        # ── 板块过滤 (P0) ──
+        # 批量诊断前预加载投资者画像，过滤不可交易板块的标的。
+        # 避免对 300xxx/688xxx 等未开通板块浪费 API 配额。
+        board_ok = None
+        board_name_lookup = {}
+        try:
+            from src.learner.preference.loader import InvestorPreferenceLoader
+            from src.learner.preference.adapter import resolve_board_filter
+            from src.learner.preference.model import get_board_from_symbol as _gbfs
+            loader = InvestorPreferenceLoader()
+            prefs = loader.load()
+            board_ok = resolve_board_filter(prefs)
+            accessible_names = [b.value for b in prefs.accessible_boards]
+            logger.info(
+                "批量诊断板块过滤: 可交易板块=%s, 候选标的=%d",
+                accessible_names, len(symbols),
+            )
+        except Exception as e:
+            logger.debug("板块过滤加载失败，放行全部标的: %s", e)
+
         # 共享上下文只获取一次
         try:
             shared_macro = self._get_macro_context()
@@ -3044,6 +3083,23 @@ class Orchestrator:
         for i, symbol in enumerate(symbols):
             name = names[i] if names and i < len(names) else ""
             sector = sectors[i] if sectors and i < len(sectors) else ""
+
+            # 板块过滤
+            if board_ok is not None and not board_ok(symbol):
+                board = _gbfs(symbol) if _gbfs else None
+                board_name = board.value if board else "未知板块"
+                logger.info(
+                    "⛔ 跳过 [%s/%s] %s %s: 板块 %s 不可交易",
+                    i + 1, len(symbols), symbol, name, board_name,
+                )
+                results.append({
+                    "symbol": symbol, "name": name or symbol, "sector": sector,
+                    "final_score": 0, "rec": "BOARD_BLOCKED",
+                    "blocked_by": [f"板块 {board_name} 未开通交易权限"],
+                    "data_gaps": [],
+                })
+                continue
+
             logger.info("批量诊断 [%s/%s]: %s %s", i + 1, len(symbols), symbol, name)
 
             try:

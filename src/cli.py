@@ -125,6 +125,31 @@ def cmd_scan(args: list[str]):
     print(f"数据源: {status}")
 
     stocks = agg.scan_all_stocks() or []
+
+    # ── 板块过滤 (P0) ──
+    # 根据投资者画像中的 accessible_boards 预过滤不可交易板块，
+    # 避免对 300xxx/688xxx/8xxxxx 等未开通板块浪费诊断算力。
+    board_filtered = 0
+    try:
+        from src.learner.preference.loader import InvestorPreferenceLoader
+        from src.learner.preference.adapter import resolve_board_filter
+        loader = InvestorPreferenceLoader()
+        board_ok = resolve_board_filter(loader.load())
+        filtered = []
+        for s in stocks:
+            symbol = s.get("symbol", "") if isinstance(s, dict) else getattr(s, "symbol", "")
+            if not symbol or board_ok(symbol):
+                filtered.append(s)
+            else:
+                board_filtered += 1
+        if board_filtered:
+            accessible = loader.load().accessible_boards
+            print(f"🔒 板块过滤: 排除 {board_filtered} 只不可交易板块标的 "
+                  f"(仅保留 {[b.value for b in accessible]})")
+        stocks = filtered
+    except Exception:
+        pass  # 画像加载失败时不过滤，照常扫描
+
     print(f"扫描范围: {len(stocks)} 只股票")
 
     if not stocks:
@@ -1379,6 +1404,25 @@ def cmd_screen(args: list[str]):
         print("📭 无股票满足条件")
         return
 
+    # ── 板块过滤 (P0) ──
+    try:
+        from src.learner.preference.loader import InvestorPreferenceLoader
+        from src.learner.preference.adapter import resolve_board_filter
+        loader = InvestorPreferenceLoader()
+        board_ok = resolve_board_filter(loader.load())
+        before = len(results)
+        results = [r for r in results if board_ok(r.symbol)]
+        if len(results) < before:
+            accessible = loader.load().accessible_boards
+            print(f"🔒 板块过滤: {before} → {len(results)} 只 "
+                  f"(仅保留 {[b.value for b in accessible]})")
+    except Exception:
+        pass
+
+    if not results:
+        print("📭 板块过滤后无剩余标的")
+        return
+
     print(f"\n🏆 筛选结果: {len(results)} 只股票\n")
     print(f"{'代码':<8s} {'名称':<10s} {'最新价':>8s} {'涨跌幅':>8s} {'市场':<4s}")
     print("-" * 42)
@@ -1711,10 +1755,27 @@ def cmd_alpha_scan(args: list[str]):
     agg = DataAggregator()
     try:
         stocks = agg.scan_all_stocks() or []
-        print(f"扫描范围: {len(stocks)} 只股票")
     except Exception as e:
         print(f"⚠️ 扫描失败: {e}")
         return
+
+    # ── 板块过滤 (P0) ──
+    try:
+        from src.learner.preference.loader import InvestorPreferenceLoader
+        from src.learner.preference.adapter import resolve_board_filter
+        loader = InvestorPreferenceLoader()
+        board_ok = resolve_board_filter(loader.load())
+        before = len(stocks)
+        stocks = [s for s in stocks if board_ok(
+            s.get("symbol", "") if isinstance(s, dict) else getattr(s, "symbol", ""))]
+        if len(stocks) < before:
+            accessible = loader.load().accessible_boards
+            print(f"🔒 板块过滤: {before} → {len(stocks)} 只 "
+                  f"(仅保留 {[b.value for b in accessible]})")
+    except Exception:
+        pass
+
+    print(f"扫描范围: {len(stocks)} 只股票")
 
     lens = AlphaLens()
     results: list[tuple[str, str, float, str]] = []
