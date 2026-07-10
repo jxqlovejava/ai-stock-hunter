@@ -729,7 +729,31 @@ class DiagnosisEngine:
             score += delta
 
         # 2. 董监高稳定性 (0 ~ -20)
-        abnormal = [c for c in changes if "任期届满" not in c.get("reason", "")]
+        # 合规披露关键词 — 这些是定期/常规的制度文件，不是实质性高管变动
+        _COMPLIANCE_KEYWORDS = [
+            "述职报告", "履职报告", "履职情况", "管理办法", "管理制度",
+            "薪酬方案", "薪酬制度", "薪酬管理", "会议决议", "公司章程",
+            "工商变更", "专项意见", "评估报告", "授权管理", "工作细则",
+            "履职评价", "工作总结", "审计委员会", "战略委员会",
+            "提名委员会", "薪酬委员会", "考核委员会", "董事会工作报告",
+            "独立董事独立性", "董事会审计委员会", "会计师事务所",
+            "法定代表人", "董事履职", "高级管理人员薪酬",
+        ]
+
+        def _is_compliance_disclosure(change: dict) -> bool:
+            """判断一条高管变动记录是否为例行合规披露而非实质性变动."""
+            reason = change.get("reason", "")
+            title = change.get("title", "")
+            text = f"{reason} {title}".lower()
+            return any(kw in text for kw in _COMPLIANCE_KEYWORDS)
+
+        non_compliance = [c for c in changes if not _is_compliance_disclosure(c)]
+        compliance_count = len(changes) - len(non_compliance)
+
+        # 实质性非正常变动（排除任期届满）
+        abnormal = [c for c in non_compliance
+                    if "任期届满" not in c.get("reason", "")]
+
         if abnormal:
             penalty = min(20, len(abnormal) * 10)
             score -= penalty
@@ -737,6 +761,10 @@ class DiagnosisEngine:
                 name = c.get("person_name", "")
                 reason = c.get("reason", "原因未知")
                 risks.append(f"董监高变动: {name} {reason}")
+
+        # 合规披露不扣分，仅记录数量供调试
+        if compliance_count > 0:
+            pass  # 例行合规披露，不视为风险
 
         # 3. 高管背景质量 (-5 ~ +10)
         if profiles:

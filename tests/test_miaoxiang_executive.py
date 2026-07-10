@@ -154,7 +154,9 @@ class TestScoreExecutive:
         from src.routing.diagnosis import DiagnosisEngine
         result = DiagnosisEngine._score_executive({"trades": [], "profiles": [], "changes": []})
         assert result["score"] == 45.0  # -5 for missing profiles
-        assert any("缺失" in r for r in result["risks"])
+        # 空 profiles 仅扣分不添加风险 — 数据不可用 ≠ 实际风险
+        # (真正的风险是"有数据但发现了问题")
+        assert not any("缺失" in r for r in result["risks"])
 
     def test_net_buying_boost(self):
         from src.routing.diagnosis import DiagnosisEngine
@@ -255,8 +257,12 @@ class TestTradeSignalExecutiveRisk:
 class TestOrchestratorExecutiveContext:
     def test_no_miaoxiang_returns_empty(self):
         from src.routing.orchestrator import Orchestrator
-        with patch("src.routing.orchestrator.DataAggregator") as mock_agg_class:
+        # _get_executive_context 内联 import DataAggregator，需 patch 源模块
+        with patch("src.data.aggregator.DataAggregator") as mock_agg_class:
             mock_agg = MagicMock()
+            mock_agg.get_executive_trades.return_value = []
+            mock_agg.get_executive_profiles.return_value = []
+            mock_agg.get_board_changes.return_value = []
             mock_agg.miaoxiang = None
             mock_agg_class.return_value = mock_agg
             ctx = Orchestrator._get_executive_context("000001")
@@ -264,7 +270,8 @@ class TestOrchestratorExecutiveContext:
 
     def test_exception_returns_empty(self):
         from src.routing.orchestrator import Orchestrator
-        with patch("src.routing.orchestrator.DataAggregator") as mock_agg_class:
+        # _get_executive_context 内联 import DataAggregator，需 patch 源模块
+        with patch("src.data.aggregator.DataAggregator") as mock_agg_class:
             mock_agg_class.side_effect = RuntimeError("boom")
             ctx = Orchestrator._get_executive_context("000001")
             assert ctx == {"trades": [], "profiles": [], "changes": []}
