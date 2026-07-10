@@ -158,8 +158,11 @@ class DataAggregator:
         start_date: str = "",
         end_date: str = "",
         period: str = "daily",
+        as_of: str = "",
     ) -> pd.DataFrame:
-        """按 a_share fallback 链获取历史 K 线，并附加 citation。"""
+        """按 a_share fallback 链获取历史 K 线，并附加 citation。
+        as_of: 历史回测日期 (YYYY-MM-DD)
+        """
         from src.data.loaders.registry import _ensure_registered
         _ensure_registered()
         for name in FALLBACK_CHAINS.get("a_share", []):
@@ -172,7 +175,11 @@ class DataAggregator:
                 continue
             if not loader.is_available():
                 continue
-            df = loader.get_history(symbol, start_date, end_date, period)
+            # 传递 as_of 给支持历史回测的 loader
+            kwargs = {}
+            if as_of:
+                kwargs["as_of"] = as_of
+            df = loader.get_history(symbol, start_date, end_date, period, **kwargs)
             if df is not None and not df.empty:
                 if "source_citation" not in df.attrs:
                     df.attrs["source_citation"] = make_citation(
@@ -184,11 +191,13 @@ class DataAggregator:
         return pd.DataFrame()
 
     def _walk_financials_chain(
-        self, symbol: str, market: str = "SH", count: int = 4
+        self, symbol: str, market: str = "SH", count: int = 4,
+        report_period: str = "",
     ) -> list[Financials]:
         """按 a_share fallback 链获取财务报表。
 
         主源返回数据后，尝试用后续源补充缺失字段 (ROE/EPS 等)。
+        report_period: 历史回测报告期 (YYYY-MM-DD)
         """
         from src.data.loaders.registry import _ensure_registered
         _ensure_registered()
@@ -205,7 +214,10 @@ class DataAggregator:
                 continue
             if not loader.is_available():
                 continue
-            fins = loader.get_financials(symbol, market, count)
+            kwargs = {"symbol": symbol, "market": market, "count": count}
+            if report_period:
+                kwargs["report_period"] = report_period
+            fins = loader.get_financials(**kwargs)
             if not fins:
                 continue
             citation = make_citation(
@@ -352,15 +364,18 @@ class DataAggregator:
     # ------------------------------------------------------------------
 
     def get_financials(
-        self, symbol: str, market: str = "SH", count: int = 4
+        self, symbol: str, market: str = "SH", count: int = 4,
+        report_period: str = "",
     ) -> list[Financials]:
-        """获取财务报表。按 registry fallback 链。"""
-        cache_key = f"fin:{symbol}:{count}"
+        """获取财务报表。按 registry fallback 链。
+        report_period: 历史回测报告期 (YYYY-MM-DD)，只返回 ≤ 该日期的数据
+        """
+        cache_key = f"fin:{symbol}:{count}:{report_period}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
 
-        fins = self._walk_financials_chain(symbol, market, count)
+        fins = self._walk_financials_chain(symbol, market, count, report_period=report_period)
         if fins:
             self._cache_set(cache_key, fins)
         return fins
@@ -383,13 +398,22 @@ class DataAggregator:
         start_date: str = "2015-01-01",
         end_date: str = "",
         period: str = "daily",
+        as_of: str = "",
     ):
-        """获取历史K线数据（用于回测）。按 registry fallback 链。"""
+        """获取历史K线数据（用于回测）。按 registry fallback 链。
+        as_of: 历史回测日期 (YYYY-MM-DD)
+        """
         t0 = self.speed_monitor.time_event("history_fetch")
         try:
             if not end_date:
-                end_date = datetime.now().strftime("%Y%m%d")
-            result = self._walk_history_chain(symbol, start_date, end_date, period)
+                now = datetime.now()
+                if as_of:
+                    try:
+                        now = datetime.strptime(as_of, "%Y-%m-%d")
+                    except ValueError:
+                        pass
+                end_date = now.strftime("%Y%m%d")
+            result = self._walk_history_chain(symbol, start_date, end_date, period, as_of=as_of)
             source = result.attrs.get("source_citation", {}).provider if hasattr(result, 'attrs') and not result.empty else "aggregator"
             self.speed_monitor.end_event("history_fetch", t0, source=str(source))
             return result

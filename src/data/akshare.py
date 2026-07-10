@@ -117,13 +117,17 @@ class AKShareProvider(DataProvider):
     # ------------------------------------------------------------------
 
     def get_financials(
-        self, symbol: str, market: str = "SH", count: int = 4
+        self, symbol: str, market: str = "SH", count: int = 4,
+        report_period: str = "",
     ) -> list[Financials]:
         """获取最近 N 期财务数据。
 
         使用同花顺财务摘要 (stock_financial_abstract_ths)，
         字段: 报告期/净利润/营业总收入/净资产收益率/每股经营现金流 等。
         资产负债表数据通过 stock_balance_sheet_by_report_ths 补充。
+
+        report_period: 历史回测报告期 (YYYY-MM-DD)，只返回 ≤ 该日期的报告期数据。
+                       例如 "2025-09-01" → 只返回 2025-06-30 及之前的报告期。
         """
         try:
             # 主表: 利润表 + 部分资产负债表指标
@@ -142,9 +146,26 @@ class AKShareProvider(DataProvider):
                 pass
 
             results = []
+            # 如果有 report_period 过滤，只保留 ≤ 该日期的报告期
+            report_cutoff = None
+            if report_period:
+                try:
+                    from datetime import datetime as _dt
+                    report_cutoff = _dt.strptime(report_period, "%Y-%m-%d")
+                except ValueError:
+                    pass
+
             for _, r in df.tail(count).iterrows():
                 try:
                     period = str(r.get("报告期", ""))
+                    # 历史回测: 跳过晚于 as_of 的报告期
+                    if report_cutoff:
+                        try:
+                            pdt = _dt.strptime(period, "%Y-%m-%d")
+                            if pdt > report_cutoff:
+                                continue
+                        except ValueError:
+                            pass
                     bs = bs_data.get(period, {})
                     # 计算 EPS = 净利润 / 总股本
                     total_shares_val = self._safe_float(r.get("总股本") or bs.get("总股本"))

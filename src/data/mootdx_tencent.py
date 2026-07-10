@@ -221,21 +221,29 @@ class MootdxTencentProvider(DataProvider):
 
     def get_history(
         self, symbol: str, period: str = "daily",
-        start_date: str = "", end_date: str = ""
+        start_date: str = "", end_date: str = "", as_of: str = ""
     ) -> pd.DataFrame:
         """获取历史K线。
 
         频率映射: daily=9, weekly=5, monthly=6
         ⚠️ mootdx bars 返回不复权原始价
+        as_of: 历史回测日期 (YYYY-MM-DD)，替代 datetime.now()
         """
         freq_map = {"daily": 9, "weekly": 5, "monthly": 6, "1min": 8, "5min": 0}
         frequency = freq_map.get(period, 9)
 
-        # Determine offset
+        # Determine offset — use as_of as reference point if provided
+        now = datetime.now()
+        if as_of:
+            try:
+                now = datetime.strptime(as_of, "%Y-%m-%d")
+            except ValueError:
+                pass
+
         if start_date:
             try:
                 start_dt = datetime.strptime(start_date, "%Y%m%d")
-                days_diff = (datetime.now() - start_dt).days
+                days_diff = (now - start_dt).days
                 if period in ("1min", "5min"):
                     offset = min(days_diff * 48, 800)  # Cap for minute data
                 else:
@@ -329,16 +337,24 @@ class MootdxTencentProvider(DataProvider):
 
         return self._parse_bars(raw, symbol, resolution, start, end)
 
-    def _calc_offset(self, resolution: Resolution, start_date: str) -> int:
+    def _calc_offset(self, resolution: Resolution, start_date: str, as_of: str = "") -> int:
         """计算 mootdx bars 需要的 offset 参数。
 
         分钟数据 offset 基于日数 × 每日 bar 数（避免拉不够），
         日线 offset 基于日数 + buffer。
+        as_of: 历史回测日期 (YYYY-MM-DD)，替代 datetime.now() 作为参考点。
         """
+        now = datetime.now()
+        if as_of:
+            try:
+                now = datetime.strptime(as_of, "%Y-%m-%d")
+            except ValueError:
+                pass
+
         if start_date:
             try:
                 start_dt = datetime.strptime(start_date, "%Y%m%d")
-                days_diff = max((datetime.now() - start_dt).days, 1)
+                days_diff = max((now - start_dt).days, 1)
             except ValueError:
                 days_diff = 30
         else:
