@@ -803,10 +803,15 @@ class RiskControlEngine:
             return violations
 
         if quote_data:
-            # Low liquidity
-            volume = quote_data.get("volume", 0) or 0
-            price = quote_data.get("price", 0) or 0
-            turnover = volume * price  # rough turnover in RMB
+            # Low liquidity — prefer amount field; fall back to volume×price
+            amount = quote_data.get("amount", 0) or quote_data.get("turnover", 0) or 0
+            if amount > 0:
+                turnover = amount
+            else:
+                volume = quote_data.get("volume", 0) or 0
+                price = quote_data.get("price", 0) or 0
+                # volume from Tencent is in 手 (lots of 100 shares)
+                turnover = volume * 100 * price
             if turnover > 0 and turnover < 50_000_000:  # < 50M daily
                 violations.append(f"低流动性: 日成交额 {turnover/1e4:.0f}万 < 5000万")
 

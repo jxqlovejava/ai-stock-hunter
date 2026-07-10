@@ -962,12 +962,21 @@ class DiagnosisEngine:
         Returns:
             [(symbol, report, composite_score), ...] 按得分降序排列
         """
+        import random
+
         preset = SCREENING_PRESETS.get(preset_name)
         if preset is None:
             raise ValueError(f"未知预设 '{preset_name}', 可选: {list(SCREENING_PRESETS.keys())}")
 
+        # 随机打乱候选顺序，避免字母序偏差导致同一板块垄断。
+        # 实际扫描数量 = min(100, len(candidates))，从打乱后的列表中取前 N 只。
+        MAX_SCAN = 100
+        shuffled = list(candidates)
+        random.shuffle(shuffled)
+        scan_pool = shuffled[:MAX_SCAN]
+
         results: list[tuple[str, DiagnosisReport, float]] = []
-        for c in candidates[:100]:  # 最多扫描 100 只
+        for c in scan_pool:
             # 兼容 dict 和 Pydantic BaseModel (Quote)
             if hasattr(c, "model_dump"):
                 c = c.model_dump()

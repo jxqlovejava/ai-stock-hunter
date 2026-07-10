@@ -429,8 +429,11 @@ class Orchestrator:
         }
         try:
             q = self.data.get_quote(symbol, market)
-            if q and q.listing_date:
-                gate_ctx["listing_date"] = q.listing_date
+            if q:
+                if q.listing_date:
+                    gate_ctx["listing_date"] = q.listing_date
+                if q.turnover and q.turnover > 0:
+                    gate_ctx["avg_daily_volume"] = float(q.turnover)
         except Exception:
             pass  # 数据不可用时使用 admission 的默认值
         gate_result = self.admission.check(symbol, name, gate_ctx)
@@ -798,8 +801,10 @@ class Orchestrator:
 
         # Step 3: 多维诊断
         step_start(5, "多维诊断 (宏观/价值/质量/动量/盈利修正/瓶颈/情绪)")
-        # 使用真实行情 + 财务数据
-        fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=4)]
+        # 使用真实行情 + 财务数据（8 期以计算同比增速）
+        fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=8)]
+        # 计算同比增速并注入 financial dict
+        fin_list = self._attach_yoy_growth(fin_list)
         sentiment_dict = self._get_sentiment(nb_profile)
 
         # 注入融资融券 + Monitor 信号到增强上下文
@@ -1706,6 +1711,45 @@ class Orchestrator:
         return result
 
     @staticmethod
+    def _attach_yoy_growth(fin_list: list[dict]) -> list[dict]:
+        """为财务数据附加同比增速（revenue_yoy, profit_yoy）。
+
+        从最近两个同期报告期（如 2025Q4 vs 2024Q4）计算同比增速。
+        结果直接注入每个 dict 的 revenue_yoy / profit_yoy 字段。
+        """
+        if len(fin_list) < 2:
+            return fin_list
+        # 按报告期倒序排列（已在 get_financials 中保证）
+        # 找最近一期的同比对应期（report_period 格式如 '2025Q4'）
+        latest = fin_list[0]
+        latest_period = latest.get("report_period", "")
+        # 解析报告期获取年份和季度
+        import re
+        m = re.match(r"(\d{4})Q(\d)", str(latest_period))
+        if not m:
+            return fin_list
+        year, quarter = int(m.group(1)), int(m.group(2))
+        target_period = f"{year - 1}Q{quarter}"
+        # 在历史数据中找对应期
+        yoy_fin = None
+        for f in fin_list[1:]:
+            if str(f.get("report_period", "")) == target_period:
+                yoy_fin = f
+                break
+        if yoy_fin is None:
+            return fin_list
+        # 计算同比增速
+        rev_latest = latest.get("revenue")
+        rev_yoy = yoy_fin.get("revenue")
+        if rev_latest and rev_yoy and rev_yoy != 0:
+            latest["revenue_yoy"] = round((rev_latest - rev_yoy) / abs(rev_yoy) * 100, 1)
+        np_latest = latest.get("net_profit")
+        np_yoy = yoy_fin.get("net_profit")
+        if np_latest and np_yoy and np_yoy != 0:
+            latest["profit_yoy"] = round((np_latest - np_yoy) / abs(np_yoy) * 100, 1)
+        return fin_list
+
+    @staticmethod
     def _financials_to_dict(fin_list: list) -> dict:
         """将财务数据列表转为 dict。"""
         if not fin_list:
@@ -1763,7 +1807,15 @@ class Orchestrator:
             result.passed = False
             result.blocked_by = [r.name for r in doctrine_result.blocked_by]
             return result
-        gate_result = self.admission.check(symbol, name)
+        gate_ctx = {}
+        try:
+            market = "SH" if symbol.startswith(("6", "5", "9")) else "SZ"
+            q = self.data.get_quote(symbol, market)
+            if q and q.turnover and q.turnover > 0:
+                gate_ctx["avg_daily_volume"] = float(q.turnover)
+        except Exception:
+            pass
+        gate_result = self.admission.check(symbol, name, gate_ctx)
         result.gate_status = gate_result.status.value
         result.passed = gate_result.status.value != "REJECTED"
         if not result.passed:
@@ -1900,6 +1952,8 @@ class Orchestrator:
             "is_limit_up": False, "is_limit_down": False,
             "is_suspended": False, "listing_days": 365,
         }
+        if quote and quote.turnover and quote.turnover > 0:
+            gate_ctx["avg_daily_volume"] = float(quote.turnover)
         gate_result = self.admission.check(symbol, name, gate_ctx)
         if gate_result.status.value == "REJECTED":
             return {"blocked": True, "blocked_by": gate_result.flags}
@@ -2080,49 +2134,45 @@ class Orchestrator:
         except ImportError:
             return None
 
-        # 拉取日线数据 (近 30 个交易日)
+        # 拉取日线数据 (腾讯 K 线 API，不封 IP)
         try:
             from datetime import datetime, timedelta
-            end_date = datetime.now().strftime("%Y%m%d")
-            start_date = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
-            daily_bars = self.data.mootdx.get_bars(
-                symbol, Resolution.DAY, start=start_date, end=end_date,
+            import urllib.request, json
+            prefix = "sh" if symbol.startswith(("6", "9")) else "sz"
+            url = (
+                f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                f"?param={prefix}{symbol},day,,,60,qfq"
             )
-            daily_bars = [b for b in daily_bars if b is not None]
-            if len(daily_bars) < 5:
-                logger.warning("T+0: 日线数据不足 (%d 根)，尝试获取更早的数据", len(daily_bars))
-                # 回退：尝试从 akshare 获取日线数据
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            resp = urllib.request.urlopen(req, timeout=10)
+            raw = json.loads(resp.read().decode("utf-8"))
+            kline_key = f"{prefix}{symbol}"
+            kline_data = (
+                (raw.get("data") or {}).get(kline_key, {}).get("qfqday")
+                or (raw.get("data") or {}).get(kline_key, {}).get("day")
+                or []
+            )
+            # 腾讯格式: ["YYYY-MM-DD", "开盘", "收盘", "最高", "最低", "成交量(手)"]
+            from src.data.schema import Bar, Resolution as Res
+            daily_bars = []
+            for row in kline_data[-60:]:
                 try:
-                    import akshare as ak
-                    from datetime import datetime as dt
-                    df = ak.stock_zh_a_hist(
-                        symbol=symbol, period='daily',
-                        start_date=start_date, end_date=end_date,
-                        adjust='qfq',
-                    )
-                    if df is not None and len(df) >= 5:
-                        from src.data.schema import Bar
-                        daily_bars = []
-                        for _, row in df.iterrows():
-                            ts = row.get('日期', None)
-                            if isinstance(ts, str):
-                                ts = dt.strptime(ts, "%Y-%m-%d")
-                            bar = Bar(
-                                open=float(row['开盘']), close=float(row['收盘']),
-                                high=float(row['最高']), low=float(row['最低']),
-                                volume=int(row['成交量']), amount=float(row.get('成交额', 0)),
-                                timestamp=ts,
-                            )
-                            daily_bars.append(bar)
-                        daily_bars = daily_bars[-30:]  # 取最近 30 根（覆盖 3 日 + 2~3 周）
-                        logger.info("T+0: 已从 akshare 获取 %d 根日线", len(daily_bars))
-                except Exception as e2:
-                    logger.warning("T+0: akshare 回退也失败: %s", e2)
+                    ts = datetime.strptime(row[0], "%Y-%m-%d")
+                    daily_bars.append(Bar(
+                        symbol=symbol, resolution=Res.DAY,
+                        open=float(row[1]), close=float(row[2]),
+                        high=float(row[3]), low=float(row[4]),
+                        volume=int(float(row[5])), amount=0,
+                        timestamp=ts,
+                    ))
+                except (ValueError, IndexError):
+                    continue
             if len(daily_bars) < 5:
-                logger.warning("T+0: 所有数据源均不足 (%d 根)，返回基础快照", len(daily_bars))
+                logger.warning("T+0: 腾讯日线数据不足 (%d 根)", len(daily_bars))
             daily_bars = daily_bars[-20:]  # 取最近 20 根
         except Exception as e:
-            logger.debug("T+0: 日线数据获取失败: %s", e)
+            logger.warning("T+0: 腾讯日线获取失败: %s", e)
             return None
 
         # 拉取今日分钟数据
