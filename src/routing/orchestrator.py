@@ -48,7 +48,7 @@ from src.output.step_output import (
     print_debate, print_munger_models, print_alpha_game_theory,
     print_verdict, print_positioning, print_risk_control,
     print_source_citations, print_t0, print_deep_research,
-    print_sector_impact_summary,
+    print_sector_impact_summary, print_news_context,
 )
 from src.output.markdown_report import save_markdown_report
 
@@ -124,6 +124,8 @@ class OrchestratorResult:
     t0_result: Optional[dict] = None
     # 宏观事件因果链分析
     macro_event: Optional[dict] = None
+    # 多通道资讯上下文
+    news_context: Optional[dict] = None
     # 市场情绪完整对象
     market_sentiment: Optional[object] = None
     # 融资融券监控 (v2.0)
@@ -516,6 +518,9 @@ class Orchestrator:
             if r014 is not None and r014.name not in result.warnings:
                 result.warnings.append(r014.name)
                 logger.info("r014 触发: %s 重大利好 + 5日涨 %.1f%%", symbol, ctx["rise_5day_pct"])
+
+        # 存储多通道资讯上下文到结果
+        result.news_context = news_context
 
         # Phase: 财政政策 + 政策跟踪信号
         fiscal_regime = self._get_fiscal_regime()
@@ -1350,6 +1355,9 @@ class Orchestrator:
                 logger.debug("Monitor Event creation failed: %s", e)
 
         print_source_citations(report, result.verdict)
+        # 🔔 多通道资讯输出
+        if result.news_context:
+            print_news_context(result.news_context)
         # 深度研究输出 (仅 mode="full")
         if mode in ("full", "selection", "deep"):
             print_deep_research(result.sector_research, result.company_deep_research, name)
@@ -2457,7 +2465,7 @@ class Orchestrator:
         self,
         symbol: str,
         name: str,
-        news_context: list[dict],
+        news_context: list[dict] | dict,
         as_of_date: str = "",
     ) -> AlphaProfile:
         """Phase 4: 计算 Alpha Profile。
@@ -2472,13 +2480,14 @@ class Orchestrator:
 
         as_of_date: 历史回测日期 (YYYY-MM-DD)，启用时使用历史真实数据
         """
-        # 从资讯上下文中提取来源信息
+        # 从资讯上下文中提取来源信息 (兼容新旧格式)
+        flat_news = _flatten_news_context(news_context)
         news_sources: list[str] = []
         market_narrative_parts: list[str] = []
         narrative_intensity = 0.0
         sentiment = "NEUTRAL"
 
-        for item in (news_context or []):
+        for item in flat_news:
             title = item.get("title", "")
             source = item.get("source", "")
             content = item.get("content", "")[:200] if item.get("content") else ""
@@ -2487,7 +2496,7 @@ class Orchestrator:
             market_narrative_parts.append(title)
 
             # 估算叙事强度：资讯数量越多 → 叙事越强
-            narrative_intensity = min(1.0, len(news_context) / 10)
+            narrative_intensity = min(1.0, len(flat_news) / 10)
 
         # 从 symbol 和 name 推断基本信息
         market_narrative = (
@@ -2958,20 +2967,45 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_news_context(symbol: str, name: str) -> list[dict]:
-        """从 mx-search 获取个股最新资讯上下文。"""
+    def _get_news_context(symbol: str, name: str) -> dict:
+        """获取个股多通道资讯上下文（新闻+公告+研报+7×24快讯+快查+30日）。
+
+        返回 dict 结构:
+            {
+                "news": [...],           # 个股新闻
+                "announcements": [...],  # 公告
+                "research_reports": [...],  # 研报
+                "flash_24x7": [...],     # 7×24 快讯
+                "kuaicha_news": [...],   # 快查问财
+                "last30days": [...],     # 最近 30 日
+                "summary": "...",        # 单行摘要
+                "errors": [...],         # 错误列表
+                "total_items": N,        # 总条数
+            }
+        """
         try:
-            from src.data.aggregator import DataAggregator
-            agg = DataAggregator()
-            mx = agg.miaoxiang
-            if mx is None:
-                return []
-            # 合并公告 + 研报 + 新闻
-            items = mx.search_news(f"{name} {symbol} 最新公告 研报 新闻", max_results=5)
-            return [item.model_dump() if hasattr(item, "model_dump") else item for item in items]
+            from src.information.news_context import fetch_news_context
+            ctx = fetch_news_context(symbol, name)
+            result = {
+                "news": [_ni_to_dict(item) for item in ctx.news],
+                "announcements": [_ni_to_dict(item) for item in ctx.announcements],
+                "research_reports": [_ni_to_dict(item) for item in ctx.research_reports],
+                "flash_24x7": [_ni_to_dict(item) for item in ctx.flash_24x7],
+                "kuaicha_news": [_ni_to_dict(item) for item in ctx.kuaicha_news],
+                "last30days": [_ni_to_dict(item) for item in ctx.last30days],
+                "summary": ctx.summary,
+                "errors": ctx.errors,
+                "total_items": ctx.total_items,
+            }
+            return result
         except Exception as e:
             logger.debug("News context unavailable for %s: %s", symbol, e)
-        return []
+        return {
+            "news": [], "announcements": [], "research_reports": [],
+            "flash_24x7": [], "kuaicha_news": [], "last30days": [],
+            "summary": "不可用", "errors": [str(e) if 'e' in dir() else "unknown"],
+            "total_items": 0,
+        }
 
     @staticmethod
     def _inject_financial_doctrine_ctx(symbol: str, market: str, ctx: dict) -> None:
@@ -3283,14 +3317,47 @@ def _build_financial_display_data(ctx: dict) -> dict:
     return data
 
 
-def _detect_major_positive_news(news_context: list | None) -> bool:
-    """检测新闻上下文中是否包含重大利好关键词（供 r014 军规使用）。"""
+def _ni_to_dict(item) -> dict:
+    """将 NewsItem 或 dict 转为 dict。"""
+    if isinstance(item, dict):
+        return item
+    if hasattr(item, "model_dump"):
+        return item.model_dump()
+    if hasattr(item, "__dict__"):
+        return {k: v for k, v in item.__dict__.items() if not k.startswith("_")}
+    return {"title": str(item), "content": "", "source": "", "date": ""}
+
+
+def _flatten_news_context(news_ctx: dict | list | None) -> list[dict]:
+    """将新的 dict 格式 news_context 展平为 list[dict]，兼容旧代码。
+
+    新的 dict 格式包含多个通道：news, announcements, research_reports,
+    flash_24x7, kuaicha_news, last30days。
+    """
+    if news_ctx is None:
+        return []
+    if isinstance(news_ctx, list):
+        return news_ctx
+    # dict 格式：合并所有通道
+    all_items = []
+    for channel in ("news", "announcements", "research_reports",
+                     "flash_24x7", "kuaicha_news", "last30days"):
+        all_items.extend(news_ctx.get(channel, []))
+    return all_items
+
+
+def _detect_major_positive_news(news_context: list | dict | None) -> bool:
+    """检测新闻上下文中是否包含重大利好关键词（供 r014 军规使用）。
+
+    支持旧 list 格式和新 dict 格式。
+    """
+    items = _flatten_news_context(news_context)
     POSITIVE_KW = [
         "重大合同", "中标", "业绩预增", "利润大增",
         "资产注入", "重组", "借壳", "收购",
         "重大突破", "获批", "政策利好",
     ]
-    for item in news_context or []:
+    for item in items:
         text = f"{item.get('title', '')} {item.get('content', '')}"
         if any(kw in text for kw in POSITIVE_KW):
             return True

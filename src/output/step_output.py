@@ -520,6 +520,76 @@ def print_source_citations(report: Any, verdict: Any = None) -> None:
         print(f"  ⚠️ 含{nc['speculation']}处推测数据，仅供参考不参与评分")
 
 
+# ── 多通道资讯输出 ────────────────────────────────────────────────────
+
+def print_news_context(nc: dict) -> None:
+    """输出多通道资讯上下文。"""
+    if not nc or not isinstance(nc, dict):
+        return
+
+    total = nc.get("total_items", 0)
+    if total == 0:
+        print(f"\n  🔔 资讯: 暂无数据")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  🔔 多通道资讯 · {nc.get('summary', '')}")
+    print(f"{'='*60}")
+
+    # 公告优先显示 (最重要)
+    announcements = nc.get("announcements", [])
+    if announcements:
+        print(f"\n  📋 公告 ({len(announcements)}条)")
+        for item in announcements[:5]:
+            title = item.get("title", "")[:60]
+            date = item.get("date", "")[:10]
+            print(f"    · [{date}] {title}")
+
+    # 研报
+    reports = nc.get("research_reports", [])
+    if reports:
+        print(f"\n  📈 研报 ({len(reports)}条)")
+        for item in reports[:3]:
+            title = item.get("title", "")[:60]
+            content = item.get("content", "")[:80]
+            print(f"    · {title}")
+            if content:
+                print(f"      {content}")
+
+    # 个股新闻
+    news = nc.get("news", [])
+    if news:
+        print(f"\n  📰 个股新闻 ({len(news)}条)")
+        for item in news[:8]:
+            title = item.get("title", "")[:70]
+            date = item.get("date", "")[:10]
+            source = item.get("source", "")
+            print(f"    · [{date}] {title}  ({source})")
+
+    # 7×24 快讯 (经关键词过滤)
+    flash = nc.get("flash_24x7", [])
+    if flash:
+        print(f"\n  ⚡ 7×24 快讯 ({len(flash)}条)")
+        for item in flash[:5]:
+            title = item.get("title", "")[:70]
+            date = item.get("date", "")[:16]
+            print(f"    · [{date}] {title}")
+
+    # 最近 30 日
+    l30 = nc.get("last30days", [])
+    if l30:
+        print(f"\n  🗓️ 近30日资讯 ({len(l30)}条)")
+        for item in l30[:5]:
+            title = item.get("title", "")[:60]
+            date = item.get("date", "")[:10]
+            print(f"    · [{date}] {title}")
+
+    # 错误
+    errors = nc.get("errors", [])
+    if errors:
+        print(f"\n  ⚠️ 部分通道失败: {', '.join(errors[:3])}")
+
+
 # ── Step 11: T+0 日内时机分析 ────────────────────────────────────────
 
 def print_t0(t0_result: dict | None) -> None:
