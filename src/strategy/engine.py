@@ -57,6 +57,25 @@ class StrategyEngine:
         """
         self.entry_rules.append(rule)
 
+    def use_templates(self, names: list[str] | None = None) -> None:
+        """Register entry templates by name.
+
+        Args:
+            names: template names to activate. None → all 7 templates.
+
+        Example:
+            engine.use_templates(["trend_following", "capital_inflow"])
+        """
+        from .entry_templates import ALL_TEMPLATES
+
+        if names is None:
+            names = list(ALL_TEMPLATES.keys())
+        for name in names:
+            tmpl = ALL_TEMPLATES.get(name)
+            if tmpl:
+                self.register_entry_rule(tmpl)
+                logger.info("Entry template registered: %s", name)
+
     def run_daily(
         self,
         watchlist: list[str],
