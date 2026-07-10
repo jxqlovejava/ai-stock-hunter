@@ -4713,6 +4713,93 @@ def cmd_note(args: list[str]):
         parser.print_help()
 
 
+# ------------------------------------------------------------------
+# 交互日志 (Interaction Log)
+# ------------------------------------------------------------------
+
+
+def cmd_interaction_log(args: list[str]):
+    """交互日志管理 — 查看、搜索、统计 CLI 使用记录。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="交互日志: 查看 CLI 使用记录")
+    sub = parser.add_subparsers(dest="subcmd", help="子命令")
+
+    sub.add_parser("tail", help="最近 N 条交互记录").add_argument("-n", type=int, default=20, help="条数")
+    search_p = sub.add_parser("search", help="搜索交互历史")
+    search_p.add_argument("keyword", help="搜索关键词")
+    search_p.add_argument("--limit", type=int, default=20, help="最大条数")
+    sub.add_parser("stats", help="使用统计")
+    sub.add_parser("commands", help="最近使用的命令")
+
+    if not args:
+        parser.print_help()
+        return
+
+    opts = parser.parse_args(args)
+
+    from src.interaction import InteractionLogger
+
+    logger = InteractionLogger()
+
+    if opts.subcmd == "tail":
+        n = getattr(opts, "n", 20)
+        entries = logger.tail(n)
+        if not entries:
+            print("📊 暂无交互记录")
+            return
+        print(f"📊 最近 {len(entries)} 条交互:")
+        print()
+        for e in reversed(entries):
+            ts = e.get("timestamp", "")[:19].replace("T", " ")
+            cmd = e.get("command", "?")
+            args_str = " ".join(e.get("args", [])) if e.get("args") else ""
+            dur = e.get("duration_ms", 0)
+            status = "❌" if e.get("exit_code", 0) != 0 else "✅"
+            print(f"  {status} {ts} | {cmd} {args_str[:60]} | {dur}ms")
+
+    elif opts.subcmd == "search":
+        kw = opts.keyword
+        entries = logger.search(kw, limit=opts.limit)
+        if not entries:
+            print(f"🔍 未找到包含 \"{kw}\" 的交互记录")
+            return
+        print(f"🔍 搜索 \"{kw}\" — {len(entries)} 条结果:")
+        print()
+        for e in entries:
+            ts = e.get("timestamp", "")[:19].replace("T", " ")
+            cmd = e.get("command", "?")
+            summary = e.get("summary", "")[:120]
+            print(f"  [{ts}] {cmd}")
+            if summary:
+                print(f"  {summary[:120]}")
+            print()
+
+    elif opts.subcmd == "stats":
+        s = logger.stats()
+        print(f"📊 交互统计:")
+        print(f"   总交互次数: {s['total']}")
+        print(f"   错误次数: {s['errors']}")
+        print(f"   总耗时: {s['total_duration_ms'] // 1000}s")
+        print(f"   平均耗时: {s['avg_duration_ms']}ms")
+        print()
+        print("   Top 命令:")
+        for cmd, count in s["top_commands"][:8]:
+            print(f"     {cmd}: {count} 次")
+
+    elif opts.subcmd == "commands":
+        cmds = logger.recent_commands(30)
+        if not cmds:
+            print("📊 暂无记录")
+            return
+        print("📊 最近使用的命令:")
+        for c in cmds:
+            print(f"  - {c}")
+
+    else:
+        parser.print_help()
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -4832,6 +4919,11 @@ def main():
         print("  note promote <id>           更新状态")
         print("  note topics                 查看主题分类")
         print()
+        print("📊 交互日志 (NEW):")
+        print("  interaction-log tail        最近交互记录")
+        print("  interaction-log search <q>  搜索交互历史")
+        print("  interaction-log stats       使用统计")
+        print()
         print("📢 社交:")
         print("  poster --title --text   AI 社区发帖")
         print()
@@ -4923,21 +5015,52 @@ def main():
         "preview-earnings": lambda: cmd_preview_earnings(args),
         # 投研笔记
         "note": lambda: cmd_note(args),
+        # 交互日志
+        "interaction-log": lambda: cmd_interaction_log(args),
     }
 
     handler = commands.get(cmd)
     if handler:
+        import io as _io
+        import time as _time
+        _start_ts = int(_time.time() * 1000)
+        _capture = _io.StringIO()
+        _orig_stdout = sys.stdout
+        _exit_code = 0
         try:
+            sys.stdout = _capture
             handler()
         except ImportError as e:
-            print(f"⚠️ 缺少依赖: {e}")
-            print("   请运行: pip install -r requirements.txt")
+            _exit_code = 1
+            print(f"⚠️ 缺少依赖: {e}", file=_orig_stdout)
+            print("   请运行: pip install -r requirements.txt", file=_orig_stdout)
         except Exception as e:
-            print(f"❌ 错误: {e}")
+            _exit_code = 1
+            print(f"❌ 错误: {e}", file=_orig_stdout)
             if os.environ.get("DEBUG"):
-                traceback.print_exc()
+                traceback.print_exc(file=_orig_stdout)
             else:
-                print("   (设置 DEBUG=1 查看详细错误信息)")
+                print("   (设置 DEBUG=1 查看详细错误信息)", file=_orig_stdout)
+        finally:
+            sys.stdout = _orig_stdout
+            _output = _capture.getvalue()
+            if _output:
+                _orig_stdout.write(_output)
+            _capture.close()
+            # auto-log interaction (skip interaction-log itself to avoid recursion)
+            if cmd != "interaction-log":
+                try:
+                    from src.interaction import InteractionLogger
+                    _logger = InteractionLogger()
+                    _logger.log(
+                        command=cmd,
+                        args=args,
+                        output=_output,
+                        exit_code=_exit_code,
+                        duration_ms=int(_time.time() * 1000) - _start_ts,
+                    )
+                except Exception:
+                    pass
     else:
         # ---- 自然语言路由 ----
         nl_query = " ".join(sys.argv[1:])
