@@ -248,7 +248,8 @@ class VerdictEngine:
                 confidence *= 0.85
             elif agreement == "divided":
                 confidence *= 0.95
-            if score_range > 2.5:
+            # 仅当 genuine polarized (非 majority) 时额外施加 score_range 惩罚
+            if score_range > 2.5 and agreement == "polarized":
                 confidence *= 0.90
         confidence = round(max(0.0, min(0.95, confidence)), 2)
 

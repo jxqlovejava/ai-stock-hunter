@@ -138,12 +138,19 @@ class PerspectiveAnalyzer:
         result.avg_score = sum(scores) / len(scores)
         result.score_range = max(scores) - min(scores)
 
+        # 多数投票方向：3/4 一致时少数服从多数，不因单一 outlier 判为 polarized
+        verdicts = [result.buffett.verdict, result.li_lu.verdict, result.munger.verdict, result.lynch.verdict]
+        buy_cnt = sum(1 for v in verdicts if v == "买入")
+        avoid_cnt = sum(1 for v in verdicts if v == "回避")
+        majority_agrees = buy_cnt >= 3 or avoid_cnt >= 3
+
         if result.score_range <= 1.0:
             result.agreement_level = "consensus"
         elif result.score_range <= 2.5:
             result.agreement_level = "divided"
         else:
-            result.agreement_level = "polarized"
+            # score_range > 2.5 但 3/4 大师方向一致 → 单一 outlier 不应否决多数
+            result.agreement_level = "divided" if majority_agrees else "polarized"
 
         result.top_agreement = cls._find_agreement(result)
         result.top_disagreement = cls._find_disagreement(result)
@@ -845,21 +852,41 @@ class PerspectiveAnalyzer:
         bull, bear = [], []
         score = 2.5
 
-        # 逆向测试1: 风险点扫描
+        # 逆向测试1: 风险点扫描 (分级加权)
         risks = getattr(l1, "upstream_risks", []) or []
         exec_risks = getattr(l1, "executive_risks", []) or []
         bottlenecks = getattr(l1, "bottlenecks", []) or []
-        total_risks = len(risks) + len(exec_risks) + len(bottlenecks)
 
-        if total_risks == 0:
+        # 高管风险分级：严重(合规/减持/质押)权重1.0, 中性(实质性董监高变动)权重0.5,
+        # 轻微(合规披露)权重0 — 合规披露已在 _score_executive 过滤但此处兜底
+        _SEVERE_EXEC_KW = ["内幕", "违规", "处罚", "刑事", "调查", "警示函",
+                           "减持", "质押", "冻结", "离任", "辞职", "免职"]
+        _MILD_EXEC_KW = ["述职报告", "履职报告", "履职情况", "管理办法", "管理制度",
+                         "薪酬", "会议决议", "公司章程", "工商变更", "专项意见",
+                         "评估报告", "授权管理", "工作细则", "履职评价", "工作总结",
+                         "审计委员会", "战略委员会", "提名委员会", "薪酬委员会",
+                         "会计师事务所", "法定代表人", "董事履职", "独立董事独立性"]
+
+        def _exec_risk_weight(risk_str: str) -> float:
+            r = str(risk_str).lower()
+            if any(kw in r for kw in _SEVERE_EXEC_KW):
+                return 1.0
+            if any(kw in r for kw in _MILD_EXEC_KW):
+                return 0.0  # 合规披露
+            return 0.5  # 默认中性（实质性董监高变动但非严重违规）
+
+        weighted_risks = (len(risks) + len(bottlenecks) +
+                          sum(_exec_risk_weight(r) for r in exec_risks))
+
+        if weighted_risks < 0.5:
             score += 0.5
             bull.append("逆向扫描未发现显著风险 — 基础面干净")
-        elif total_risks <= 2:
+        elif weighted_risks <= 2:
             score -= 0.3
-            bear.append(f"检测到{total_risks}个风险点 — 需要逐个验证")
+            bear.append(f"检测到{round(weighted_risks, 1)}个风险点 — 需要逐个验证")
         else:
             score -= 1.0
-            bear.append(f"⚠️ {total_risks}个风险信号 — 芒格准则: '先证明这不是个错误'")
+            bear.append(f"⚠️ {round(weighted_risks, 1)}个风险信号 — 芒格准则: '先证明这不是个错误'")
 
         # 逆向测试2: 空头案例充分性 (bear case quality)
         bear_case = getattr(l1, "bear_case", "") or ""
@@ -1254,13 +1281,30 @@ class PerspectiveAnalyzer:
         if pb > 8:
             scenarios.append(f"🔴 PB={pb:.1f}x，资产端存在高估风险")
 
-        # 2. 动量持续下行风险
+        # 2. 动量持续下行风险 (分级)
         mom = getattr(l1, "momentum_score", 50) or 50
-        if mom < 35:
+        if mom < 10:
+            prob = 0.35
+            scenarios.append(
+                f"🔴 动量崩溃: 趋势评分{mom}/100，"
+                f"剧烈下跌可能触发融资盘强平踩踏"
+            )
+            failure_reasons.append(("动量崩溃→融资踩踏", prob))
+        elif mom < 22:
             prob = 0.25
-            scenarios.append(f"🔴 动量崩溃: 趋势评分{mom}/100，下跌趋势可能自我强化，触发融资盘强平踩踏")
-            failure_reasons.append(("下跌趋势自我强化→融资踩踏", prob))
-            evidence.append(f"动量评分={mom}/100(极弱)")
+            scenarios.append(
+                f"🟠 持续下行: 趋势评分{mom}/100，"
+                f"弱势格局下进一步下跌的概率较高"
+            )
+            failure_reasons.append(("下跌趋势持续侵蚀→资金流出", prob))
+        elif mom < 35:
+            prob = 0.15
+            scenarios.append(
+                f"🟡 趋势偏弱: 趋势评分{mom}/100，"
+                f"短期缺乏上涨动能但不构成踩踏风险"
+            )
+        if mom < 35:
+            evidence.append(f"动量评分={mom}/100(偏弱)")
 
         # 3. 融资余额趋势 (margin)
         margin_data = getattr(l1, "margin_profile", None)
