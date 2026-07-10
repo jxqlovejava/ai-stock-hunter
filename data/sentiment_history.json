@@ -678,5 +678,35 @@
     "panic_count": 0,
     "greed_count": 1,
     "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-10T14:21:13.220644",
+    "score": 11,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.93,
+    "percentile": 6.7,
+    "panic_count": 5,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-10T14:21:19.020772",
+    "score": 48,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 46.7,
+    "panic_count": 1,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-10T14:21:24.635727",
+    "score": 48,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 46.7,
+    "panic_count": 1,
+    "greed_count": 1,
+    "extreme_count": 0
   }
 ]
