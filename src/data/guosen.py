@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import ssl
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -56,9 +58,31 @@ class GuosenProvider(DataProvider):
     _class_exhausted: set[str] = set()
     _class_last_reset_date: datetime | None = None
 
+    @staticmethod
+    def _load_dotenv_gs_key() -> str | None:
+        """从项目 .env 文件加载 GS_API_KEY。"""
+        from pathlib import Path
+        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+        if not env_file.is_file():
+            return None
+        try:
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip() == "GS_API_KEY":
+                    val = v.strip().strip('"').strip("'")
+                    if val:
+                        return val
+        except Exception:
+            pass
+        return None
+
     def __init__(self, api_key: str | None = None):
-        # 支持多 Key: 逗号分隔 或 GS_API_KEY_2/3 环境变量
-        raw = api_key or os.environ.get("GS_API_KEY", "")
+        # 支持多 Key: 逗号分隔 或 GS_API_KEY_2/3
+        # 优先级: 显式传入 > .env 文件 > 环境变量
+        raw = api_key or self._load_dotenv_gs_key() or os.environ.get("GS_API_KEY", "")
         self._api_keys: list[str] = []
         for part in raw.split(","):
             k = part.strip()
