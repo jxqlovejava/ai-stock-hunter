@@ -449,12 +449,15 @@ class DataAggregator:
     # Historical K-line (for backtest)
     # ------------------------------------------------------------------
 
+    # 免费源 (tencent/mootdx) 用频率数字 9=daily, akshare 用 "daily"
+    _PERIOD_MAP: dict[str, str] = {"daily": "day", "weekly": "week", "monthly": "month"}
+
     def get_history(
         self,
         symbol: str,
         start_date: str = "2015-01-01",
         end_date: str = "",
-        period: str = "daily",
+        period: str = "day",
         as_of: str = "",
     ):
         """获取历史K线数据（用于回测）。按 registry fallback 链。
@@ -470,7 +473,9 @@ class DataAggregator:
                     except ValueError:
                         pass
                 end_date = now.strftime("%Y%m%d")
-            result = self._walk_history_chain(symbol, start_date, end_date, period, as_of=as_of)
+            # 标准化 period: "daily"→"day" 适配免费源 (mootdx/tencent)
+            normalized_period = self._PERIOD_MAP.get(period, period)
+            result = self._walk_history_chain(symbol, start_date, end_date, normalized_period, as_of=as_of)
             source = result.attrs.get("source_citation", {}).provider if hasattr(result, 'attrs') and not result.empty else "aggregator"
             self.speed_monitor.end_event("history_fetch", t0, source=str(source))
             return result
