@@ -4540,6 +4540,179 @@ def cmd_preview_earnings(args: list[str]):
     print_earnings_preview(result, basket, sensitivity)
 
 
+# ------------------------------------------------------------------
+# 投研笔记 (Research Notes)
+# ------------------------------------------------------------------
+
+
+def cmd_note(args: list[str]):
+    """投研笔记管理 — 长期讨论记录、检索、状态流转。"""
+    import argparse
+    from datetime import datetime as _dt
+
+    parser = argparse.ArgumentParser(
+        description="投研笔记: 记录、检索、管理长期投研讨论",
+    )
+    sub = parser.add_subparsers(dest="subcmd", help="子命令")
+
+    # note add
+    add_p = sub.add_parser("add", help="添加一条笔记")
+    add_p.add_argument("--topic", required=True, help="主题分类 (机构分析/系统设计/交易原则/书籍阅读/市场观察/其他)")
+    add_p.add_argument("--tags", default="", help="标签，逗号分隔")
+    add_p.add_argument("--source", default="对话", help="来源 (URL/书名/对话)")
+    add_p.add_argument("--trigger-by", default="user", choices=["user", "claude"], help="触发方")
+    add_p.add_argument("--summary", required=True, nargs="*", help="摘要")
+    add_p.add_argument("--key-points", default="", help="关键要点，| 分隔")
+    add_p.add_argument("--discussion", default="", help="完整讨论内容")
+    add_p.add_argument("--id", default="", help="自定义ID (可选)")
+
+    # note list
+    list_p = sub.add_parser("list", help="列出笔记")
+    list_p.add_argument("--status", default=None, help="按状态过滤 (discussion/actionable/implemented)")
+    list_p.add_argument("--topic", default=None, help="按主题过滤")
+    list_p.add_argument("--tag", default=None, help="按标签过滤")
+    list_p.add_argument("--limit", type=int, default=50, help="最大数量")
+
+    # note search
+    search_p = sub.add_parser("search", help="搜索笔记")
+    search_p.add_argument("query", nargs="*", help="搜索关键词")
+    search_p.add_argument("--status", default=None, help="按状态过滤")
+    search_p.add_argument("--limit", type=int, default=20, help="最大数量")
+
+    # note show
+    show_p = sub.add_parser("show", help="查看笔记详情")
+    show_p.add_argument("note_id", help="笔记 ID")
+
+    # note promote
+    promote_p = sub.add_parser("promote", help="更新笔记状态")
+    promote_p.add_argument("note_id", help="笔记 ID")
+    promote_p.add_argument("--status", required=True, choices=["discussion", "actionable", "implemented"], help="目标状态")
+
+    # note delete
+    delete_p = sub.add_parser("delete", help="删除笔记")
+    delete_p.add_argument("note_id", help="笔记 ID")
+
+    # note topics
+    sub.add_parser("topics", help="列出所有主题分类")
+
+    if not args:
+        parser.print_help()
+        return
+
+    opts = parser.parse_args(args)
+
+    from src.notes import NoteSearch, NoteStatus, NoteStore, NoteTopic, ResearchNote
+
+    store = NoteStore()
+
+    if opts.subcmd == "add":
+        note = ResearchNote(
+            id=opts.id or "",
+            created_at=_dt.now(),
+            updated_at=_dt.now(),
+            topic=opts.topic,
+            tags=[t.strip() for t in opts.tags.split(",") if t.strip()],
+            trigger_by=opts.trigger_by,
+            source=opts.source,
+            summary=" ".join(opts.summary) if isinstance(opts.summary, list) else opts.summary,
+            key_points=[p.strip() for p in opts.key_points.split("|") if p.strip()] if opts.key_points else [],
+            full_discussion=opts.discussion,
+            status=NoteStatus.DISCUSSION,
+        )
+        store.save(note)
+        # also index
+        try:
+            searcher = NoteSearch()
+            searcher.index(note)
+            searcher.close()
+        except Exception:
+            pass
+        print(f"✅ 笔记已保存: {note.id}")
+        print(f"   主题: {note.topic} | 标签: {', '.join(note.tags)}")
+        print(f"   状态: {note.status}")
+
+    elif opts.subcmd == "list":
+        notes = store.list_all(status=opts.status, topic=opts.topic, tag=opts.tag, limit=opts.limit)
+        if not notes:
+            print("📝 暂无笔记")
+            return
+        print(f"📝 共 {len(notes)} 条笔记:")
+        print()
+        for n in notes:
+            status_icon = {"discussion": "💬", "actionable": "⚡", "implemented": "✅"}.get(n.status, "📌")
+            print(f"  {status_icon} [{n.topic}] {n.id}")
+            print(f"     {n.summary[:80]}{'...' if len(n.summary) > 80 else ''}")
+            print()
+
+    elif opts.subcmd == "search":
+        query = " ".join(opts.query) if opts.query else ""
+        if not query:
+            print("❌ 请输入搜索关键词")
+            return
+        searcher = NoteSearch()
+        try:
+            results = searcher.search(query, limit=opts.limit, status=opts.status)
+        except Exception:
+            results = searcher.search_simple(query, limit=opts.limit)
+        finally:
+            searcher.close()
+        if not results:
+            print(f"🔍 未找到与 \"{query}\" 相关的结果")
+            return
+        print(f"🔍 搜索 \"{query}\" — 共 {len(results)} 条结果:")
+        print()
+        for r in results:
+            status_icon = {"discussion": "💬", "actionable": "⚡", "implemented": "✅"}.get(r["status"], "📌")
+            print(f"  {status_icon} [{r['topic']}] {r['note_id']}")
+            print(f"     {r['summary'][:100]}{'...' if len(r.get('summary', '')) > 100 else ''}")
+            if r.get("snippet"):
+                print(f"     🔍 {r['snippet']}")
+            print()
+
+    elif opts.subcmd == "show":
+        note = store.get(opts.note_id)
+        if note is None:
+            print(f"❌ 笔记不存在: {opts.note_id}")
+            return
+        print(note.to_markdown())
+
+    elif opts.subcmd == "promote":
+        note = store.update_status(opts.note_id, opts.status)
+        if note is None:
+            print(f"❌ 笔记不存在或状态无效: {opts.note_id}")
+            return
+        # update index
+        try:
+            searcher = NoteSearch()
+            searcher.index(note)
+            searcher.close()
+        except Exception:
+            pass
+        status_icon = {"discussion": "💬", "actionable": "⚡", "implemented": "✅"}.get(note.status, "📌")
+        print(f"{status_icon} 笔记状态已更新: {note.id} → {note.status}")
+
+    elif opts.subcmd == "delete":
+        # remove from index
+        try:
+            searcher = NoteSearch()
+            searcher.remove(opts.note_id)
+            searcher.close()
+        except Exception:
+            pass
+        if store.delete(opts.note_id):
+            print(f"🗑️ 笔记已删除: {opts.note_id}")
+        else:
+            print(f"❌ 笔记不存在: {opts.note_id}")
+
+    elif opts.subcmd == "topics":
+        print("📂 可用主题分类:")
+        for t in sorted(NoteTopic.ALL):
+            print(f"  - {t}")
+
+    else:
+        parser.print_help()
+
+
 def main():
     """白泽 CLI 主入口。"""
 
@@ -4651,6 +4824,14 @@ def main():
         print("  arena show <id>         查看竞技场详情")
         print("  arena compare <id1> <id2>  跨期对比")
         print()
+        print("📝 投研笔记 (NEW):")
+        print("  note add --topic --summary  添加投研笔记")
+        print("  note list                   列出笔记")
+        print("  note search <query>         全文搜索")
+        print("  note show <id>              查看详情")
+        print("  note promote <id>           更新状态")
+        print("  note topics                 查看主题分类")
+        print()
         print("📢 社交:")
         print("  poster --title --text   AI 社区发帖")
         print()
@@ -4740,6 +4921,8 @@ def main():
         "update-watchlist": lambda: cmd_update_watchlist(args[0], args[1], float(args[2]) if len(args) >= 3 and args[2] else None, float(args[3]) if len(args) >= 4 and args[3] else None) if args else print("用法: update-watchlist <code> <名称> [止损价] [预警价]"),
         # 先行指标业绩研判
         "preview-earnings": lambda: cmd_preview_earnings(args),
+        # 投研笔记
+        "note": lambda: cmd_note(args),
     }
 
     handler = commands.get(cmd)
