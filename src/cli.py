@@ -2865,6 +2865,31 @@ def cmd_position_monitor(args: list[str]):
             print(f"📭 持仓未找到: {sym}")
 
 
+def _get_quotes_dict(aggregator, symbols: list[str]) -> dict[str, dict]:
+    """批量获取实时行情，返回 {symbol: {name, price, ...}} 字典。
+
+    用于 sweep / monitor 等批量行情查询，优先走免费 fallback 链。
+    """
+    result: dict[str, dict] = {}
+    for sym in symbols:
+        try:
+            q = aggregator.get_quote(sym)
+            if q:
+                result[sym] = {
+                    "name": q.name or sym,
+                    "price": q.price or 0,
+                    "volume": q.volume or 0,
+                    "change_pct": q.change_pct or 0,
+                    "high": q.high or 0,
+                    "low": q.low or 0,
+                    "open": q.open or 0,
+                    "prev_close": q.prev_close or 0,
+                }
+        except Exception:
+            continue
+    return result
+
+
 @_safe_cmd
 def cmd_sweep(args: list[str]):
     """自选股扫雷 — 检查所有自选股的价格预警、止损、异常波动。"""
@@ -2897,7 +2922,7 @@ def cmd_sweep(args: list[str]):
     for s in watchlist:
         sym = s["symbol"]
         try:
-            quote = agg.get_realtime_quote(sym)
+            quote = agg.get_quote(sym)
             if quote:
                 quotes[sym] = quote.price or 0
                 context[sym] = {
@@ -3342,7 +3367,7 @@ def cmd_monitor(args: list[str]):
 
         try:
             # 获取实时行情
-            quotes_raw = aggregator.get_realtime_quotes(symbols)
+            quotes_raw = _get_quotes_dict(aggregator, symbols)
             quotes = {}
             for sym in symbols:
                 q = quotes_raw.get(sym, {})
@@ -3387,7 +3412,7 @@ def cmd_monitor(args: list[str]):
         def _get_quotes():
             aggregator = DataAggregator()
             try:
-                return aggregator.get_realtime_quotes(symbols)
+                return _get_quotes_dict(aggregator, symbols)
             except Exception:
                 return {}
 
