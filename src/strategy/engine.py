@@ -37,11 +37,13 @@ class StrategyEngine:
         from .sizing import PositionSizer as _PS
         from .exit_rules import ExitRuleEngine as _ER
         from .add_rules import AddRuleEngine as _AR
+        from .signal_filter import SignalQualityFilter as _SF
 
         self.config = config or {}
         self.sizer = _PS()
         self.exit_engine = _ER()
         self.add_engine = _AR()
+        self.filter = _SF()
         self.entry_rules: list[Callable] = []
         self._adapter = None  # lazy-init
 
@@ -109,9 +111,24 @@ class StrategyEngine:
         signals: list[StrategySignal] = []
 
         try:
-            # 1. Entry rules (跳过 — entry_rules 为空)
+            # 1. Entry rules
             if self.entry_rules:
                 self._run_entry_rules(watchlist, portfolio, market_data, signals)
+
+            # 1.5. Signal quality filter — 交叉验证，拦截操纵/诱多信号
+            filtered: list[StrategySignal] = []
+            for sig in signals:
+                if sig.is_entry:
+                    mkt = market_data.get(sig.symbol, {})
+                    fr = self.filter.check(sig, mkt)
+                    if fr.is_blocked:
+                        logger.info("信号拦截: %s — %s", sig.symbol, fr.blocked_by)
+                        continue
+                    if fr.warnings:
+                        sig.reason += f" ⚠️ {'; '.join(fr.warnings)}"
+                    sig.strength = fr.adjusted_strength
+                filtered.append(sig)
+            signals = filtered
 
             # 2. Exit check — 对每个持仓跑退出规则
             for symbol, pos_data in portfolio.positions.items():

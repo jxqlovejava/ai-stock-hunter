@@ -29,8 +29,15 @@ try:
 except ImportError:
     MarketDataAdapter = None
 
+try:
+    from .signal_filter import SignalQualityFilter, FilterResult
+except ImportError:
+    SignalQualityFilter = None
+    FilterResult = None
+
 __all__ = [
     "StrategyEngine", "PositionSizer", "ExitRuleEngine", "AddRuleEngine",
+    "SignalQualityFilter", "FilterResult",
     "StrategySignal", "PositionSize", "ExitCheckResult", "AddCheckResult",
     "PortfolioSnapshot", "MarketDataAdapter",
     # 入场模板
