@@ -236,6 +236,7 @@ class Orchestrator:
         macro_event_desc: str = "",
         macro_event_category: str = "",
         skip_t0: bool = False,
+        as_of_date: str = "",
     ) -> OrchestratorResult:
         """执行全链路分析。
 
@@ -244,12 +245,23 @@ class Orchestrator:
             macro_event_desc: 当日重大宏观事件描述（如有），触发因果链分析
             macro_event_category: 事件类型 hint (monetary/geopolitical/trade_policy/...)
             skip_t0: True=跳过 T+0 日内时机分析（Alpha/中长期机会搜索时建议禁用）
+            as_of_date: 历史回测日期 (YYYY-MM-DD)，替代当前日期。
+                        启用后: 北向/融资/互动易/AlphaLens 降级为默认值，
+                        K线/财务使用历史数据。
         """
         result = OrchestratorResult(
             symbol=symbol, name=name,
             strategy_version=strategy_version,
             strategy_params=strategy_params or {},
         )
+
+        # ── P2: 历史回测模式 ──
+        is_backtest = bool(as_of_date)
+        if is_backtest:
+            logger.info(
+                "历史回测模式: as_of=%s — K线/财务/北向/融资使用历史真实数据",
+                as_of_date,
+            )
 
         print()  # 空行分隔
         # Step 0: 获取行情数据（双源交叉验证）
@@ -579,7 +591,7 @@ class Orchestrator:
             }
 
         # Phase 4: Alpha Lens — 计算 Alpha Profile
-        alpha_profile = self._get_alpha_profile(symbol, name, news_context)
+        alpha_profile = self._get_alpha_profile(symbol, name, news_context, as_of_date=as_of_date)
         result.alpha_profile = alpha_profile
 
         # Phase 11: 存储宏观象限调整信息
@@ -2374,6 +2386,7 @@ class Orchestrator:
         symbol: str,
         name: str,
         news_context: list[dict],
+        as_of_date: str = "",
     ) -> AlphaProfile:
         """Phase 4: 计算 Alpha Profile。
 
@@ -2384,6 +2397,8 @@ class Orchestrator:
           4. 供应链深度 Alpha（紫苏叶理论）🆕
 
         回答「我比别人多知道什么？」
+
+        as_of_date: 历史回测日期 (YYYY-MM-DD)，启用时使用历史真实数据
         """
         # 从资讯上下文中提取来源信息
         news_sources: list[str] = []
@@ -2425,6 +2440,117 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Supply chain data unavailable for %s: %s", symbol, e)
 
+        # ── P0: 接入真实数据源，填充 AlphaLens 缺失的5个参数 ──
+
+        # 1. institutional_attention — 北向资金市场级机构关注度 (T1, 东财/同花顺)
+        institutional_attention = 50.0  # 默认中性
+        try:
+            nb = self._get_northbound_profile(as_of_date=as_of_date)
+            if nb is not None:
+                nb_score = getattr(nb, "score", 50.0) or 50.0
+                consecutive = getattr(nb, "consecutive_days", 0) or 0
+                is_sustained = getattr(nb, "is_inflow_sustained", False)
+                bonus = min(15, abs(consecutive) * 3) * (1 if is_sustained else -0.5)
+                institutional_attention = min(100, max(20, nb_score + bonus))
+                logger.debug(
+                    "AlphaLens institutional_attention=%s (nb_score=%s)",
+                    institutional_attention, nb_score,
+                )
+        except Exception as e:
+            logger.debug("Northbound data unavailable for AlphaLens: %s", e)
+
+        # 2. retail_attention — 融资融券散户关注度 (T1, 东财 datacenter)
+        retail_attention = 50.0
+        try:
+            mp = self._get_margin_profile(symbol, as_of_date=as_of_date)
+            if mp is not None:
+                mp_score = getattr(mp, "score", 50.0) or 50.0
+                chg_5d = abs(getattr(mp, "margin_balance_5d_change_pct", 0.0) or 0.0)
+                divergence = getattr(mp, "divergence_signal", "none") or "none"
+                bonus = min(15, chg_5d * 0.5)
+                if divergence != "none":
+                    bonus += 10
+                retail_attention = min(100, max(20, mp_score + bonus))
+                logger.debug(
+                    "AlphaLens retail_attention=%s (margin_score=%s)",
+                    retail_attention, mp_score,
+                )
+        except Exception as e:
+            logger.debug("Margin data unavailable for AlphaLens: %s", e)
+
+        # 3. valuation_reflected — PE估值反映度 (T1, 基于历史价格÷历史EPS)
+        valuation_reflected = 0.5
+        try:
+            # --as-of 模式: 用历史价格÷历史EPS计算PE
+            if as_of_date:
+                from datetime import datetime as _dt
+                as_of_dt = _dt.strptime(as_of_date, "%Y-%m-%d")
+                # 获取 as_of 日期的行情
+                from src.data.mootdx_tencent import MootdxTencentProvider
+                mt = MootdxTencentProvider()
+                from src.data.schema import Resolution
+                bars = mt.get_bars(symbol, resolution=Resolution.DAY, start=as_of_date, end=as_of_date)
+                hist_price = float(bars[-1].close) if bars else 0.0
+                # 获取 as_of 日期的财务数据
+                fin_data = self.data.get_financials(symbol=symbol, count=1, report_period=as_of_date)
+                hist_eps = 0.0
+                if fin_data:
+                    hist_eps = float(getattr(fin_data[0], "eps", 0) or 0) * 4  # Q1年化
+                if hist_price > 0 and hist_eps > 0:
+                    hist_pe = hist_price / hist_eps
+                    if hist_pe > 100: valuation_reflected = 0.85
+                    elif hist_pe > 50: valuation_reflected = 0.70
+                    elif hist_pe > 30: valuation_reflected = 0.55
+                    elif hist_pe > 15: valuation_reflected = 0.40
+                    else: valuation_reflected = 0.30
+            else:
+                metrics = self.data.get_fundamental_metrics(symbol)
+                pe = metrics.get("pe_ttm", 0) or metrics.get("pe", 0) or 0
+                if pe > 0:
+                    if pe > 100: valuation_reflected = 0.85
+                    elif pe > 50: valuation_reflected = 0.70
+                    elif pe > 30: valuation_reflected = 0.55
+                    elif pe > 15: valuation_reflected = 0.40
+                    else: valuation_reflected = 0.30
+            logger.debug("AlphaLens valuation_reflected=%s", valuation_reflected)
+        except Exception as e:
+            logger.debug("PE data unavailable for AlphaLens: %s", e)
+
+        # 4. discussion_volume — 互动易问答量 (T0, 巨潮 cninfo)
+        #    支持 as_of 历史日期过滤（翻页全量拉取 + 客户端按 pubDate 过滤）
+        discussion_volume = 50.0
+        try:
+            from src.information.irm import IrmAnalyzer
+            irma = IrmAnalyzer()
+            irm_result = irma.analyze(symbol, as_of_date=as_of_date)
+            if irm_result is not None:
+                total_q = getattr(irm_result, "total_questions", 0) or 0
+                discussion_volume = min(100, max(20, total_q * 0.8 + 20))
+                logger.debug(
+                    "AlphaLens discussion_volume=%s (irm_questions=%s)",
+                    discussion_volume, total_q,
+                )
+        except Exception as e:
+            logger.debug("IRM data unavailable for AlphaLens discussion_volume: %s", e)
+
+        # 5. discussion_growth_rate — 互动易问答增长趋势
+        discussion_growth_rate = 0.0
+        try:
+            from src.information.irm import IrmAnalyzer
+            irma2 = IrmAnalyzer()
+            irm_result2 = irma2.analyze(symbol, as_of_date=as_of_date)
+            if irm_result2 is not None:
+                recent = getattr(irm_result2, "recent_questions", None) or []
+                if len(recent) > 10: discussion_growth_rate = 15.0
+                elif len(recent) > 5: discussion_growth_rate = 5.0
+                elif len(recent) == 0: discussion_growth_rate = -10.0
+                logger.debug(
+                    "AlphaLens discussion_growth_rate=%s (recent_q=%s)",
+                    discussion_growth_rate, len(recent),
+                )
+        except Exception as e:
+            logger.debug("IRM growth rate unavailable for AlphaLens: %s", e)
+
         return self.alpha_lens.analyze(
             symbol=symbol,
             news_sources=news_sources,
@@ -2433,6 +2559,11 @@ class Orchestrator:
             sentiment_extreme=sentiment,
             supply_chain_data=supply_chain_data if supply_chain_data else None,
             bottleneck_data=bottleneck_data if bottleneck_data else None,
+            discussion_volume=discussion_volume,
+            discussion_growth_rate=discussion_growth_rate,
+            institutional_attention=institutional_attention,
+            retail_attention=retail_attention,
+            valuation_reflected=valuation_reflected,
         )
 
     # ------------------------------------------------------------------
@@ -2451,14 +2582,74 @@ class Orchestrator:
         return None
 
     @staticmethod
-    def _get_northbound_profile():
-        """获取多维北向资金画像。"""
+    def _get_northbound_profile(as_of_date: str = ""):
+        """获取多维北向资金画像。
+        as_of_date: 历史回测日期 (YYYY-MM-DD)，使用 AKShare stock_hsgt_hist_em 历史数据
+        """
         try:
             from src.game_theory.northbound import NorthboundAnalyzer
             analyzer = NorthboundAnalyzer()
+            if as_of_date:
+                return analyzer.analyze(as_of_date=as_of_date)
             return analyzer.analyze()
         except Exception as e:
             logger.debug("Northbound profile unavailable: %s", e)
+        return None
+
+    @staticmethod
+    def _get_margin_profile(symbol: str, as_of_date: str = ""):
+        """获取个股融资融券画像 (T1, 东财 datacenter)。
+        as_of_date: 历史回测日期 (YYYYMMDD)，使用 AKShare stock_margin_detail_sse
+        """
+        try:
+            import akshare as ak
+            from datetime import datetime as _dt
+            # 确定查询日期
+            if as_of_date:
+                query_date = _dt.strptime(as_of_date, "%Y-%m-%d").strftime("%Y%m%d")
+            else:
+                query_date = _dt.now().strftime("%Y%m%d")
+
+            # 尝试SSE，失败则尝试SZSE
+            df = None
+            for exchange in ["sse", "szse"]:
+                try:
+                    if exchange == "sse":
+                        df = ak.stock_margin_detail_sse(date=query_date)
+                    else:
+                        df = ak.stock_margin_detail_szse(date=query_date)
+                    if df is not None and not df.empty:
+                        row = df[df['标的证券代码'] == symbol]
+                        if not row.empty:
+                            r = row.iloc[0]
+                            # 构建简化 profile
+                            from collections import namedtuple
+                            MarginProfile = namedtuple("MarginProfile", [
+                                "score", "margin_balance", "margin_balance_5d_change_pct",
+                                "margin_balance_20d_change_pct", "margin_net_buy",
+                                "consecutive_outflow_days", "consecutive_inflow_days",
+                                "margin_signal", "leverage_sentiment", "divergence_signal",
+                                "data_date",
+                            ])
+                            balance = float(r.get('融资余额', 0))
+                            buy = float(r.get('融资买入额', 0))
+                            repay = float(r.get('融资偿还额', 0))
+                            net_buy = buy - repay
+                            # 归一化 score: 融资余额越大+净买入→散户关注度越高
+                            score = min(100, max(20, 50 + (net_buy / max(balance, 1e8)) * 5000))
+                            return MarginProfile(
+                                score=score, margin_balance=balance,
+                                margin_balance_5d_change_pct=0.0,
+                                margin_balance_20d_change_pct=0.0,
+                                margin_net_buy=net_buy,
+                                consecutive_outflow_days=0, consecutive_inflow_days=0,
+                                margin_signal="neutral", leverage_sentiment="neutral",
+                                divergence_signal="none", data_date=query_date,
+                            )
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug("Margin profile unavailable for %s: %s", symbol, e)
         return None
 
     @staticmethod
@@ -2801,6 +2992,166 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Executive context unavailable for %s: %s", symbol, e)
         return ctx
+
+
+    # ── P1: 批量诊断 ──────────────────────────────────────────────────
+
+    def run_batch(
+        self,
+        symbols: list[str],
+        names: list[str] | None = None,
+        sectors: list[str] | None = None,
+        skip_t0: bool = False,
+        as_of_date: str = "",
+    ) -> list[dict]:
+        """批量运行全链路诊断，返回横向对比数据。
+
+        Args:
+            symbols: 股票代码列表
+            names: 股票名称列表（可选）
+            sectors: 赛道标签列表（可选）
+            skip_t0: 跳过 T+0 日内分析
+            as_of_date: 历史回测日期 (YYYY-MM-DD)
+
+        Returns:
+            [{"symbol", "name", "sector", "price", "pe", "roe_ann",
+              "gross_margin", "val_score", "qual_score", "mom_score",
+              "val_estimate", "cycle_score", "bottleneck_score",
+              "raw_score", "alpha_score", "final_score", "rec",
+              "doctrine_warns", "data_gaps"}, ...]
+        """
+        import time as _time
+        results = []
+        shared_macro = None
+        shared_sentiment = None
+
+        # 共享上下文只获取一次
+        try:
+            shared_macro = self._get_macro_context()
+        except Exception as e:
+            logger.warning("共享宏观上下文获取失败: %s", e)
+
+        try:
+            from src.sentiment.engine import SentimentEngine
+            se = SentimentEngine()
+            shared_sentiment = se.detect()
+        except Exception as e:
+            logger.debug("共享情绪上下文获取失败: %s", e)
+
+        for i, symbol in enumerate(symbols):
+            name = names[i] if names and i < len(names) else ""
+            sector = sectors[i] if sectors and i < len(sectors) else ""
+            logger.info("批量诊断 [%s/%s]: %s %s", i + 1, len(symbols), symbol, name)
+
+            try:
+                result = self.run(
+                    symbol=symbol,
+                    name=name,
+                    market="SH" if symbol.startswith(("6", "9")) else "SZ",
+                    macro=shared_macro,
+                    skip_t0=skip_t0,
+                    as_of_date=as_of_date,
+                )
+            except Exception as e:
+                logger.error("批量诊断 %s 失败: %s", symbol, e)
+                results.append({
+                    "symbol": symbol, "name": name or symbol, "sector": sector,
+                    "final_score": 0, "rec": "ERROR",
+                    "doctrine_warns": [f"管道异常: {str(e)[:60]}"],
+                    "data_gaps": [],
+                })
+                continue
+
+            # 提取关键维度评分
+            verdict = result.verdict
+            report = result.report
+
+            val_score = getattr(report, "value_score", 50.0) if report else 50.0
+            qual_score = getattr(report, "quality_score", 50.0) if report else 50.0
+            mom_score = getattr(report, "momentum_score", 50.0) if report else 50.0
+            val_estimate = getattr(report, "valuation_score", 50.0) if report else 50.0
+            cycle_score = getattr(report, "cycle_score", 50.0) if report else 50.0
+
+            # 瓶颈分
+            bottleneck_score = 50.0
+            if report and getattr(report, "bottleneck_analysis", None):
+                bottleneck_score = float(
+                    getattr(report.bottleneck_analysis, "bottleneck_score", 50.0) or 50.0
+                )
+
+            # 价格 & PE
+            price = 0.0
+            pe = 50.0
+            try:
+                quote = self.data.get_quote(symbol=symbol)
+                if quote:
+                    price = float(getattr(quote, "price", 0) or getattr(quote, "close", 0) or 0)
+                    pe = float(getattr(quote, "pe_ttm", 0) or getattr(quote, "pe", 0) or 50)
+            except Exception:
+                pass
+
+            # 财务
+            roe_ann = 0.0
+            gross_margin = 0.0
+            try:
+                fin = self.data.get_financials(symbol=symbol, count=1)
+                if fin:
+                    f0 = fin[0] if isinstance(fin, list) else fin
+                    roe_raw = getattr(f0, "roe", 0) or 0
+                    # 年化假设
+                    roe_ann = float(roe_raw) * 4 if fin and len(fin) == 1 else float(roe_raw) * 2
+                    gross_margin = float(getattr(f0, "gross_margin", 0) or 0)
+            except Exception:
+                pass
+
+            # 军规触发
+            doctrine_warns = []
+            if result.blocked_by:
+                doctrine_warns.extend(result.blocked_by)
+            if result.warnings:
+                doctrine_warns.extend(result.warnings[:3])
+
+            # 数据缺口
+            data_gaps = []
+            if report and getattr(report, "data_gaps", None):
+                data_gaps = report.data_gaps[:5]
+
+            results.append({
+                "symbol": symbol,
+                "name": name or result.name or symbol,
+                "sector": sector,
+                "price": price,
+                "pe": pe,
+                "roe_ann": round(roe_ann, 1),
+                "gross_margin": round(gross_margin, 1),
+                "val_score": round(val_score, 1),
+                "qual_score": round(qual_score, 1),
+                "mom_score": round(mom_score, 1),
+                "val_estimate": round(val_estimate, 1),
+                "cycle_score": round(cycle_score, 1),
+                "bottleneck_score": round(bottleneck_score, 1),
+                "raw_score": round(getattr(verdict, "score", 50.0) if verdict else 50.0, 1),
+                "alpha_score": round(
+                    getattr(result, "alpha_profile", None).alpha_score
+                    if getattr(result, "alpha_profile", None) else 50.0, 1
+                ),
+                "final_score": round(
+                    getattr(verdict, "score", 50.0) if verdict else 50.0, 1
+                ),
+                "rec": getattr(verdict, "recommendation", "HOLD") if verdict else "HOLD",
+                "doctrine_warns": doctrine_warns,
+                "data_gaps": data_gaps,
+            })
+
+            # 批量模式下不逐支刷屏，只打一行摘要
+            logger.info(
+                "  → %s: %.0f分 %s",
+                symbol,
+                getattr(verdict, "score", 0) if verdict else 0,
+                getattr(verdict, "recommendation", "?") if verdict else "?",
+            )
+
+        return results
 
 
 def _build_financial_display_data(ctx: dict) -> dict:

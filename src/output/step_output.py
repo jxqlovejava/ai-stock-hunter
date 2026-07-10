@@ -754,6 +754,97 @@ def print_deep_research(sector_research: dict | None, company_deep_research: dic
         print(f"  🏆 深度研究综合: {overall:.0f}/100")
 
 
+# ── P3: 批量对比 ─────────────────────────────────────────────────────
+
+def print_batch_comparison(results: list[dict]) -> None:
+    """输出多票横向诊断对比表。
+
+    Args:
+        results: [{
+            "symbol": str, "name": str, "sector": str,
+            "price": float, "pe": float, "roe_ann": float,
+            "gross_margin": float, "val_score": float,
+            "qual_score": float, "mom_score": float,
+            "val_estimate": float, "cycle_score": float,
+            "bottleneck_score": float, "raw_score": float,
+            "alpha_score": float, "final_score": float,
+            "rec": str, "doctrine_warns": list[str],
+            "data_gaps": list[str],
+        }]
+    """
+    if not results:
+        print("(无诊断结果)")
+        return
+
+    # 按终分排序
+    results = sorted(results, key=lambda r: r.get("final_score", 0), reverse=True)
+
+    print(f"\n{'=' * 130}")
+    print("📊 批量诊断对比")
+    print(f"{'=' * 130}")
+
+    # 表头
+    header = (
+        f"{'#':<3} {'代码':<8} {'名称':<8} {'赛道':<10} "
+        f"{'价':>7} {'PE':>6} {'ROE':>5} {'毛利':>5} "
+        f"{'值':>4} {'质':>4} {'动':>4} {'估':>4} {'周':>4} {'瓶':>4} "
+        f"{'raw':>5} {'α':>4} {'终':>6} {'信号':<7} {'触发'}"
+    )
+    print(header)
+    print("-" * 130)
+
+    # 逐行
+    for i, r in enumerate(results):
+        pe_str = str(r.get("pe", "?"))
+        if isinstance(r.get("pe"), float) and r["pe"] < 0:
+            pe_str = "亏损"
+        warns = r.get("doctrine_warns", [])
+        warns_str = ",".join(warns[:2]) if warns else "-"
+        print(
+            f"{i+1:<3} {r['symbol']:<8} {r['name']:<8} {r.get('sector',''):<10} "
+            f"{r.get('price',0):>7.1f} {pe_str:>6} {r.get('roe_ann',0):>4.0f}% {r.get('gross_margin',0):>4.0f}% "
+            f"{r.get('val_score',0):>4.0f} {r.get('qual_score',0):>4.0f} {r.get('mom_score',0):>4.0f} "
+            f"{r.get('val_estimate',0):>4.0f} {r.get('cycle_score',0):>4.0f} {r.get('bottleneck_score',0):>4.0f} "
+            f"{r.get('raw_score',0):>5.1f} {r.get('alpha_score',0):>4.0f} "
+            f"{r.get('final_score',0):>6.1f} {r.get('rec','?'):<7} {warns_str}"
+        )
+
+    print("-" * 130)
+
+    # 分组汇总
+    groups = {"BUY": [], "ADD": [], "HOLD": [], "REDUCE": [], "SELL": []}
+    for r in results:
+        rec = r.get("rec", "SELL")
+        groups[rec].append(r)
+
+    for label, recs, emoji in [
+        ("推荐关注 (BUY/ADD)", ["BUY", "ADD"], "🟢"),
+        ("观望 (HOLD)", ["HOLD"], "🟡"),
+        ("建议回避 (SELL/REDUCE)", ["SELL", "REDUCE"], "🔴"),
+    ]:
+        items = []
+        for rec in recs:
+            items.extend(groups.get(rec, []))
+        if items:
+            names = ", ".join(
+                f"{r['name']}({r['final_score']:.0f})" for r in items
+            )
+            print(f"{emoji} {label}: {names}")
+
+    # 数据缺口汇总
+    all_gaps = []
+    for r in results:
+        for g in r.get("data_gaps", []):
+            if g not in all_gaps:
+                all_gaps.append(g)
+    if all_gaps:
+        print(f"\n⚠️ 数据缺口:")
+        for g in all_gaps:
+            print(f"   {g}")
+
+    print(f"{'=' * 130}\n")
+
+
 # ── 辅助 ──────────────────────────────────────────────────────────────
 
 def _ensure_cn(text: str) -> str:

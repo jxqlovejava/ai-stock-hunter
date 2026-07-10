@@ -61,9 +61,16 @@ class NorthboundAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self) -> NorthboundProfile:
-        """Fetch data and compute full northbound profile (V2: minute-level)."""
+    def analyze(self, as_of_date: str = "") -> NorthboundProfile:
+        """Fetch data and compute full northbound profile (V2: minute-level).
+
+        as_of_date: 历史回测日期 (YYYY-MM-DD)，使用 AKShare stock_hsgt_hist_em 历史日频数据
+        """
         profile = NorthboundProfile()
+
+        # 历史回测模式: 直接用日频历史数据，不用分钟级
+        if as_of_date:
+            return self._analyze_historical(as_of_date)
 
         # Primary: 同花顺 minute-level
         minute_df = self._fetch_hsgt_minute()
@@ -117,6 +124,71 @@ class NorthboundAnalyzer:
             profile.small_cap_ratio = size_data.get("small_cap", 0.0)
 
         # Composite score
+        profile.score = self._compute_composite_score(profile)
+        return profile
+
+    def _analyze_historical(self, as_of_date: str) -> NorthboundProfile:
+        """历史回测模式: 使用 AKShare stock_hsgt_hist_em 日频数据。
+
+        AKShare 的 stock_hsgt_hist_em 返回 2014年至今的日频北向净买入，
+        包含: 当日成交净买额/买入成交额/卖出成交额/历史累计净买额/持股市值 等。
+        """
+        import akshare as ak
+        from datetime import datetime as _dt
+        import pandas as pd
+
+        profile = NorthboundProfile()
+
+        try:
+            as_of_dt = _dt.strptime(as_of_date, "%Y-%m-%d")
+        except ValueError:
+            return profile
+
+        # 获取沪股通+深股通历史
+        for symbol in ["沪股通", "深股通"]:
+            try:
+                df = ak.stock_hsgt_hist_em(symbol=symbol)
+                if df is None or df.empty:
+                    continue
+                # 过滤到 as_of 日期之前
+                df = df[df['日期'] <= as_of_dt.date()].copy()
+                if df.empty:
+                    continue
+                # 最近一行
+                last = df.iloc[-1]
+                flow = float(last.get('当日成交净买额', 0) or 0)
+                profile.total_net_flow += flow
+            except Exception:
+                continue
+
+        # 计算累计和趋势 (取最近60个交易日)
+        try:
+            df_all = ak.stock_hsgt_hist_em(symbol="沪股通")
+            if df_all is not None and not df_all.empty:
+                df_all = df_all[df_all['日期'] <= as_of_dt.date()]
+                recent = df_all.tail(60)
+                if len(recent) >= 5:
+                    recent_flows = recent['当日成交净买额'].apply(
+                        lambda x: float(x) if pd.notna(x) else 0.0
+                    )
+                    profile.cumulative_net_flow = float(recent_flows.sum())
+                    # 连续流入天数
+                    consecutive = 0
+                    for v in reversed(recent_flows.values):
+                        if v > 0: consecutive += 1
+                        else: break
+                    profile.consecutive_days = consecutive
+                    profile.is_inflow_sustained = consecutive >= 3
+                    # 加速度
+                    if len(recent_flows) >= 10:
+                        r5 = recent_flows.iloc[-5:].mean()
+                        p5 = recent_flows.iloc[-10:-5].mean()
+                        std = recent_flows.std()
+                        if std and std > 0:
+                            profile.flow_acceleration = float((r5 - p5) / std)
+        except Exception:
+            pass
+
         profile.score = self._compute_composite_score(profile)
         return profile
 

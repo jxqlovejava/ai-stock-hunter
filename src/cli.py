@@ -58,10 +58,11 @@ def _import_or_none(module_path: str, name: str) -> Any:
         return None
 
 
-def _validate_symbol(symbol: str) -> bool:
+def _validate_symbol(symbol: str, silent: bool = False) -> bool:
     """验证 A 股股票代码格式 (6 位数字) / Validate A-share stock code (6 digits)."""
     if not re.match(r"^\d{6}$", symbol):
-        print(f"❌ 无效股票代码 / Invalid code: {symbol} (需要 6 位数字 / need 6 digits, e.g. 600519)")
+        if not silent:
+            print(f"❌ 无效股票代码 / Invalid code: {symbol} (需要 6 位数字 / need 6 digits, e.g. 600519)")
         return False
     return True
 
@@ -638,15 +639,55 @@ def cmd_backtest_compare():
 
 @_safe_cmd
 def cmd_diagnose(args: list[str]):
-    """一键诊断（小白入口）。"""
+    """一键诊断（小白入口）。支持单票和批量模式。
+
+    用法:
+      python -m src diagnose 002415                  # 单票诊断
+      python -m src diagnose --batch 002415,000938   # 批量对比
+      python -m src diagnose 300750 --as-of 2025-09-01  # 历史回测
+    """
     import argparse
     parser = argparse.ArgumentParser(description="一键诊断")
-    parser.add_argument("symbol", help="股票代码")
+    parser.add_argument("symbol", nargs="?", help="股票代码（单票模式）")
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
-    parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析（Alpha/中长期机会搜索时推荐）")
+    parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析")
+    parser.add_argument("--batch", type=str, default="", metavar="CODES",
+                        help="批量诊断模式，逗号分隔股票代码列表，如 002415,000938,601138")
+    parser.add_argument("--as-of", type=str, default="", metavar="DATE",
+                        help="历史回测日期 (YYYY-MM-DD)，如 2025-09-01")
     parsed = parser.parse_args(args)
 
+    # ── 批量模式 ──
+    if parsed.batch:
+        symbols = [s.strip() for s in parsed.batch.split(",") if s.strip()]
+        if not symbols:
+            print("❌ --batch 需要至少一个股票代码")
+            return
+        # 验证所有代码
+        invalid = [s for s in symbols if not _validate_symbol(s, silent=True)]
+        if invalid:
+            print(f"❌ 无效代码: {', '.join(invalid)}")
+            return
+
+        print(f"🔬 批量诊断 {len(symbols)} 支股票 (默认跳过 T+0，选股非择时)...")
+        from src.routing.orchestrator import Orchestrator
+        orch = Orchestrator()
+        batch_results = orch.run_batch(
+            symbols=symbols,
+            skip_t0=True,  # 批量模式默认跳过 T+0：选股≠择时
+            as_of_date=parsed.as_of,
+        )
+        from src.output.step_output import print_batch_comparison
+        print_batch_comparison(batch_results)
+        return
+
+    # ── 单票模式 ──
     symbol = parsed.symbol
+    if not symbol:
+        print("❌ 请提供股票代码，或使用 --batch 批量模式")
+        print("   用法: python -m src diagnose 002415")
+        print("   用法: python -m src diagnose --batch 002415,000938,601138")
+        return
     if not _validate_symbol(symbol):
         return
     from src.doctrine.checker import DoctrineChecker
@@ -664,6 +705,9 @@ def cmd_diagnose(args: list[str]):
         deep_args.append("--deep")
     if parsed.no_t0:
         deep_args.append("--no-t0")
+    if parsed.as_of:
+        deep_args.append("--as-of")
+        deep_args.append(parsed.as_of)
     cmd_analyze(deep_args)
 
 
@@ -3742,7 +3786,14 @@ def _print_command_detail(cmd: str) -> None:
     details = {
         "start": ("python -m src start", "新手引导 — 交互式导览系统功能", []),
         "analyze": ("python -m src analyze <code> [--deep]", "单只股票全链路分析（军规→准入→诊断→裁决→仓位→风控）", ["--deep: 启用深度分析模式（含辩论+思维模型）"]),
-        "diagnose": ("python -m src diagnose <code> [--deep]", "一键诊断（小白入口），适合首次使用", ["--deep: 启用深度诊断"]),
+        "diagnose": ("python -m src diagnose <code> [--deep] [--no-t0] [--batch CODES] [--as-of DATE]",
+            "一键诊断（小白入口），支持单票/批量/历史回测",
+            [
+                "--deep: 启用深度诊断",
+                "--no-t0: 跳过 T+0 日内时机分析",
+                "--batch CODES: 批量对比模式，逗号分隔 (如 002415,000938)",
+                "--as-of DATE: 历史回测日期 (如 2025-09-01)",
+            ]),
         "alpha": ("python -m src alpha <code>", "Alpha Lens 三维评估（信息层级/共识缺口/叙事生命周期）", []),
         "alpha-scan": ("python -m src alpha-scan [--limit N]", "扫描全市场高 Alpha 股票", ["--limit N: 返回前 N 只（默认 20）"]),
         "scan": ("python -m src scan --preset <preset>", "全市场选股扫描", ["--preset value|growth|momentum|quality|dividend: 选股预设"]),
@@ -3854,7 +3905,9 @@ def cmd_start(args: list[str]) -> None:
         ("🔑 数据源", "默认使用免费数据源（mootdx + 腾讯 + AKShare）。\n"
          "  配置付费源可获更高质量数据，详见 SECRET.md。"),
         ("🏥 第一种用法：一键诊断", "运行 python -m src diagnose <股票代码>\n"
-         "  例: python -m src diagnose 600519  # 分析贵州茅台"),
+         "  例: python -m src diagnose 600519  # 分析贵州茅台\n"
+         "  批量: python -m src diagnose --batch 002415,000938,601138\n"
+         "  回测: python -m src diagnose 300750 --as-of 2025-09-01"),
         ("📊 第二种用法：全链路分析", "运行 python -m src analyze <股票代码>\n"
          "  比 diagnose 更详细，包含博弈论和仓位建议"),
         ("🔍 第三种用法：选股扫描", "运行 python -m src scan --preset value\n"
@@ -4235,7 +4288,8 @@ def main():
         "verdict-backtest": cmd_verdict_backtest,
         "backtest-optimize": cmd_backtest_optimize,
         "backtest-compare": cmd_backtest_compare,
-        "diagnose": lambda: cmd_diagnose(args) if args else print("用法: diagnose <code> [--deep]"),
+        "diagnose": lambda: cmd_diagnose(args) if args else print(
+            "用法: diagnose <code> [--deep] [--no-t0] [--batch CODES] [--as-of DATE]"),
         "game-theory": cmd_game_theory,
         "patterns": lambda: cmd_patterns(args),
         "indicators": lambda: cmd_indicators(args),

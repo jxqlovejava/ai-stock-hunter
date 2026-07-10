@@ -61,18 +61,27 @@ class IrmAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self, symbol: str) -> IrmAnalysis:
-        """Fetch and analyze investor Q&A for a stock."""
-        cache_key = f"irm:{symbol}"
+    def analyze(self, symbol: str, as_of_date: str = "") -> IrmAnalysis:
+        """Fetch and analyze investor Q&A for a stock.
+
+        as_of_date: 历史回测日期 (YYYY-MM-DD)，只统计该日期之前的提问。
+                    巨潮仅保留约4个月数据，超过此范围可能返回空结果。
+        """
+        cache_key = f"irm:{symbol}:{as_of_date}"
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
         analysis = IrmAnalysis(symbol=symbol)
 
-        # Fetch questions
-        questions = self._fetch_questions(symbol)
+        # Fetch questions (支持历史日期过滤)
+        questions = self._fetch_questions(symbol, as_of_date=as_of_date)
         if not questions:
+            if as_of_date:
+                logger.info(
+                    "互动易 %s as_of=%s: 无历史数据 (cninfo仅保留~4个月)",
+                    symbol, as_of_date,
+                )
             self._cache_set(cache_key, analysis)
             return analysis
 
@@ -217,10 +226,24 @@ class IrmAnalyzer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _fetch_questions(symbol: str, page_size: int = 30) -> list[IrmQuestion]:
-        """Fetch investor Q&A from 巨潮互动易 API."""
+    def _fetch_questions(
+        symbol: str, page_size: int = 50, as_of_date: str = "",
+    ) -> list[IrmQuestion]:
+        """Fetch investor Q&A from 巨潮互动易 API。
+
+        as_of_date: 历史回测日期 (YYYY-MM-DD)，翻页拉取全部数据后客户端按 pubDate 过滤。
+                    巨潮仅保留约 4 个月数据，超过此范围的日期将返回空列表。
+        """
         try:
             import requests
+            from datetime import datetime as _dt
+
+            as_of_dt = None
+            if as_of_date:
+                try:
+                    as_of_dt = _dt.strptime(as_of_date, "%Y-%m-%d")
+                except ValueError:
+                    pass
 
             # Step 1: get orgId
             r1 = requests.post(
@@ -234,22 +257,46 @@ class IrmAnalyzer:
                 return []
             org_id = d1[0].get("secid")
 
-            # Step 2: get questions
-            params = {
-                "_t": 1, "stockcode": symbol, "orgId": org_id,
-                "pageSize": page_size, "pageNum": 1,
-                "keyWord": "", "startDay": "", "endDay": "",
-            }
-            r2 = requests.post(
-                "https://irm.cninfo.com.cn/newircs/company/question",
-                params=params,
-                headers={"User-Agent": UA},
-                timeout=10,
-            )
-            rows = r2.json().get("rows") or []
+            # Step 2: 翻页拉取全部提问，支持 as_of 日期过滤
+            all_rows = []
+            page = 1
+            total = 0
+            while True:
+                params = {
+                    "_t": 1, "stockcode": symbol, "orgId": org_id,
+                    "pageSize": page_size, "pageNum": page,
+                    "keyWord": "", "startDay": "", "endDay": "",
+                }
+                r2 = requests.post(
+                    "https://irm.cninfo.com.cn/newircs/company/question",
+                    params=params,
+                    headers={"User-Agent": UA},
+                    timeout=10,
+                )
+                data = r2.json()
+                rows = data.get("rows") or []
+                if not rows:
+                    break
+                # 客户端日期过滤
+                for it in rows:
+                    pd_ts = it.get("pubDate")
+                    if pd_ts and as_of_dt:
+                        try:
+                            q_dt = _dt.fromtimestamp(pd_ts / 1000)
+                            if q_dt > as_of_dt:
+                                continue  # 跳过 as_of 之后的提问
+                        except Exception:
+                            pass
+                    all_rows.append(it)
+                if total == 0:
+                    total = data.get("total", len(rows))
+                page += 1
+                if len(all_rows) >= total:
+                    break
+                time.sleep(0.1)  # 翻页间隔，避免触发限流
 
             questions = []
-            for it in rows:
+            for it in all_rows:
                 pd_ts = it.get("pubDate")
                 ask_time = ""
                 if pd_ts:
