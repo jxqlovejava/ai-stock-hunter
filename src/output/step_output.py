@@ -200,6 +200,16 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
         for line in str(synthesis).split("\n"):
             print(f"  {line}")
 
+    # 价格数据（事实性数据，非投资论点）
+    _daily = getattr(report, "change_pct_1d", 0.0)
+    _5day = getattr(report, "change_pct_5d", None)
+    _ma_dev = getattr(report, "ma_deviation_pct", 0.0)
+    _price_parts = [f"当日{_daily:+.1f}%"]
+    if _5day is not None:
+        _price_parts.append(f"5日{_5day:+.1f}%")
+    _price_parts.append(f"MA60偏离{_ma_dev:+.1f}%")
+    print(f"  📊 价格数据: {' | '.join(_price_parts)}")
+
     # 多空
     bull = getattr(report, "bull_case", "")
     bear = getattr(report, "bear_case", "")

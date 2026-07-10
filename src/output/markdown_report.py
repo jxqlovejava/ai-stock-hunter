@@ -71,6 +71,16 @@ def _build_report(result: Any) -> list[str]:
         for label, score, nature in rows:
             lines.append(f"| {label} | {score:.0f} | [{nature}] |")
         lines.append("")
+        # 价格数据（事实性数据，非投资论点）
+        _daily = getattr(report, "change_pct_1d", 0.0)
+        _5day = getattr(report, "change_pct_5d", None)
+        _ma_dev = getattr(report, "ma_deviation_pct", 0.0)
+        _price_parts = [f"当日{_daily:+.1f}%"]
+        if _5day is not None:
+            _price_parts.append(f"5日{_5day:+.1f}%")
+        _price_parts.append(f"MA60偏离{_ma_dev:+.1f}%")
+        lines.append(f"- 📊 价格数据: {' | '.join(_price_parts)}")
+
         if getattr(report, "bull_case", ""):
             lines.append(f"- 🟢 看多: {report.bull_case}")
         if getattr(report, "bear_case", ""):

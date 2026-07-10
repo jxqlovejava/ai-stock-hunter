@@ -3293,9 +3293,9 @@ def cmd_sweep(args: list[str]):
         elif s.get("stop_price") and price and price <= s["stop_price"]:
             status = "🚨 止损"
         elif chg and chg < -5:
-            status = "⚠️ 大跌"
+            status = "跌逾5%"
         elif chg and chg > 5:
-            status = "📈 大涨"
+            status = "涨逾5%"
 
         print(f"{sym:<8s} {s.get('name', sym):<10s} {price_str:>8s} {chg_str:>8s} {status:<12s}")
 

@@ -47,6 +47,9 @@ class DiagnosisReport:
     cycle_analysis: Optional[object] = None  # CycleAnalysis DTO
     bull_case: str = ""
     bear_case: str = ""
+    # 事实性价格数据（非投资论点，供输出渲染器展示）
+    change_pct_1d: float = 0.0           # 当日涨跌幅 %
+    change_pct_5d: Optional[float] = None # 5日涨跌幅 %（数据不足时为 None）
     bottlenecks: list[str] = field(default_factory=list)
     upstream_risks: list[str] = field(default_factory=list)
     source_citations: list[SourceCitation] = field(default_factory=list)  # Phase 1: 数据溯源
@@ -179,8 +182,14 @@ class DiagnosisEngine:
         if report.executive_risks:
             report.confidence = max(0.3, report.confidence - 0.05)
 
-        report.bull_case = self._bull_case(name, quote, financials, _cycle_phase)
-        report.bear_case = self._bear_case(name, quote, financials, _cycle_phase)
+        report.bull_case = self._bull_case(name, quote, financials, _cycle_phase,
+                                            momentum_score=report.momentum_score,
+                                            price_ma_zone=report.price_ma_zone)
+        report.bear_case = self._bear_case(name, quote, financials, _cycle_phase,
+                                            momentum_score=report.momentum_score,
+                                            price_ma_zone=report.price_ma_zone,
+                                            surge_risk=report.surge_risk,
+                                            surge_5day_pct=report.surge_5day_pct)
 
         # Phase 10: 庄家操纵风险检测（日内分钟级）
         try:
@@ -259,6 +268,11 @@ class DiagnosisEngine:
                     report.data_gaps.append(
                         f"[WARN] 短期飙升 {report.surge_5day_pct:.0f}%/5日 — 追涨熔断触发"
                     )
+
+        # ── 事实性价格数据（供输出渲染器展示，非投资论点）──
+        report.change_pct_1d = (quote or {}).get("change_pct", 0) or 0.0
+        if report.surge_5day_pct != 0.0 or (close_series and len(close_series) >= 6):
+            report.change_pct_5d = report.surge_5day_pct
 
         # Phase 12: 回调入场检测
         report.pullback_score, report.pullback_state, report.pullback_authentic = (
@@ -786,12 +800,13 @@ class DiagnosisEngine:
         return {"score": max(0.0, min(100.0, score)), "risks": risks}
 
     def _bull_case(self, name: str, quote: dict | None, fin: list | None,
-                   cycle_phase: str = "") -> str:
+                   cycle_phase: str = "",
+                   momentum_score: float = 50.0,
+                   price_ma_zone: str = "NEUTRAL") -> str:
         """基于实际数据生成股票特定的看多理由，周期感知 PE 标签。"""
         parts = []
         pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
         pb = (quote or {}).get("pb") or 0
-        change_pct = (quote or {}).get("change_pct", 0) or 0.0
         if fin:
             latest = fin[0] if fin else {}
             roe = latest.get("roe")
@@ -812,17 +827,25 @@ class DiagnosisEngine:
             parts.insert(0, f"PE={pe:.1f}x估值合理")
         elif pe > 0 and pe > 30 and cycle_phase in ("recovery", "trough"):
             parts.insert(0, f"PE={pe:.1f}x(盈利周期底部，关注拐点确认)")
-        if change_pct > 0:
-            parts.append(f"当日涨{change_pct:+.1f}%技术面偏强")
+        # 动量维度叙事（基于多时间框架动量评分，非单日涨跌）
+        if momentum_score >= 70:
+            parts.append(f"动量趋势偏强(评分{momentum_score:.0f})，价格动能向上")
+        elif momentum_score >= 55:
+            parts.append(f"动量中性偏多(评分{momentum_score:.0f})，趋势温和向好")
+        elif price_ma_zone == "LOW_BASE":
+            parts.append("价格处于低位区域，关注拐点确认")
         return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著亮点"
 
     def _bear_case(self, name: str, quote: dict | None, fin: list | None,
-                   cycle_phase: str = "") -> str:
+                   cycle_phase: str = "",
+                   momentum_score: float = 50.0,
+                   price_ma_zone: str = "NEUTRAL",
+                   surge_risk: bool = False,
+                   surge_5day_pct: float = 0.0) -> str:
         """基于实际数据生成股票特定的看空理由，周期感知 PE 标签。"""
         parts = []
         pe = (quote or {}).get("pe_ttm") or (quote or {}).get("pe") or 0
         pb = (quote or {}).get("pb") or 0
-        change_pct = (quote or {}).get("change_pct", 0) or 0.0
         if fin:
             latest = fin[0] if fin else {}
             roe = latest.get("roe")
@@ -843,8 +866,15 @@ class DiagnosisEngine:
             parts.insert(0, "PE为负(周期底部亏损，关注扭亏拐点)")
         elif pe < 0:
             parts.insert(0, "PE为负，当前处于亏损状态")
-        if change_pct < -3:
-            parts.append(f"当日跌{change_pct:+.1f}%技术面偏弱")
+        # 动量维度叙事（基于多时间框架动量评分，非单日涨跌）
+        if momentum_score <= 30:
+            parts.append(f"动量趋势偏弱(评分{momentum_score:.0f})，价格动能向下")
+        elif momentum_score <= 45:
+            parts.append(f"动量中性偏空(评分{momentum_score:.0f})，趋势疲软")
+        if price_ma_zone == "HIGH_ACCEL":
+            parts.append("价格处于高位加速区域，追高风险较大")
+        if surge_risk:
+            parts.append(f"短期飙升{surge_5day_pct:.0f}%/5日，注意回调风险")
         return "；".join(parts) if parts else f"{name}: 各维度信号中性，无显著风险"
 
     @staticmethod
