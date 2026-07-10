@@ -213,6 +213,41 @@ class TestOrchestrator:
         assert len(result.blocked_by) >= 1
 
 
+# ── Admission ──
+
+class TestAdmission:
+    """准入检查：低流动性、ST、次新股、涨跌停、停牌过滤。"""
+
+    def test_low_liquidity_rejected(self):
+        """日成交额 < 5000万 → REJECTED。"""
+        from src.routing.admission import AdmissionCheck
+        c = AdmissionCheck()
+        r = c.check("000001", "平安银行", {"avg_daily_volume": 3e7})  # 3000万
+        assert r.status.value == "REJECTED"
+        assert "流动性不足" in r.flags
+
+    def test_sufficient_liquidity_passes(self):
+        """日成交额 >= 5000万 → ACCEPTED。"""
+        from src.routing.admission import AdmissionCheck
+        c = AdmissionCheck()
+        r = c.check("000001", "平安银行", {"avg_daily_volume": 8e7})  # 8000万
+        assert r.status.value == "ACCEPTED"
+
+    def test_missing_liquidity_data_passes(self):
+        """无成交额数据时使用默认值(10亿)放行，不误杀。"""
+        from src.routing.admission import AdmissionCheck
+        c = AdmissionCheck()
+        r = c.check("000001", "平安银行", {})
+        assert r.status.value == "ACCEPTED"
+
+    def test_liquidity_at_boundary(self):
+        """日成交额恰好 5000万 → ACCEPTED (>= 条件)。"""
+        from src.routing.admission import AdmissionCheck
+        c = AdmissionCheck()
+        r = c.check("000001", "平安银行", {"avg_daily_volume": 5e7})
+        assert r.status.value == "ACCEPTED"
+
+
 # ── Game Theory: Price Impact ──
 
 class TestPriceImpact:

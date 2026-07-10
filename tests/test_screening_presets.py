@@ -37,7 +37,7 @@ class TestScreeningPresets:
         """价值型预设阈值应合理。"""
         from src.routing.diagnosis import SCREENING_PRESETS
         value = SCREENING_PRESETS["value"]
-        assert value.thresholds["max_pe"] == 15
+        assert value.thresholds["max_pe"] == 30
         assert value.thresholds["max_pb"] == 1.5
         assert value.thresholds["min_div_yield"] == 0.02
         assert value.thresholds["min_market_cap"] == 2e9
@@ -106,7 +106,7 @@ class TestQuickFilter:
         from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
         analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
-        quote = {"market_cap": 5e9, "pe_ttm": 12}  # 50 亿 > 20 亿, PE 12 < max 15
+        quote = {"market_cap": 5e9, "pe_ttm": 12}  # 50 亿 > 20 亿, PE 12 < max_pe 30
         assert analyzer._passes_quick_filter(quote, preset) is True
 
     def test_high_pe_filtered_in_value(self):
@@ -114,7 +114,7 @@ class TestQuickFilter:
         from src.routing.diagnosis import DiagnosisEngine, SCREENING_PRESETS
         analyzer = DiagnosisEngine()
         preset = SCREENING_PRESETS["value"]
-        quote = {"market_cap": 5e9, "pe_ttm": 50}  # PE 50 > max 15
+        quote = {"market_cap": 5e9, "pe_ttm": 50}  # PE 50 > max_pe 30
         assert analyzer._passes_quick_filter(quote, preset) is False
 
     def test_negative_pe_filtered_in_growth(self):
