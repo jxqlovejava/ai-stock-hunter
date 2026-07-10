@@ -75,6 +75,10 @@ class AKShareProvider(DataProvider):
                 low=float(r["最低"]) if self._valid(r.get("最低")) else None,
                 open=float(r["今开"]) if self._valid(r.get("今开")) else None,
                 prev_close=float(r["昨收"]) if self._valid(r.get("昨收")) else None,
+                # 估值字段 — AKShare spot 数据包含市盈率/市净率/总市值
+                pe_ttm=float(r["市盈率-动态"]) if self._valid(r.get("市盈率-动态")) else None,
+                pb=float(r["市净率"]) if self._valid(r.get("市净率")) else None,
+                market_cap=float(r["总市值"]) if self._valid(r.get("总市值")) else None,
                 source=self.source_name,
             )
         except Exception:
@@ -103,6 +107,10 @@ class AKShareProvider(DataProvider):
                             turnover=float(r.get("成交额", 0))
                             if self._valid(r.get("成交额"))
                             else 0.0,
+                            # 估值字段 — AKShare spot 数据包含市盈率/市净率/总市值
+                            pe_ttm=float(r["市盈率-动态"]) if self._valid(r.get("市盈率-动态")) else None,
+                            pb=float(r["市净率"]) if self._valid(r.get("市净率")) else None,
+                            market_cap=float(r["总市值"]) if self._valid(r.get("总市值")) else None,
                             source=self.source_name,
                         )
                     )

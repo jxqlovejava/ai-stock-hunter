@@ -973,7 +973,9 @@ class DiagnosisEngine:
                 c = c.model_dump()
             symbol = c.get("symbol", "")
             name = c.get("name", "")
-            quote = c.get("quote") or {}
+            # Quote.model_dump() 是扁平行情 dict，直接作为 quote 使用；
+            # 不再尝试提取嵌套 "quote" 子字段（Quote 模型无此字段）。
+            quote = c
             financials = c.get("financials") or []
 
             # 快速排除
@@ -995,6 +997,9 @@ class DiagnosisEngine:
         """快速排除不符合预设的股票，周期感知 PE 上限。
 
         RECOVERY/TROUGH 阶段有效 PE 上限提高至 40，避免过滤周期底部高 PE 标的。
+
+        数据缺失安全策略：pe_ttm / market_cap 为 None 时跳过对应检查，
+        不因数据不可用而误杀候选标的。全市场扫描数据可能缺少这些字段。
         """
         if not quote:
             return False
@@ -1004,25 +1009,29 @@ class DiagnosisEngine:
         if quote.get("is_st") or quote.get("is_star_st"):
             return False
 
-        # 市值门槛
-        market_cap = quote.get("market_cap", 0)
-        min_cap = th.get("min_market_cap", 0)
-        if market_cap < min_cap:
-            return False
+        # 市值门槛 — 仅在有数据时过滤
+        market_cap = quote.get("market_cap")
+        if market_cap is not None and market_cap > 0:
+            min_cap = th.get("min_market_cap", 0)
+            if market_cap < min_cap:
+                return False
 
         # PE 上限 (价值型和质量型) — 周期感知
         if "max_pe" in th:
-            pe = quote.get("pe_ttm") or quote.get("pe", 999)
-            effective_max_pe = th["max_pe"]
-            # RECOVERY/TROUGH 阶段放宽 PE 上限至 40
-            if cycle_phase in ("recovery", "trough"):
-                effective_max_pe = max(effective_max_pe, 40)
-            if pe > effective_max_pe:
-                return False
+            pe = quote.get("pe_ttm") or quote.get("pe")
+            if pe is not None and pe > 0:
+                effective_max_pe = th["max_pe"]
+                # RECOVERY/TROUGH 阶段放宽 PE 上限至 40
+                if cycle_phase in ("recovery", "trough"):
+                    effective_max_pe = max(effective_max_pe, 40)
+                if pe > effective_max_pe:
+                    return False
 
-        # PE 下限 (成长型, 排除负 PE)
-        if th.get("require_positive_pe") and (quote.get("pe_ttm") or 0) <= 0:
-            return False
+        # PE 下限 (成长型, 排除负 PE) — 仅在有数据时过滤
+        if th.get("require_positive_pe"):
+            pe = quote.get("pe_ttm") or quote.get("pe")
+            if pe is not None and pe <= 0:
+                return False
 
         return True
 
