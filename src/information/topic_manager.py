@@ -231,7 +231,8 @@ class TopicManager:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
             }
-            r = requests.get(url, headers=headers, timeout=10)
+            r = requests.get(url, headers=headers, timeout=10,
+                             proxies={"http": None, "https": None})
             data = r.json()
             if data.get("errocode", 0) != 0:
                 return []

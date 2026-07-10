@@ -78,6 +78,7 @@ class CninfoProvider:
         """懒初始化 HTTP Session（挂载重试适配器）。"""
         if self._session is None:
             self._session = requests.Session()
+            self._session.trust_env = False  # 禁止读取系统代理，避免代理工具干扰巨潮 API 连接
             self._session.headers.update({"User-Agent": UA})
             try:
                 retry_strategy = Retry(

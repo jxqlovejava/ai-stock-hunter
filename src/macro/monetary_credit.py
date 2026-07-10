@@ -387,7 +387,9 @@ class MonetaryCreditAnalyzer:
         )
 
         try:
-            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+            proxy_handler = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(proxy_handler)
+            with opener.open(req, context=ctx, timeout=20) as resp:
                 rows = json.loads(resp.read())
         except Exception as exc:
             logger.debug("Direct mofcom SF query failed: %s", exc)
@@ -460,7 +462,7 @@ class MonetaryCreditAnalyzer:
                 "&sortColumns=REPORT_DATE&sortTypes=-1"
                 "&pageSize=10&pageNumber=1&source=WEB&client=WEB"
             )
-            r = requests.get(url, timeout=15)
+            r = requests.get(url, timeout=15, proxies={"http": None, "https": None})
             if r.status_code == 200:
                 data = r.json()
                 if data.get("success") and data.get("result", {}).get("data"):

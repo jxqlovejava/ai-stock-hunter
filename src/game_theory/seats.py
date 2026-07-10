@@ -26,6 +26,7 @@ def _get_em_session():
     if _EM_SESSION is None:
         import requests
         _EM_SESSION = requests.Session()
+        _EM_SESSION.trust_env = False  # 禁止读取系统代理，避免代理工具干扰东财 API 连接
         _EM_SESSION.headers.update({"User-Agent": UA})
         try:
             from requests.adapters import HTTPAdapter

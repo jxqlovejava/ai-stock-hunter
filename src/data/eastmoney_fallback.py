@@ -44,6 +44,7 @@ def _get_em_session() -> requests.Session:
     global _em_session
     if _em_session is None:
         _em_session = requests.Session()
+        _em_session.trust_env = False  # 禁止读取系统代理设置，避免代理工具干扰东财 API 连接
         _em_session.headers.update({"User-Agent": UA})
         try:
             _em_session.mount(
@@ -105,50 +106,6 @@ PUSH2_CLIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 PUSH2_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 CNINFO_ANNOUNCE_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_ORGID_URL = "http://www.cninfo.com.cn/new/data/szse_stock.json"
-
-# ── 巨潮 orgId 缓存（deprecated，委托给 CninfoProvider） ────────────
-_cninfo_orgid_map: dict[str, str] = {}
-_cninfo_orgid_loaded: bool = False
-
-
-def _load_cninfo_orgid_map():
-    """[deprecated] 委托给 CninfoProvider._load_orgid_map()。"""
-    global _cninfo_orgid_loaded, _cninfo_orgid_map
-    try:
-        from .cninfo import _get_default_provider
-        p = _get_default_provider()
-        p._load_orgid_map()
-        _cninfo_orgid_map = p._orgid_map
-        _cninfo_orgid_loaded = p._orgid_loaded
-    except Exception:
-        if not _cninfo_orgid_loaded:
-            _cninfo_orgid_loaded = True
-
-
-def _cninfo_orgid(code: str) -> str:
-    """[deprecated] 委托给 CninfoProvider._get_orgid()。"""
-    try:
-        from .cninfo import _get_default_provider
-        return _get_default_provider()._get_orgid(code)
-    except Exception:
-        if code.startswith("6"):
-            return f"gssh0{code}"
-        elif code.startswith("8") or code.startswith("4"):
-            return f"gsbj0{code}"
-        return f"gssz0{code}"
-
-
-def _cninfo_ts_to_date(ts) -> str:
-    """[deprecated] 委托给 CninfoProvider._ts_to_date()。"""
-    try:
-        from .cninfo import _get_default_provider
-        return _get_default_provider()._ts_to_date(ts)
-    except Exception:
-        from datetime import datetime
-        if isinstance(ts, (int, float)):
-            return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
-        return str(ts)[:10] if ts else ""
-
 
 # ══════════════════════════════════════════════════════════════════════
 # 新闻降级

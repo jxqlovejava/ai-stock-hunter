@@ -191,7 +191,8 @@ class EarningsRevisionAnalyzer:
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                 "Referer": "https://basic.10jqka.com.cn/",
             }
-            r = requests.get(url, headers=headers, timeout=15)
+            r = requests.get(url, headers=headers, timeout=15,
+                             proxies={"http": None, "https": None})
             r.encoding = "gbk"
             dfs = pd.read_html(StringIO(r.text))
             return list(dfs)

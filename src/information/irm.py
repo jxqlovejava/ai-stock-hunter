@@ -251,6 +251,7 @@ class IrmAnalyzer:
                 data={"keyWord": symbol},
                 headers={"User-Agent": UA},
                 timeout=10,
+                proxies={"http": None, "https": None},
             )
             d1 = r1.json().get("data") or []
             if not d1:
@@ -272,6 +273,7 @@ class IrmAnalyzer:
                     params=params,
                     headers={"User-Agent": UA},
                     timeout=10,
+                    proxies={"http": None, "https": None},
                 )
                 data = r2.json()
                 rows = data.get("rows") or []

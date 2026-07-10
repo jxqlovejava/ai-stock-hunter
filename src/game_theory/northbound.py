@@ -307,7 +307,8 @@ class NorthboundAnalyzer:
         try:
             import requests
             r = requests.get("https://data.hexin.cn/market/hsgtApi/method/dayChart/",
-                             headers=HSGT_HEADERS, timeout=10)
+                             headers=HSGT_HEADERS, timeout=10,
+                             proxies={"http": None, "https": None})
             if r.status_code != 200:
                 return None
             d = r.json()

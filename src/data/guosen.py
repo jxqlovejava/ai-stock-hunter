@@ -76,6 +76,7 @@ class GuosenProvider(DataProvider):
             )
 
         self._session = requests.Session()
+        self._session.trust_env = False  # 禁止读取系统代理，避免代理工具干扰国信 API 连接
         self._session.mount("https://", _LegacySSLAdapter())
         # 首个可用 Key 作为初始 active
         self._active_idx = self._first_available_idx()
