@@ -24,10 +24,15 @@ except ImportError:
     trend_following = mean_reversion = momentum_breakout = None
     volatility_expansion = capital_inflow = sector_resonance = dragon_tiger = None
 
+try:
+    from .data_adapter import MarketDataAdapter
+except ImportError:
+    MarketDataAdapter = None
+
 __all__ = [
     "StrategyEngine", "PositionSizer", "ExitRuleEngine", "AddRuleEngine",
     "StrategySignal", "PositionSize", "ExitCheckResult", "AddCheckResult",
-    "PortfolioSnapshot",
+    "PortfolioSnapshot", "MarketDataAdapter",
     # 入场模板
     "ALL_TEMPLATES",
     "trend_following", "mean_reversion", "momentum_breakout",

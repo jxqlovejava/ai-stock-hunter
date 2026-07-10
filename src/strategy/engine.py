@@ -33,7 +33,7 @@ class StrategyEngine:
         signals = engine.run_daily(watchlist, portfolio, market_data)
     """
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, auto_activate: bool = True):
         from .sizing import PositionSizer as _PS
         from .exit_rules import ExitRuleEngine as _ER
         from .add_rules import AddRuleEngine as _AR
@@ -42,11 +42,30 @@ class StrategyEngine:
         self.sizer = _PS()
         self.exit_engine = _ER()
         self.add_engine = _AR()
-        self.entry_rules: list[Callable] = []  # ⚠️ 留空 — 用户后续学习后填入
+        self.entry_rules: list[Callable] = []
+        self._adapter = None  # lazy-init
+
+        if auto_activate:
+            self.use_templates()  # 默认激活全部 7 个入场模板
 
     # ------------------------------------------------------------------
     # public
     # ------------------------------------------------------------------
+
+    @property
+    def adapter(self):
+        """Lazy-init MarketDataAdapter for A-share data enrichment."""
+        if self._adapter is None:
+            from .data_adapter import MarketDataAdapter
+            self._adapter = MarketDataAdapter()
+        return self._adapter
+
+    def enrich_market_data(self, symbols: list[str], market_data: dict) -> dict:
+        """Enrich market_data with northbound/sector/LHB fields from live data sources.
+
+        Call before run_daily() to connect entry templates to real data.
+        """
+        return self.adapter.enrich(symbols, market_data)
 
     def register_entry_rule(self, rule: Callable) -> None:
         """Register an entry-rule callable.
