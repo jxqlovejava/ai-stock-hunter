@@ -150,6 +150,33 @@ def cmd_scan(args: list[str]):
     except Exception:
         pass  # 画像加载失败时不过滤，照常扫描
 
+    # ── 行业过滤 (能力圈) ──
+    # 根据投资者能力圈中的行业关键词，映射到东财行业板块成分股，
+    # 仅保留能力圈内的标的。familiarity=0 的行业不参与筛选。
+    sector_filtered = 0
+    try:
+        from src.learner.preference.sector_filter import build_competence_symbol_set
+        coc = loader.load().circle_of_competence.industries
+        competence_symbols = build_competence_symbol_set(coc)
+        if competence_symbols is not None:
+            before = len(stocks)
+            filtered = []
+            for s in stocks:
+                symbol = s.get("symbol", "") if isinstance(s, dict) else getattr(s, "symbol", "")
+                if symbol in competence_symbols:
+                    filtered.append(s)
+                else:
+                    sector_filtered += 1
+            stocks = filtered
+            if sector_filtered:
+                coc_names = [k for k, v in coc.items() if v > 0]
+                print(
+                    f"🎯 能力圈过滤: {before} → {len(stocks)} 只 "
+                    f"(能力圈: {coc_names})"
+                )
+    except Exception:
+        pass  # 行业过滤失败时不过滤，照常扫描
+
     print(f"扫描范围: {len(stocks)} 只股票")
 
     if not stocks:
@@ -1419,6 +1446,21 @@ def cmd_screen(args: list[str]):
     except Exception:
         pass
 
+    # ── 行业过滤 (能力圈) ──
+    try:
+        from src.learner.preference.sector_filter import build_competence_symbol_set
+        coc = loader.load().circle_of_competence.industries
+        competence_symbols = build_competence_symbol_set(coc)
+        if competence_symbols is not None:
+            before = len(results)
+            results = [r for r in results if r.symbol in competence_symbols]
+            if len(results) < before:
+                coc_names = [k for k, v in coc.items() if v > 0]
+                print(f"🎯 能力圈过滤: {before} → {len(results)} 只 "
+                      f"(能力圈: {coc_names})")
+    except Exception:
+        pass
+
     if not results:
         print("📭 板块过滤后无剩余标的")
         return
@@ -1777,12 +1819,33 @@ def cmd_alpha_scan(args: list[str]):
 
     print(f"扫描范围: {len(stocks)} 只股票")
 
+    # ── 主板过滤 ──
+    def _is_main_board(symbol: str) -> bool:
+        """主板: 上证60xxxx, 深证00xxxx/002xxx/003xxx"""
+        if symbol.startswith('sh60'):
+            return True
+        if symbol.startswith('sz00') or symbol.startswith('sz002') or symbol.startswith('sz003'):
+            return True
+        return False
+
+    stocks = [s for s in stocks if _is_main_board(
+        s.get("symbol", "") if isinstance(s, dict) else getattr(s, "symbol", ""))]
+    print(f"🔒 主板过滤后: {len(stocks)} 只")
+
     lens = AlphaLens()
     results: list[tuple[str, str, float, str]] = []
 
-    for stock in stocks[:50]:  # 限制扫描数量
-        symbol = stock.get("symbol", "")
-        name = stock.get("name", "")
+    import random
+    sample_size = min(len(stocks), 500)
+    sample = random.sample(stocks, sample_size)
+    print(f"🎲 随机采样 {sample_size} 只进行分析...")
+    for stock in sample:
+        if isinstance(stock, dict):
+            symbol = stock.get("symbol", "")
+            name = stock.get("name", "")
+        else:
+            symbol = getattr(stock, "symbol", "")
+            name = getattr(stock, "name", "")
         try:
             profile = lens.analyze(symbol=symbol)
             if profile.alpha_score >= parsed.min_alpha:
