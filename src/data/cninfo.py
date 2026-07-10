@@ -376,6 +376,17 @@ class CninfoProvider:
 
     # ── 健康检查 ──────────────────────────────────────────────────────
 
+    def get_stock_list(self) -> list[dict]:
+        """获取全市场股票代码+名称列表（~6200 只，T0 一手官方源）。
+
+        优先级：付费/免费数据源全市场扫描的最终降级路径。
+        """
+        self._load_orgid_map()
+        results: list[dict] = []
+        for code, org_id in self._orgid_map.items():
+            results.append({"code": code, "orgId": org_id})
+        return results
+
     def health_check(self) -> bool:
         """连通性检查：尝试加载 orgId 映射表。"""
         try:

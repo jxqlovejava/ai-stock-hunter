@@ -442,8 +442,46 @@ class DataAggregator:
     # ------------------------------------------------------------------
 
     def scan_all_stocks(self) -> list[Quote]:
-        """全市场扫描。AKShare 唯一支持（mootdx/腾讯不支持全市场扫描）。"""
-        return self.akshare.get_all_quotes()
+        """全市场扫描。优先级：AKShare → cninfo+腾讯降级。"""
+        quotes = self.akshare.get_all_quotes()
+        if quotes:
+            return quotes
+
+        # push2 不可达降级：cninfo 股票列表 + 腾讯批量行情
+        logger.info("AKShare 全市场扫描返回空，降级到 cninfo+腾讯")
+        cninfo = self.cninfo
+        if cninfo is None:
+            logger.warning("cninfo 不可用，全市场扫描失败")
+            return []
+
+        try:
+            stock_list = cninfo.get_stock_list()
+        except Exception as e:
+            logger.warning("cninfo 股票列表加载失败: %s", e)
+            return []
+
+        if not stock_list:
+            return []
+
+        codes = [s["code"] for s in stock_list]
+        logger.info("cninfo 获取到 %d 只股票，开始腾讯批量拉取行情...", len(codes))
+
+        # 腾讯批量接口 URL 长度有限，按 50 只一批
+        BATCH_SIZE = 50
+        all_quotes: list[Quote] = []
+        mt = self.mootdx  # MootdxTencentProvider (内含腾讯批量行情)
+
+        for i in range(0, len(codes), BATCH_SIZE):
+            batch = codes[i : i + BATCH_SIZE]
+            try:
+                batch_quotes = mt.get_quotes_batch(batch)
+                all_quotes.extend(batch_quotes)
+            except Exception as e:
+                logger.debug("腾讯批量行情批次 %d 失败: %s", i // BATCH_SIZE, e)
+                continue
+
+        logger.info("降级全市场扫描完成: %d / %d 只股票获取成功", len(all_quotes), len(codes))
+        return all_quotes
 
     # ------------------------------------------------------------------
     # Historical K-line (for backtest)

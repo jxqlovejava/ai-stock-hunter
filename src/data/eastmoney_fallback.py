@@ -494,6 +494,116 @@ def fetch_em_industry_pe_pb() -> tuple[Optional[float], Optional[float]]:
         return None, None
 
 
+def fetch_em_all_stocks(page_size: int = 500, max_pages: int = 20) -> list[dict]:
+    """东财 push2 全 A 股实时行情 (clist, 零鉴权) — push2 不可达时的降级源。
+
+    直连 push2.eastmoney.com（trust_env=False 绕过系统代理），
+    在 AKShare stock_zh_a_spot() 因代理/WAF 被封时仍可能连通。
+
+    Args:
+        page_size: 每页条数 (max ~5000, 默认 500)
+        max_pages: 最大翻页数 (5000 只 ≈ 10 页, 20 页留有裕量)
+
+    Returns:
+        [{code, name, price, change_pct, change_amount, volume, turnover,
+          amplitude, turnover_rate, pe_ttm, volume_ratio,
+          high, low, open, prev_close, market_cap, market_cap_float, pb}, ...]
+    """
+    # 全 A 股市场过滤 (沪深京主板+科创+创业+北交所)
+    FS_FILTER = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+    FIELDS = (
+        "f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f21,f23"
+    )
+    headers = {"Referer": "https://quote.eastmoney.com/"}
+
+    all_rows: list[dict] = []
+    for page in range(1, max_pages + 1):
+        params = {
+            "pn": str(page),
+            "pz": str(page_size),
+            "po": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f12",
+            "fs": FS_FILTER,
+            "fields": FIELDS,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        }
+        try:
+            r = _em_get(PUSH2_CLIST_URL, params=params, headers=headers, timeout=20)
+            d = r.json()
+            items = _extract_diff_items(d)
+            if not items:
+                break  # 无更多数据，停止翻页
+            for item in items:
+                code = item.get("f12", "")
+                if not code:
+                    continue
+                all_rows.append({
+                    "code": code,
+                    "name": item.get("f14", ""),
+                    "price": _safe_numeric(item.get("f2")),
+                    "change_pct": _safe_numeric(item.get("f3")),
+                    "change_amount": _safe_numeric(item.get("f4")),
+                    "volume": _safe_int(item.get("f5")),
+                    "turnover": _safe_numeric(item.get("f6")),
+                    "amplitude": _safe_numeric(item.get("f7")),
+                    "turnover_rate": _safe_numeric(item.get("f8")),
+                    "pe_ttm": _safe_numeric(item.get("f9")),
+                    "volume_ratio": _safe_numeric(item.get("f10")),
+                    "high": _safe_numeric(item.get("f15")),
+                    "low": _safe_numeric(item.get("f16")),
+                    "open": _safe_numeric(item.get("f17")),
+                    "prev_close": _safe_numeric(item.get("f18")),
+                    "market_cap": _safe_numeric(item.get("f20")),
+                    "market_cap_float": _safe_numeric(item.get("f21")),
+                    "pb": _safe_numeric(item.get("f23")),
+                })
+            total = d.get("data", {}).get("total", 0)
+            if len(all_rows) >= total:
+                break
+        except Exception as e:
+            logger.debug("东财全市场行情获取失败 (page=%d): %s", page, e)
+            break  # 网络故障不再继续翻页
+
+    if all_rows:
+        logger.info(
+            "东财 push2 直连获取 %d 只 A 股行情 (pages=%d)",
+            len(all_rows),
+            (len(all_rows) + page_size - 1) // page_size if all_rows else 0,
+        )
+    return all_rows
+
+
+def _extract_diff_items(data: dict) -> list:
+    """从 push2 clist 响应中提取 diff 数据行。
+
+    push2 不同部署版本可能返回 list 或 dict（index-by-string），统一处理。
+    """
+    diff = data.get("data", {}).get("diff", [])
+    if isinstance(diff, list):
+        return diff
+    if isinstance(diff, dict):
+        # dict 形式: {"0": {...}, "1": {...}, ...}
+        keys = sorted(diff.keys(), key=lambda k: int(k) if k.isdigit() else 0)
+        return [diff[k] for k in keys]
+    return []
+
+
+def _safe_int(v) -> Optional[int]:
+    """安全转 int，处理 None / NaN / 字符串。"""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        if f != f:  # NaN
+            return None
+        return int(f)
+    except (ValueError, TypeError):
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 分红降级
 # ══════════════════════════════════════════════════════════════════════

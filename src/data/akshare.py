@@ -225,8 +225,8 @@ class AKShareProvider(DataProvider):
     def get_all_quotes(self) -> list[Quote]:
         """获取全 A 股实时行情列表。
 
-        stock_zh_a_spot() 仅返回基础行情（价格/量/额），不包含 PE/PB/市值。
-        这些估值字段需通过其他数据源补全（腾讯财经/东财 push2）。
+        降级链: AKShare stock_zh_a_spot → 东财 push2 直连 HTTP。
+        东财直连源可提供 PE/PB/市值（stock_zh_a_spot 不含这些字段）。
         """
         try:
             df = self._get_spot()
@@ -264,10 +264,13 @@ class AKShareProvider(DataProvider):
                             low=float(r["最低"]) if self._valid(r.get("最低")) else None,
                             open=float(r["今开"]) if self._valid(r.get("今开")) else None,
                             prev_close=float(r["昨收"]) if self._valid(r.get("昨收")) else None,
-                            # stock_zh_a_spot 不含估值字段，统一为 None（下游需从其他源补全）
-                            pe_ttm=None,
-                            pb=None,
-                            market_cap=None,
+                            # 降级源（东财直连）可提供估值字段
+                            pe_ttm=float(r["市盈率-动态"])
+                            if self._valid(r.get("市盈率-动态")) else None,
+                            pb=float(r["市净率"])
+                            if self._valid(r.get("市净率")) else None,
+                            market_cap=float(r.get("总市值", 0))
+                            if self._valid(r.get("总市值")) else None,
                             is_st=is_st,
                             source=self.source_name,
                         )
@@ -483,10 +486,9 @@ class AKShareProvider(DataProvider):
     def _get_spot(self) -> pd.DataFrame:
         """获取全市场行情（5 分钟缓存）。
 
-        push2 CDN 不可用时返回空 DataFrame，下游自动降级到 mootdx/腾讯。
+        降级链: AKShare stock_zh_a_spot → 东财 push2 直连 HTTP → 空 DataFrame
+        push2 不可达时自动降级到直连 HTTP（trust_env=False 绕过系统代理）。
         """
-        if _PUSH2_UNAVAILABLE:
-            return pd.DataFrame()
         now = datetime.now()
         if (
             self._spot_cache is not None
@@ -494,14 +496,73 @@ class AKShareProvider(DataProvider):
             and (now - self._spot_cache_time).seconds < 300
         ):
             return self._spot_cache
-        try:
-            self._spot_cache = ak.stock_zh_a_spot()
+
+        # Tier 1: AKShare stock_zh_a_spot (push2 可用时)
+        if not _PUSH2_UNAVAILABLE:
+            try:
+                self._spot_cache = ak.stock_zh_a_spot()
+                self._spot_cache_time = now
+                if self._spot_cache is not None and len(self._spot_cache) > 0:
+                    return self._spot_cache
+            except Exception:
+                logger.debug("stock_zh_a_spot failed", exc_info=True)
+
+        # Tier 2: 东财 push2 直连 HTTP (绕过系统代理, trust_env=False)
+        df = self._fetch_spot_fallback()
+        if df is not None and len(df) > 0:
+            self._spot_cache = df
             self._spot_cache_time = now
-        except Exception:
-            logger.debug("stock_zh_a_spot failed", exc_info=True)
-            self._spot_cache = pd.DataFrame()
-            self._spot_cache_time = now
+            return self._spot_cache
+
+        # Tier 3: 无可用的全市场数据源
+        self._spot_cache = pd.DataFrame()
+        self._spot_cache_time = now
         return self._spot_cache
+
+    @staticmethod
+    def _fetch_spot_fallback() -> pd.DataFrame:
+        """东财 push2 直连 HTTP 降级 — 绕过 AKShare 库直接请求 push2 API。
+
+        使用 trust_env=False 绕过系统代理，在 AKShare 因代理/WAF 被封时仍可能连通。
+        返回与 stock_zh_a_spot() 相同列名的 DataFrame。
+        """
+        try:
+            from .eastmoney_fallback import fetch_em_all_stocks
+
+            rows = fetch_em_all_stocks()
+            if not rows:
+                return pd.DataFrame()
+
+            # 转换为 stock_zh_a_spot() 兼容的 DataFrame（中文列名）
+            data = []
+            for r in rows:
+                data.append({
+                    "代码": r.get("code", ""),
+                    "名称": r.get("name", ""),
+                    "最新价": r.get("price"),
+                    "涨跌幅": r.get("change_pct"),
+                    "涨跌额": r.get("change_amount"),
+                    "成交量": r.get("volume"),
+                    "成交额": r.get("turnover"),
+                    "振幅": r.get("amplitude"),
+                    "最高": r.get("high"),
+                    "最低": r.get("low"),
+                    "今开": r.get("open"),
+                    "昨收": r.get("prev_close"),
+                    "量比": r.get("volume_ratio"),
+                    "换手率": r.get("turnover_rate"),
+                    "市盈率-动态": r.get("pe_ttm"),
+                    "市净率": r.get("pb"),
+                    "总市值": r.get("market_cap"),
+                })
+            df = pd.DataFrame(data)
+            logger.info(
+                "东财 push2 直连获取 %d 只 A 股行情 (降级路径)", len(df)
+            )
+            return df
+        except Exception:
+            logger.debug("东财 push2 直连降级失败", exc_info=True)
+            return pd.DataFrame()
 
     @staticmethod
     def _valid(val) -> bool:
