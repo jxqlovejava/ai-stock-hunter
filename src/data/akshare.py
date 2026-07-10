@@ -7,19 +7,137 @@
   - 龙虎榜、融资融券、北向资金（独有数据）
   - 财务数据
 
-注意: AKShare 依赖外部数据源，在受限网络环境下可能超时。
+网络环境适配:
+  - 自动检测 macOS 系统代理（如 Clash），为东财域名添加绕过规则
+  - 探测 push2.eastmoney.com CDN 连通性，不可用时自动降级到 mootdx/腾讯
+  - datacenter.eastmoney.com & emweb.securities.eastmoney.com 绕过代理后通常可用
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime
 from typing import Optional
 
-import akshare as ak
 import pandas as pd
 
-from .base import DataProvider
-from .schema import Financials, Quote
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 网络环境配置 — 模块加载时执行一次
+# ---------------------------------------------------------------------------
+
+# 东财相关域名（AKShare 重度依赖）
+_EM_DOMAINS = (
+    "eastmoney.com",
+    "eastmoney.com.cn",
+    "push2.eastmoney.com",
+    "push2his.eastmoney.com",
+    "datacenter.eastmoney.com",
+    "emweb.securities.eastmoney.com",
+)
+
+
+def _bypass_system_proxy() -> None:
+    """绕过 macOS 系统代理对东财域名的拦截。
+
+    macOS 系统代理（如 Clash @ 127.0.0.1:7897）会通过
+    urllib.request.getproxies() 自动注入到 requests.Session。
+    为东财域名设置 NO_PROXY 可让 AKShare 直连，避免 ProxyError。
+    """
+    existing = os.environ.get("NO_PROXY", "")
+    em_pattern = ",".join(_EM_DOMAINS)
+    if existing:
+        os.environ["NO_PROXY"] = f"{existing},{em_pattern}"
+    else:
+        os.environ["NO_PROXY"] = em_pattern
+    # macOS 的 urllib 也读取小写版本
+    os.environ["no_proxy"] = os.environ["NO_PROXY"]
+    logger.debug("NO_PROXY set for eastmoney domains: %s", em_pattern)
+
+
+def _check_push2_connectivity(timeout: float = 8.0) -> bool:
+    """探测 push2.eastmoney.com API 端点是否可达。
+
+    发送实际 API 请求测试连通性（仅探测 root path 不足以判断 API 是否被 WAF 封堵）。
+    使用独立 Session（trust_env=False）绕过代理，避免代理干扰探测结果。
+    """
+    try:
+        import requests as _requests
+
+        s = _requests.Session()
+        s.proxies = {"http": None, "https": None}
+        s.trust_env = False
+        s.headers.update({"User-Agent": "Mozilla/5.0"})
+        r = s.get(
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            params={
+                "pn": "1", "pz": "1", "po": "1", "np": "1",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": "2", "invt": "2", "fid": "f12",
+                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+                "fields": "f12",
+            },
+            timeout=timeout,
+        )
+        return r.status_code == 200 and len(r.text) > 10
+    except Exception as e:
+        logger.warning("push2.eastmoney.com API 连通性探测失败: %s", e)
+        return False
+
+
+# 模块加载时配置
+_bypass_system_proxy()
+_PUSH2_UNAVAILABLE: bool = not _check_push2_connectivity()
+
+if _PUSH2_UNAVAILABLE:
+    logger.warning(
+        "⚠️  push2.eastmoney.com 不可达 — AKShare 实时行情/历史K线(东财源)将降级到 mootdx/腾讯"
+    )
+
+# 延迟导入 AKShare（在 _bypass_system_proxy 之后）
+import akshare as ak  # noqa: E402
+
+from .base import DataProvider  # noqa: E402
+from .schema import Financials, Quote  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# AKShare 猴子补丁 — 为 push2 不可达环境自动降级
+# ---------------------------------------------------------------------------
+
+if _PUSH2_UNAVAILABLE:
+    _orig_stock_zh_a_hist = ak.stock_zh_a_hist
+
+    def _patched_stock_zh_a_hist(
+        symbol: str = "000001",
+        period: str = "daily",
+        start_date: str = "19700101",
+        end_date: str = "20500101",
+        adjust: str = "",
+        timeout: float | None = None,
+    ) -> pd.DataFrame:
+        """stock_zh_a_hist 的降级包装 — push2 不可达时自动走腾讯源。
+
+        AKShare 原版走 push2his.eastmoney.com，该 CDN 在部分网络环境被 WAF 封堵。
+        此补丁在原调用失败后自动降级到 stock_zh_a_hist_tx（腾讯源）。
+        """
+        # push2 不可达时直接走腾讯源，避免超时
+        try:
+            tx_symbol = _to_tx_symbol(symbol)
+            df = ak.stock_zh_a_hist_tx(
+                symbol=tx_symbol, start_date=start_date, end_date=end_date,
+            )
+            # 统一列名：amount → volume
+            if "amount" in df.columns:
+                df = df.rename(columns={"amount": "volume"})
+            return df
+        except Exception:
+            logger.debug("stock_zh_a_hist_tx also failed for %s", symbol, exc_info=True)
+            return pd.DataFrame()
+
+    ak.stock_zh_a_hist = _patched_stock_zh_a_hist
+    logger.info("akshare.stock_zh_a_hist 已打补丁 → 自动降级到腾讯源")
 
 
 def _to_tx_symbol(symbol: str) -> str:
@@ -51,16 +169,36 @@ class AKShareProvider(DataProvider):
     # ------------------------------------------------------------------
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:
-        """获取单只股票实时行情（从全市场数据中查找）。"""
+        """获取单只股票实时行情（从全市场数据中查找）。
+
+        支持带前缀 (sh600000) 和不带前缀 (600000) 两种代码格式。
+        """
         try:
             df = self._get_spot()
+            # 先精确匹配；失败则尝试加前缀匹配
             row = df[df["代码"] == symbol]
+            if row.empty:
+                # 尝试 AKShare 格式: 纯数字 → sh/sz/bj 前缀
+                for prefix in ("sh", "sz", "bj"):
+                    prefixed = prefix + symbol.strip().lower()
+                    row = df[df["代码"] == prefixed]
+                    if not row.empty:
+                        break
             if row.empty:
                 return None
             r = row.iloc[0]
+            raw_symbol = str(r.get("代码", ""))
+            raw_name = str(r.get("名称", ""))
+            # 检测 ST
+            is_st = None
+            if raw_name:
+                if "*ST" in raw_name or "＊ST" in raw_name:
+                    is_st = True
+                elif raw_name.startswith("ST"):
+                    is_st = True
             return Quote(
-                symbol=symbol,
-                name=str(r.get("名称", "")),
+                symbol=self._normalize_symbol(raw_symbol),
+                name=raw_name,
                 price=float(r["最新价"]) if self._valid(r.get("最新价")) else 0.0,
                 change_pct=float(r["涨跌幅"])
                 if self._valid(r.get("涨跌幅"))
@@ -75,26 +213,41 @@ class AKShareProvider(DataProvider):
                 low=float(r["最低"]) if self._valid(r.get("最低")) else None,
                 open=float(r["今开"]) if self._valid(r.get("今开")) else None,
                 prev_close=float(r["昨收"]) if self._valid(r.get("昨收")) else None,
-                # 估值字段 — AKShare spot 数据包含市盈率/市净率/总市值
-                pe_ttm=float(r["市盈率-动态"]) if self._valid(r.get("市盈率-动态")) else None,
-                pb=float(r["市净率"]) if self._valid(r.get("市净率")) else None,
-                market_cap=float(r["总市值"]) if self._valid(r.get("总市值")) else None,
+                pe_ttm=None,
+                pb=None,
+                market_cap=None,
+                is_st=is_st,
                 source=self.source_name,
             )
         except Exception:
             return None
 
     def get_all_quotes(self) -> list[Quote]:
-        """获取全 A 股实时行情列表。"""
+        """获取全 A 股实时行情列表。
+
+        stock_zh_a_spot() 仅返回基础行情（价格/量/额），不包含 PE/PB/市值。
+        这些估值字段需通过其他数据源补全（腾讯财经/东财 push2）。
+        """
         try:
             df = self._get_spot()
             results = []
             for _, r in df.iterrows():
                 try:
+                    raw_symbol = str(r.get("代码", ""))
+                    raw_name = str(r.get("名称", ""))
+                    # 去除 AKShare 交易所前缀 (bj/sh/sz) → 6 位纯数字代码
+                    symbol = self._normalize_symbol(raw_symbol)
+                    # 从名称检测 ST
+                    is_st = None
+                    if raw_name:
+                        if "*ST" in raw_name or "＊ST" in raw_name:
+                            is_st = True
+                        elif raw_name.startswith("ST"):
+                            is_st = True
                     results.append(
                         Quote(
-                            symbol=str(r.get("代码", "")),
-                            name=str(r.get("名称", "")),
+                            symbol=symbol,
+                            name=raw_name,
                             price=float(r["最新价"])
                             if self._valid(r.get("最新价"))
                             else 0.0,
@@ -107,10 +260,15 @@ class AKShareProvider(DataProvider):
                             turnover=float(r.get("成交额", 0))
                             if self._valid(r.get("成交额"))
                             else 0.0,
-                            # 估值字段 — AKShare spot 数据包含市盈率/市净率/总市值
-                            pe_ttm=float(r["市盈率-动态"]) if self._valid(r.get("市盈率-动态")) else None,
-                            pb=float(r["市净率"]) if self._valid(r.get("市净率")) else None,
-                            market_cap=float(r["总市值"]) if self._valid(r.get("总市值")) else None,
+                            high=float(r["最高"]) if self._valid(r.get("最高")) else None,
+                            low=float(r["最低"]) if self._valid(r.get("最低")) else None,
+                            open=float(r["今开"]) if self._valid(r.get("今开")) else None,
+                            prev_close=float(r["昨收"]) if self._valid(r.get("昨收")) else None,
+                            # stock_zh_a_spot 不含估值字段，统一为 None（下游需从其他源补全）
+                            pe_ttm=None,
+                            pb=None,
+                            market_cap=None,
+                            is_st=is_st,
                             source=self.source_name,
                         )
                     )
@@ -119,6 +277,21 @@ class AKShareProvider(DataProvider):
             return results
         except Exception:
             return []
+
+    @staticmethod
+    def _normalize_symbol(raw: str) -> str:
+        """去除 AKShare 交易所前缀，统一为 6 位纯数字代码。
+
+        "bj920000" → "920000"
+        "sh600000" → "600000"
+        "sz000001" → "000001"
+        "600519"   → "600519"   (已是纯数字)
+        """
+        raw = raw.strip().lower()
+        for prefix in ("bj", "sh", "sz"):
+            if raw.startswith(prefix) and len(raw) > len(prefix):
+                return raw[len(prefix):]
+        return raw
 
     # ------------------------------------------------------------------
     # Financials
@@ -213,21 +386,21 @@ class AKShareProvider(DataProvider):
     def get_history(
         self, symbol: str, period: str = "daily", start_date: str = "", end_date: str = ""
     ) -> pd.DataFrame:
-        """获取历史 K 线（腾讯源，push2.eastmoney.com 不可用时降级）。
+        """获取历史 K 线。
 
-        注意：stock_zh_a_hist (东财 push2) 在部分网络环境被阻断，
-        改用 stock_zh_a_hist_tx (腾讯) 作为 AKShare 的 K 线数据源。
+        push2.eastmoney.com 不可用时跳过东财源，直接使用腾讯源。
         """
-        try:
-            # 优先尝试东财源（数据更全），失败则降级到腾讯源
+        # push2 CDN 被阻断时直接走腾讯源，避免 60s 超时等待
+        if not _PUSH2_UNAVAILABLE:
             try:
                 return ak.stock_zh_a_hist(
                     symbol=symbol, period=period,
                     start_date=start_date, end_date=end_date,
                 )
             except Exception:
-                pass
-            # 降级：腾讯源 — symbol 需要市场前缀
+                logger.debug("stock_zh_a_hist (push2) failed, falling back to tx", exc_info=True)
+        # 降级：腾讯源 — symbol 需要市场前缀
+        try:
             tx_symbol = _to_tx_symbol(symbol)
             df = ak.stock_zh_a_hist_tx(
                 symbol=tx_symbol, start_date=start_date, end_date=end_date,
@@ -237,6 +410,7 @@ class AKShareProvider(DataProvider):
                 df = df.rename(columns={"amount": "volume"})
             return df
         except Exception:
+            logger.debug("stock_zh_a_hist_tx failed for %s", symbol, exc_info=True)
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
@@ -277,7 +451,22 @@ class AKShareProvider(DataProvider):
     # ------------------------------------------------------------------
 
     def health_check(self) -> bool:
-        """测试连通性。"""
+        """测试连通性。
+
+        使用 datacenter API 探测（不受 push2 CDN 阻断影响）；
+        push2 不可用时仍可提供财务数据、龙虎榜、融资融券等非实时行情数据。
+        """
+        if _PUSH2_UNAVAILABLE:
+            # push2 被封，测试 datacenter 是否可用（财务/龙虎榜/北向等依赖此域）
+            try:
+                import requests
+                s = requests.Session()
+                s.proxies = {"http": None, "https": None}
+                s.trust_env = False
+                r = s.get("https://datacenter.eastmoney.com/", timeout=10)
+                return r.status_code < 500
+            except Exception:
+                return False
         try:
             df = ak.stock_zh_a_spot()
             return df is not None and len(df) > 1000
@@ -292,7 +481,12 @@ class AKShareProvider(DataProvider):
     _spot_cache_time: datetime | None = None
 
     def _get_spot(self) -> pd.DataFrame:
-        """获取全市场行情（5 分钟缓存）。"""
+        """获取全市场行情（5 分钟缓存）。
+
+        push2 CDN 不可用时返回空 DataFrame，下游自动降级到 mootdx/腾讯。
+        """
+        if _PUSH2_UNAVAILABLE:
+            return pd.DataFrame()
         now = datetime.now()
         if (
             self._spot_cache is not None
@@ -300,8 +494,13 @@ class AKShareProvider(DataProvider):
             and (now - self._spot_cache_time).seconds < 300
         ):
             return self._spot_cache
-        self._spot_cache = ak.stock_zh_a_spot()
-        self._spot_cache_time = now
+        try:
+            self._spot_cache = ak.stock_zh_a_spot()
+            self._spot_cache_time = now
+        except Exception:
+            logger.debug("stock_zh_a_spot failed", exc_info=True)
+            self._spot_cache = pd.DataFrame()
+            self._spot_cache_time = now
         return self._spot_cache
 
     @staticmethod
