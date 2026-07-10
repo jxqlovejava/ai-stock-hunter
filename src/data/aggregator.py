@@ -60,6 +60,7 @@ class DataAggregator:
         self._akshare: AKShareProvider | None = None
         self._miaoxiang: "MiaoXiangProvider | None" = None  # type: ignore[name-defined]
         self._cninfo: "CninfoProvider | None" = None  # type: ignore[name-defined]
+        self._kuaicha: "KuaichaClient | None" = None  # type: ignore[name-defined]
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
         self.speed_monitor = SpeedMonitor()  # 信息速度优势度量（共享实例）
@@ -122,6 +123,18 @@ class DataAggregator:
             except Exception:
                 self._cninfo = None
         return self._cninfo
+
+    @property
+    def kuaicha(self) -> "KuaichaClient | None":  # type: ignore[name-defined]
+        """懒加载快查适配器。需要 `kuaicha` CLI 已安装并配置 API key。"""
+        if self._kuaicha is None:
+            try:
+                from .kuaicha import KuaichaClient
+                client = KuaichaClient()
+                self._kuaicha = client if client.health_check() else None
+            except Exception:
+                self._kuaicha = None
+        return self._kuaicha
 
     # ------------------------------------------------------------------
     # Loader helpers
@@ -196,7 +209,8 @@ class DataAggregator:
     ) -> list[Financials]:
         """按 a_share fallback 链获取财务报表。
 
-        主源返回数据后，尝试用后续源补充缺失字段 (ROE/EPS 等)。
+        主源返回完整数据后短路，不再调用后续付费源。
+        仅当关键字段缺失时才尝试后续源补充。
         report_period: 历史回测报告期 (YYYY-MM-DD)
         """
         from src.data.loaders.registry import _ensure_registered
@@ -230,9 +244,27 @@ class DataAggregator:
                 primary = fins
                 primary_name = name
             else:
-                # 🌟 补充源: 用后续源填充主源缺失的字段
-                self._enrich_financials(primary, fins, primary_name, loader.name)
+                # 补充源: 仅当主源关键字段缺失时才调用后续源
+                if not self._financials_are_complete(primary):
+                    self._enrich_financials(primary, fins, primary_name, loader.name)
+                else:
+                    break  # 主源数据完整，短路后续付费源
+
+            # 短路: 如果当前已是免费源且数据完整，不再尝试付费源
+            if self._financials_are_complete(primary) and name in ("akshare", "tencent", "mootdx"):
+                break
+
         return primary
+
+    @staticmethod
+    def _financials_are_complete(fins: list[Financials]) -> bool:
+        """检查财务报表是否包含所有关键字段。"""
+        if not fins:
+            return False
+        # 检查第一个报告期是否有关键字段
+        fin = fins[0]
+        key_fields = [fin.revenue, fin.net_profit, fin.roe, fin.eps]
+        return all(f is not None for f in key_fields)
 
     @staticmethod
     def _enrich_financials(
@@ -446,6 +478,8 @@ class DataAggregator:
         status["akshare"] = "✅" if self.akshare.health_check() else "❌"
         mx = self.miaoxiang
         status["miaoxiang"] = "✅" if (mx is not None and mx.health_check()) else "❌ (无 MX_APIKEY 或不可用)"
+        kc = self.kuaicha
+        status["kuaicha"] = "✅" if (kc is not None and kc.health_check()) else "❌ (kuaicha CLI 未安装或无 API key)"
         return status
 
     # ------------------------------------------------------------------
@@ -597,7 +631,7 @@ class DataAggregator:
     def get_related_parties(self, symbol: str) -> list[RelatedParty]:
         """获取个股关联方。
 
-        降级链: mx-data → [DATA_GAP]（无可用的免费降级源）
+        降级链: mx-data → cninfo 关联交易公告提取 → [DATA_GAP]
         """
         mx = self.miaoxiang
         if mx is not None and not mx.is_exhausted():
@@ -608,8 +642,12 @@ class DataAggregator:
             except Exception as e:
                 logger.debug("mx-data 关联方失败: %s", e)
 
-        # 无免费降级源 — 关联关系需要结构化股权数据库
-        logger.info("[DATA_GAP] get_related_parties(%s): 妙想不可用，无可用的免费降级源", symbol)
+        # 降级: cninfo 关联交易公告提取
+        items = self._extract_related_parties_from_cninfo(symbol)
+        if items:
+            return items
+
+        logger.info("[DATA_GAP] get_related_parties(%s): 妙想不可用，cninfo 也未提取到关联方", symbol)
         return []
 
     def get_executive_trades(self, symbol: str) -> list[ExecutiveTrade]:
@@ -655,7 +693,7 @@ class DataAggregator:
     def get_executive_profiles(self, symbol: str) -> list[ExecutiveProfile]:
         """获取高管背景履历。
 
-        降级链: mx-data → [DATA_GAP]（无可用的免费降级源）
+        降级链: mx-data → cninfo 高管公告提取 → [DATA_GAP]
         """
         mx = self.miaoxiang
         if mx is not None and not mx.is_exhausted():
@@ -666,7 +704,34 @@ class DataAggregator:
             except Exception as e:
                 logger.debug("mx-data 高管履历失败: %s", e)
 
-        logger.info("[DATA_GAP] get_executive_profiles(%s): 妙想不可用，无可用的免费降级源", symbol)
+        # 2. 快查 (iwencai 董监高 + listed 结构数据)
+        kc = self.kuaicha
+        if kc is not None:
+            try:
+                execs = kc.get_executives(creditcode=symbol)
+                if execs:
+                    items = []
+                    for entry in execs:
+                        items.append(ExecutiveProfile(
+                            name=entry.get("姓名", entry.get("name", "")),
+                            position=entry.get("职务", entry.get("position", "")),
+                            age=None,
+                            education=str(entry.get("学历", "")),
+                            background=f"快查企业数据引擎 — {entry.get('任职起始日期', '')}",
+                            tenure_start=entry.get("任职起始日期", ""),
+                            provider="kuaicha",
+                        ))
+                    if items:
+                        return items
+            except Exception as e:
+                logger.debug("kuaicha 高管查询失败 (%s): %s", symbol, e)
+
+        # 降级: cninfo 高管/董事公告提取
+        items = self._extract_executive_profiles_from_cninfo(symbol)
+        if items:
+            return items
+
+        logger.info("[DATA_GAP] get_executive_profiles(%s): 妙想不可用，cninfo 也未提取到高管信息", symbol)
         return []
 
     def get_board_changes(self, symbol: str) -> list[BoardChange]:
@@ -786,10 +851,19 @@ class DataAggregator:
             (quote, cross_validated, dispute)
             - cross_validated: ≥2 源成功返回
             - dispute: 两源价格差异 > 5%
+
+        mx (妙想) 仅在不耗尽时用于交叉验证；已耗尽则跳过避免浪费配额。
         """
-        q1 = self.get_quote(symbol, market)  # mootdx+腾讯 (主力)
+        q1 = self.get_quote(symbol, market)  # 免费源优先 (主力)
+
+        # mx 交叉验证：仅在未耗尽时尝试
         mx = self.miaoxiang
-        q2 = mx.get_quote(symbol, market) if mx else None
+        q2: Optional[Quote] = None
+        if mx is not None and not mx.is_exhausted():
+            try:
+                q2 = mx.get_quote(symbol, market)
+            except Exception:
+                pass
 
         if q1 is None and q2 is None:
             return None, False, False
@@ -1013,6 +1087,198 @@ class DataAggregator:
         return growth
 
     # ------------------------------------------------------------------
+    # cninfo 高管 / 关联方提取 (mx-data 降级)
+    # ------------------------------------------------------------------
+
+    def _extract_executive_profiles_from_cninfo(self, symbol: str) -> list[ExecutiveProfile]:
+        """从 cninfo 公告中提取高管姓名和职务。
+
+        搜索董监高相关公告标题，用正则提取中文姓名 + 职务关键词。
+        """
+        import re
+        cninfo = self.cninfo
+        if cninfo is None:
+            return []
+        try:
+            raw = cninfo.search_announcements(symbol, page_size=50)
+            if not raw:
+                return []
+        except Exception as e:
+            logger.debug("cninfo 高管搜索失败 (%s): %s", symbol, e)
+            return []
+
+        # 职务关键词 → 标准化职位名
+        POSITION_MAP: dict[str, str] = {
+            "董事长": "董事长", "副董事长": "副董事长",
+            "总裁": "总裁", "副总裁": "副总裁",
+            "总经理": "总经理", "副总经理": "副总经理",
+            "独立董事": "独立董事", "非独立董事": "董事",
+            "职工代表董事": "职工董事", "执行董事": "执行董事",
+            "董事会秘书": "董秘", "董秘": "董秘",
+            "财务总监": "财务总监", "财务负责人": "财务负责人",
+            "技术总监": "技术总监", "运营总监": "运营总监",
+            "监事": "监事", "监事会主席": "监事会主席",
+            "首席": "高管",  # 首席XX官
+        }
+
+        seen: set[str] = set()
+        profiles: list[ExecutiveProfile] = []
+
+        board_keywords = ["董事", "监事", "高管", "总裁", "副总裁", "总经理",
+                          "副总经理", "董秘", "首席", "总监", "选举", "聘任",
+                          "任命", "辞职", "述职"]
+
+        # 非人名词汇 (会被正则误匹配)
+        NON_NAME: set[str] = {
+            "有限公司", "股份有限", "集团", "科技", "控股", "实业",
+            "合伙企业", "投资基金", "本公司", "年度", "公告", "关于",
+            "及其子", "预计", "日常", "新增", "提供担保", "资金占用",
+            "董事会", "监事会", "第一次", "第二次", "第三次", "第四届",
+            "第五届", "第六届", "第七届", "第八届", "第九届", "第十届",
+            "管理制度", "报告", "业务的", "披露的", "的公告", "候选人",
+            "提名人", "事项的", "信息的", "于选举", "司部分", "于完成",
+            "于授权", "选举并", "事关鑫",
+        }
+
+        for entry in raw:
+            title = entry.get("title", "")
+            if not any(kw in title for kw in board_keywords):
+                continue
+
+            names: list[tuple[str, str]] = []  # [(name, position_hint)]
+
+            # 模式1: 职务前缀 + 姓名 (如 "独立董事王爱国")
+            for prefix, pos_hint in POSITION_MAP.items():
+                prefix_matches = re.finditer(
+                    rf"{prefix}([一-鿿]{{2,3}})(?:女士|先生|(?:\d{{4}}年度))",
+                    title
+                )
+                for m in prefix_matches:
+                    names.append((m.group(1), pos_hint))
+
+            # 模式2: "姓名+年度述职/工作报告" (如 "王爱国2025年度述职报告")
+            # 需要先找，避免被模式1错误匹配
+            report_matches = re.finditer(
+                r"([一-鿿]{2,3})\d{4}年度(?:述职|工作)报告",
+                title
+            )
+            for m in report_matches:
+                pos = "独立董事" if "独立董事" in title else "高管"
+                names.append((m.group(1), pos))
+
+            # 模式3: 姓名在括号中 (如 "候选人声明与承诺（张敏）")
+            paren_matches = re.finditer(r"[（(]([一-鿿]{2,3})[）)]", title)
+            for m in paren_matches:
+                name = m.group(1)
+                pos = "高管"
+                for kw, std_pos in sorted(POSITION_MAP.items(), key=lambda x: -len(x[0])):
+                    if kw in title:
+                        pos = std_pos
+                        break
+                # 排除重复：忽略跟在"候选人""提名人"后面立即出现的括号内名字
+                # （这些会在模式1/2中通过职务+姓名捕获）
+                prefix = title[max(0, m.start()-10):m.start()]
+                if "候选人" in prefix or "提名人" in prefix:
+                    # 检查是否已被模式1/2捕获
+                    already = any(n == name for n, _ in names)
+                    if not already:
+                        names.append((name, pos))
+                else:
+                    names.append((name, pos))
+
+            for name, pos_hint in names:
+                if name in NON_NAME:
+                    continue
+                # 简单的姓氏校验: 至少第一个字符应该是常见姓氏
+                if len(name) >= 2 and name[0] in ("有限", "股份", "关于", "及其", "第一",
+                                                   "第二", "第三", "第四", "第五", "第六",
+                                                   "第七", "第八", "第九", "第十", "董事",
+                                                   "监事", "高管", "首席", "信息", "技术",
+                                                   "提供", "预计", "新增", "管理", "业务",
+                                                   "披露", "事项", "候选", "提名", "选举"):
+                    continue
+                if name in seen:
+                    continue
+
+                # 确定最终职务
+                position = pos_hint if pos_hint != "高管" else "高管"
+                for kw, std_pos in sorted(POSITION_MAP.items(), key=lambda x: -len(x[0])):
+                    if kw in title:
+                        position = std_pos
+                        break
+
+                seen.add(name)
+                profiles.append(ExecutiveProfile(
+                    name=name,
+                    position=position,
+                    age=None,
+                    education="",
+                    background=f"来源: cninfo 公告 — {title[:80]}",
+                    tenure_start=entry.get("date", ""),
+                    provider="cninfo",
+                ))
+
+        return profiles
+
+    def _extract_related_parties_from_cninfo(self, symbol: str) -> list[RelatedParty]:
+        """从 cninfo 关联交易公告中提取关联方名称。
+
+        搜索「关联交易」「关联方」公告，从标题中提取关联实体名称。
+        """
+        import re
+        cninfo = self.cninfo
+        if cninfo is None:
+            return []
+        try:
+            raw = cninfo.search_announcements(symbol, keyword="关联")
+            if not raw:
+                return []
+        except Exception as e:
+            logger.debug("cninfo 关联方搜索失败 (%s): %s", symbol, e)
+            return []
+
+        seen: set[str] = set()
+        parties: list[RelatedParty] = []
+
+        # 匹配「为XXX提供担保」「与XXX的关联交易」「向XXX转让」等模式
+        entity_patterns: list[str] = [
+            r"为([一-鿿（）()\w]{4,40}?(?:公司|企业|集团|中心|合伙|基金|科技))(?:及其子(?:公司)?)?提供",
+            r"与([一-鿿（）()\w]{4,40}?(?:公司|企业|集团|中心|合伙|基金|科技))(?:及其子公司)?[的之]?(?:关联|日常)",
+            r"向([一-鿿（）()\w]{4,40}?(?:公司|企业|集团|中心|合伙|基金|科技))(?:及其子(?:公司)?)?(?:转让|出售|购买|收购|增资|投资)",
+            r"受让[方自]*?([一-鿿（）()\w]{4,20}公司)",
+            r"转让[给至].*?([一-鿿（）()\w]{4,20}(?:公司|企业))",
+        ]
+
+        SKIP_ENTITIES: set[str] = {
+            "本公司", "上市公司", "标的公司", "目标公司", "控股子公司",
+            "全资子公司", "参股公司",
+        }
+
+        for entry in raw:
+            # 去除 cninfo HTML 标签 (如 <em>)
+            title = re.sub(r"<[^>]+>", "", entry.get("title", ""))
+            if "关联" not in title:
+                continue
+
+            for pattern in entity_patterns:
+                for m in re.finditer(pattern, title):
+                    entity = m.group(1).strip("（）()")
+                    if len(entity) < 4 or entity in seen or entity in SKIP_ENTITIES:
+                        continue
+
+                    seen.add(entity)
+                    parties.append(RelatedParty(
+                        entity_name=entity,
+                        relation_type="关联交易",
+                        stake_pct=None,
+                        position="",
+                        description=f"来源: cninfo 公告 — {title[:120]}",
+                        provider="cninfo",
+                    ))
+
+        return parties
+
+    # ------------------------------------------------------------------
     # 降级辅助方法
     # ------------------------------------------------------------------
 
@@ -1142,6 +1408,143 @@ class DataAggregator:
                 break
 
         return filtered
+
+    # ------------------------------------------------------------------
+    # V6: 快查 (Kuaicha) 数据补充方法
+    # ------------------------------------------------------------------
+
+    def get_kuaicha_top_holders(
+        self, symbol: str, orgid: str = ""
+    ) -> list[dict]:
+        """获取十大股东（快查 listed 源）。
+
+        优先用 orgid，否则用 symbol 模糊匹配。
+        """
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_holders:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_top_holders(orgid=orgid, creditcode=symbol if not orgid else "")
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_executives(
+        self, symbol: str, orgid: str = ""
+    ) -> list[dict]:
+        """获取董监高信息（快查 listed 源）。"""
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_exec:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_executives(
+            orgid=orgid, creditcode=symbol if not orgid else ""
+        )
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_audit_opinion(
+        self, symbol: str, orgid: str = ""
+    ) -> list[dict]:
+        """获取审计意见（快查 listed 源）。"""
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_audit:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_audit_opinion(
+            orgid=orgid, creditcode=symbol if not orgid else ""
+        )
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_income_statement(
+        self, symbol: str, orgid: str = ""
+    ) -> list:
+        """获取利润表（快查 listed 源，标准化 DTO）。"""
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_is:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_income_statement(
+            orgid=orgid, creditcode=symbol if not orgid else "",
+            page_size=4,
+        )
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_balance_sheet(
+        self, symbol: str, orgid: str = ""
+    ) -> list:
+        """获取资产负债表（快查 listed 源，标准化 DTO）。"""
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_bs:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_balance_sheet(
+            orgid=orgid, creditcode=symbol if not orgid else "",
+            page_size=4,
+        )
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_cash_flow(
+        self, symbol: str, orgid: str = ""
+    ) -> list:
+        """获取现金流量表（快查 listed 源，标准化 DTO）。"""
+        kc = self.kuaicha
+        if kc is None:
+            return []
+        cache_key = f"kc_cf:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached
+
+        result = kc.get_cash_flow(
+            orgid=orgid, creditcode=symbol if not orgid else "",
+            page_size=4,
+        )
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_kuaicha_institution_research(
+        self, name_or_symbol: str,
+    ) -> dict | None:
+        """获取机构调研与评级（快查 iwencai 源）。
+
+        Note: iwencai 工具当前有 CLI bug，可能返回空。
+        降级后可改用 listed 的研报相关工具。
+        """
+        kc = self.kuaicha
+        if kc is None:
+            return None
+        cache_key = f"kc_ir:{name_or_symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=6))
+        if cached is not None:
+            return cached
+
+        result = kc.institution_research(name_or_symbol)
+        data = result.raw_data if result else []
+        self._cache_set(cache_key, data)
+        return data
 
     # ------------------------------------------------------------------
     # Cache

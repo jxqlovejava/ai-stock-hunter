@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 
-# 市场级 fallback 链：按数据源优先级排序。
-# 华泰(HT_APIKEY) > 国信(GS_API_KEY) > 腾讯(免费不封IP) > mootdx(TCP行情) > AKShare(爬虫降级)
+# 市场级 fallback 链：免费源优先，付费源(有日限额)仅作兜底。
+# 腾讯(免费不封IP) > mootdx(TCP行情免费) > AKShare(爬虫免费) > 华泰(HT_APIKEY) > 国信(GS_API_KEY)
 FALLBACK_CHAINS: dict[str, list[str]] = {
-    "a_share": ["verified_cache", "huatai", "guosen", "tencent", "mootdx", "akshare"],
-    # 财务数据优先用同花顺(akshare) — 有直接ROE/ROA等官方数据
-    "a_share_financials": ["verified_cache", "huatai", "guosen", "akshare", "tencent", "mootdx"],
+    "a_share": ["verified_cache", "tencent", "mootdx", "akshare", "huatai", "guosen"],
+    # 财务数据：同花顺(akshare)有直接ROE/ROA → 腾讯 → mootdx → 付费源兜底
+    "a_share_financials": ["verified_cache", "akshare", "tencent", "mootdx", "huatai", "guosen"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }
