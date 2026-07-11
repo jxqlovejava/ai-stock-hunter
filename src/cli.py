@@ -2082,6 +2082,14 @@ def cmd_alpha_scan(args: list[str]):
     lens = AlphaLens()
     results: list[tuple[str, str, float, str]] = []
 
+    # 批量获取全市场资金流排名（只获取一次）
+    rank_df: "pd.DataFrame | None" = None
+    try:
+        from src.data.capital_flow_provider import CapitalFlowProvider
+        rank_df = CapitalFlowProvider().get_all_fund_flow_rank()
+    except Exception:
+        pass
+
     import random
     sample_size = min(len(stocks), 500)
     sample = random.sample(stocks, sample_size)
@@ -2094,7 +2102,22 @@ def cmd_alpha_scan(args: list[str]):
             symbol = getattr(stock, "symbol", "")
             name = getattr(stock, "name", "")
         try:
-            profile = lens.analyze(symbol=symbol)
+            large_position_changes = None
+            if rank_df is not None and not rank_df.empty:
+                row = rank_df[rank_df["股票代码"] == symbol]
+                if not row.empty:
+                    main_net = float(row["main_net_wan"].iloc[0])
+                    turnover = float(row["turnover_wan"].iloc[0])
+                    if turnover > 0:
+                        inst_pct = main_net / turnover * 100.0
+                        large_position_changes = {
+                            "institutional": inst_pct,
+                            "retail": -inst_pct,
+                        }
+            profile = lens.analyze(
+                symbol=symbol,
+                large_position_changes=large_position_changes,
+            )
             if profile.alpha_score >= parsed.min_alpha:
                 results.append((
                     symbol, name, profile.alpha_score,

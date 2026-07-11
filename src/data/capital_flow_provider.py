@@ -192,17 +192,26 @@ class CapitalFlowProvider:
             citation=citation,
         )
 
-    def get_history(self, symbol: str, weeks: int = 4) -> pd.DataFrame:
-        """获取个股近 N 周日频资金流 DataFrame（用于因子面板）。"""
-        snapshot = self.get_money_flow(symbol, weeks=weeks)
-        if snapshot is None or snapshot.data_gap_reason:
+    def get_all_fund_flow_rank(self) -> pd.DataFrame:
+        """获取 AKShare 全市场个股资金流排名（用于 scan/alpha-scan 批量场景）。
+
+        返回 DataFrame 列: 股票代码, 净额(万元), 成交额(万元), 涨跌幅(比例)。
+        若数据源不可用返回空 DataFrame。
+        """
+        import akshare as ak
+        try:
+            df = ak.stock_fund_flow_individual(symbol="即时")
+            if df is None or df.empty or "股票代码" not in df.columns:
+                return pd.DataFrame()
+            df = df.copy()
+            df["股票代码"] = df["股票代码"].astype(str).str.strip()
+            df["main_net_wan"] = df["净额"].apply(self._parse_chinese_amount)
+            df["turnover_wan"] = df["成交额"].apply(self._parse_chinese_amount)
+            df["change_pct_ratio"] = df["涨跌幅"].apply(self._parse_change_pct)
+            return df[["股票代码", "main_net_wan", "turnover_wan", "change_pct_ratio"]]
+        except Exception as e:
+            logger.warning("全市场资金流排名获取失败: %s", e)
             return pd.DataFrame()
-        path = self._cache_path(symbol)
-        if not path.exists():
-            return pd.DataFrame()
-        df = pd.read_csv(path)
-        df["date"] = pd.to_datetime(df["date"])
-        return df
 
     # ------------------------------------------------------------------
     # 东财主源
