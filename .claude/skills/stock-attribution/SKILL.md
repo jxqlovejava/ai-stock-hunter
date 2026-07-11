@@ -66,15 +66,17 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 
 | 维度 | Skill | 要回答的问题 | 输出字段 |
 |------|-------|-------------|---------|
-| 宏观背景 | `macro-monitor` | 当前货币-信用象限？利好/利空成长股？ | `macro_assessment` |
+| 宏观背景 | `macro-monitor` | 当前货币-信用象限？利好/利空成长股？美股隔夜走势对A股开盘影响？ | `macro_assessment` |
 | 板块联动 | `sector-research` | 同行业其他股票是否联动？板块资金流向？ | `sector_assessment` |
-| 情绪状态 | `sentiment-analysis` | 大盘恐慌/贪婪？个股情绪极端？ | `sentiment_assessment` |
+| 情绪状态 | `sentiment-analysis` | 大盘恐慌/贪婪？个股情绪极端？A股实时市场数据（涨跌家数/成交额/涨跌停池）？ | `sentiment_assessment` |
 | 主题周期 | `topic-manager` | 相关主题处于什么生命周期？拥挤度？ | `topic_assessment` |
 | 行业政策 | `policy-tracker` | 近期有无行业政策变化？影响方向？ | 合并入 `sector_assessment` |
 | 资金面 | a-stock-data | 北向/龙虎榜/融资融券/大宗交易 具体数据 | `capital_flow_assessment` |
 | 技术面 | a-stock-data | T+0 盘中信号/量价关系/均线位置 | `technical_assessment` |
 
 **并行执行**: 6 个维度可同时进行，互不依赖。
+
+> **数据基础**: Phase 1 的 AttributionEngine 自动获取并注入 `enriched_macro`（含美股隔夜快照 S&P500/Nasdaq/Dow 和 A 股市场情绪数据）。AI Agent 在执行多维归因前，可运行 `python -m src market` 查看统一数据基础（美股隔夜 + A 股情绪 + 宏观象限）。
 
 ## Phase 3: 因果推断 (串行，质量检查优先)
 
