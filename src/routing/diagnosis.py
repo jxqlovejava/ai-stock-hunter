@@ -582,6 +582,34 @@ class DiagnosisEngine:
             elif fiscal_stance == "tightening":
                 score -= 3
 
+        # ---- v4 美股隔夜修正 ----
+        us = macro.get("us_overnight") if macro else None
+        if us:
+            sp = (us.get("sp500") or {}).get("change_pct")
+            ns = (us.get("nasdaq") or {}).get("change_pct")
+            vix = (us.get("vix") or {}).get("close")
+            vix_chg = (us.get("vix") or {}).get("change_pct")
+
+            if sp is not None:
+                if sp <= -2.0:
+                    score -= 5
+                elif sp <= -1.0:
+                    score -= 2
+                elif sp >= 2.0:
+                    score += 3
+
+            if ns is not None and ns <= -2.5:
+                score -= 3
+
+            if vix is not None:
+                if vix > 30:
+                    score -= 4
+                elif vix > 25:
+                    score -= 2
+
+            if vix_chg is not None and vix_chg > 20:
+                score -= 3
+
         return max(0, min(100, score))
 
     def _score_value(self, quote: dict, valuation_result: Optional[object] = None,

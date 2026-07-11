@@ -132,6 +132,8 @@ class OrchestratorResult:
     margin_profile: Optional[object] = None
     margin_alerts: list = field(default_factory=list)
     monitor_signals: list = field(default_factory=list)
+    # 美股隔夜大盘快照
+    us_overnight: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -450,13 +452,17 @@ class Orchestrator:
 
         # ---- Phase 2.5: 宏观事件因果链分析 ----
         step_start(4, "增强上下文 (宏观/北向/盈利修正/反操纵)")
+        # 美股隔夜大盘快照提前获取，供宏观事件传导链使用
+        us_overnight = self.data.get_us_overnight()
         if macro_event_desc:
             try:
+                current_macro = {"us_overnight": us_overnight.to_dict()} if us_overnight else {}
                 event_result = self.run_macro_event(
                     event_description=macro_event_desc,
                     category=macro_event_category,
                     stock_symbol=symbol,
                     stock_sector="",  # 由 diagnosis 阶段补充
+                    current_macro=current_macro,
                 )
                 if event_result is not None:
                     result.macro_event = event_result
@@ -567,6 +573,13 @@ class Orchestrator:
             enriched_macro["recommended_exposure"] = getattr(market_regime_profile, "recommended_exposure", 0.6)
         if policy_transmission:
             enriched_macro["policy_transmission"] = policy_transmission
+
+        # ---- 注入美股隔夜大盘快照 ----
+        if us_overnight is not None:
+            enriched_macro["us_overnight"] = us_overnight.to_dict()
+            result.us_overnight = us_overnight.to_dict()
+        else:
+            result.data_gaps.append("[DATA_GAP] 美股隔夜数据不可用")
 
         # ---- Phase 3+: 三大根本问题诊断 ----
         try:
@@ -864,6 +877,8 @@ class Orchestrator:
         scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f}"
         step_done("✅", scores)
         _wf[3] = "📊多维诊断✅"
+        if us_overnight is not None:
+            print(f"\n  🌙 美股隔夜: {us_overnight.summary}")
         print_diagnosis(report, result.mental_model_info)
         print_admission(result.gate_status, market_sentiment=sentiment_dict, data_gaps=result.data_gaps, red_lines=result.red_lines)
         if report_source_citations_gap:
@@ -2260,6 +2275,7 @@ class Orchestrator:
         source: str = "",
         stock_symbol: str = "",
         stock_sector: str = "",
+        current_macro: dict | None = None,
     ) -> Optional[dict]:
         """分析宏观事件对A股的因果链影响。
 
@@ -2282,6 +2298,7 @@ class Orchestrator:
             source=source,
             stock_symbol=stock_symbol,
             stock_sector=stock_sector,
+            current_macro=current_macro,
         )
 
         return {

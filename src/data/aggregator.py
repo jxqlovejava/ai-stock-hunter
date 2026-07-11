@@ -32,12 +32,14 @@ from .schema import (
     ExecutiveTrade,
     Financials,
     FundamentalMetrics,
+    MoneyFlowSnapshot,
     NewsItem,
     Quote,
     RelatedParty,
     ScreeningResult,
 )
 from .source_citation import make_citation, make_data_gap_citation
+from .us_overnight import USOvernightSnapshot, fetch_us_overnight
 from src.information.speed_monitor import SpeedMonitor
 from src.utils.decimal_utils import D, safe_divide
 
@@ -325,6 +327,36 @@ class DataAggregator:
 
     # ------------------------------------------------------------------
     # Quote
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # US overnight market snapshot
+    # ------------------------------------------------------------------
+
+    def get_us_overnight(self) -> Optional[USOvernightSnapshot]:
+        """获取美股隔夜大盘快照（S&P 500 / Nasdaq / Dow / VIX）。
+
+        使用 10 分钟内存缓存，避免批量分析时重复请求 Yahoo Finance。
+        数据不可用时返回 None，不抛异常。
+        """
+        cache_key = "us_overnight"
+        ttl = timedelta(minutes=10)
+        cached = self._cache_get(cache_key, ttl=ttl)
+        if cached is not None:
+            return cached
+
+        try:
+            snapshot = fetch_us_overnight()
+        except Exception as exc:
+            logger.debug("get_us_overnight failed: %s", exc)
+            return None
+
+        if snapshot is not None:
+            self._cache_set(cache_key, snapshot)
+        return snapshot
+
+    # ------------------------------------------------------------------
+    # Public A-share data APIs
     # ------------------------------------------------------------------
 
     def get_quote(self, symbol: str, market: str = "SH") -> Optional[Quote]:
@@ -1000,6 +1032,31 @@ class DataAggregator:
         )
         self._cache_set(cache_key, metrics)
         return metrics
+
+    def get_money_flow(self, symbol: str, weeks: int = 4) -> Optional[MoneyFlowSnapshot]:
+        """获取个股近 N 周主力资金流快照。
+
+        封装 CapitalFlowProvider，带 5 分钟内存缓存。
+        """
+        cache_key = f"money_flow:{symbol}:{weeks}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            from .capital_flow_provider import CapitalFlowProvider
+            provider = CapitalFlowProvider()
+            snapshot = provider.get_money_flow(symbol, weeks=weeks)
+            self._cache_set(cache_key, snapshot)
+            return snapshot
+        except Exception as e:
+            logger.warning("个股资金流获取失败 %s: %s", symbol, e)
+            snapshot = MoneyFlowSnapshot(
+                symbol=symbol,
+                data_gap_reason=f"[DATA_GAP] 获取失败: {e}",
+            )
+            self._cache_set(cache_key, snapshot)
+            return snapshot
 
     def get_industry_pe_pb(
         self, symbol: str, market: str = "SH"
