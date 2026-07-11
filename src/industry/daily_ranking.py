@@ -272,20 +272,42 @@ class SectorRanking:
 # 数据获取辅助
 # ---------------------------------------------------------------------------
 def fetch_sector_quotes_from_mootdx() -> dict[str, float]:
-    """从 mootdx 获取申万一级行业实时涨跌幅。"""
+    """从 mootdx 获取申万一级行业实时涨跌幅。
+
+    通过申万行业指数代码 (SW1_INDEX_MAP) 拉取标准行情，
+    计算 (price - last_close) / last_close 作为涨跌幅。
+    """
     try:
         from mootdx.quotes import Quotes
-        client = Quotes.factory(market="block")
-        # mootdx 板块行情
-        data = client.block(symbol="申万一级", group="申万行业")
-        if data is not None:
-            result: dict[str, float] = {}
-            for _, row in data.iterrows():
-                name = str(row.get("blockname", ""))
-                pct = float(row.get("preChange", 0) or 0)
-                if name:
-                    result[name] = pct
-            return result
+        from src.industry.classifier import SW1_INDEX_MAP
+
+        codes = list(SW1_INDEX_MAP.values())
+        code_to_name = {v: k for k, v in SW1_INDEX_MAP.items()}
+        # 处理重复 code (综合=000833=电力设备, 保留第一个)
+        seen_codes: set[str] = set()
+
+        client = Quotes.factory(market="standard")
+        data = client.quotes(symbol=codes)
+        if data is None or data.empty:
+            return {}
+
+        result: dict[str, float] = {}
+        for _, row in data.iterrows():
+            code = str(row.get("code", ""))
+            if code in seen_codes:
+                continue
+            name = code_to_name.get(code)
+            if not name:
+                continue
+            seen_codes.add(code)
+
+            price = float(row.get("price", 0) or 0)
+            last_close = float(row.get("last_close", 0) or 0)
+            if price > 0 and last_close > 0:
+                pct = (price - last_close) / last_close * 100
+                result[name] = round(pct, 2)
+
+        return result
     except Exception as e:
         logger.warning("mootdx 板块数据获取失败: %s", e)
 
