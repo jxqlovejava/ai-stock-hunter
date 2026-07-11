@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from time import sleep
 from typing import Optional
 
@@ -33,7 +33,7 @@ EASTMONEY_US_INDICES: dict[str, tuple[str, str]] = {
 
 EASTMONEY_US_API_URL = (
     "https://push2.eastmoney.com/api/qt/ulist.np/get"
-    "?fltt=2&invt=2&fields=f12,f13,f14,f2,f3,f4,f18"
+    "?fltt=2&invt=2&fields=f12,f13,f14,f2,f3,f4,f18,f124"
     "&secids=100.SPX,100.NDX,100.DJIA"
 )
 
@@ -48,7 +48,6 @@ class USIndexSnapshot:
     close: float
     prev_close: float
     change_pct: float
-    volume: Optional[int] = None
     source: str = "eastmoney"
     fetched_at: datetime = field(default_factory=datetime.now)
     citation: Optional[SourceCitation] = None
@@ -57,11 +56,10 @@ class USIndexSnapshot:
         return {
             "symbol": self.symbol,
             "name": self.name,
-            "trade_date": self.trade_date.isoformat() if self.trade_date else None,
+            "trade_date": self.trade_date.isoformat(),
             "close": self.close,
             "prev_close": self.prev_close,
             "change_pct": self.change_pct,
-            "volume": self.volume,
             "source": self.source,
             "fetched_at": self.fetched_at.isoformat(),
         }
@@ -75,21 +73,41 @@ class USOvernightSnapshot:
     sp500: Optional[USIndexSnapshot]
     nasdaq: Optional[USIndexSnapshot]
     dow: Optional[USIndexSnapshot]
-    vix: Optional[USIndexSnapshot]
     summary: str = ""
     fetched_at: datetime = field(default_factory=datetime.now)
     citation: Optional[SourceCitation] = None
 
     def to_dict(self) -> dict:
         return {
-            "trade_date": self.trade_date.isoformat() if self.trade_date else None,
+            "trade_date": self.trade_date.isoformat(),
             "sp500": self.sp500.to_dict() if self.sp500 else None,
             "nasdaq": self.nasdaq.to_dict() if self.nasdaq else None,
             "dow": self.dow.to_dict() if self.dow else None,
-            "vix": self.vix.to_dict() if self.vix else None,
             "summary": self.summary,
             "fetched_at": self.fetched_at.isoformat(),
         }
+
+
+def _parse_trade_date(item: dict) -> date:
+    """从 API 返回的 f124 Unix 时间戳推断美股交易日（UTC 日期）。"""
+    ts = item.get("f124")
+    if ts:
+        try:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc).date()
+        except Exception:
+            pass
+    return date.today()
+
+
+def _compute_prev_close(close: float, change_pct: float, reported_prev: float) -> float:
+    """计算前收盘价，优先使用 API 返回值，缺失时从涨跌幅反推。"""
+    if reported_prev > 0:
+        return reported_prev
+    if change_pct == -100.0:
+        return 0.0
+    if change_pct != 0 and close > 0:
+        return close / (1 + change_pct / 100.0)
+    return close
 
 
 def _fetch_eastmoney_us_indices(
@@ -119,7 +137,6 @@ def _fetch_eastmoney_us_indices(
             ).get("diff", [])
 
             results: dict[str, USIndexSnapshot] = {}
-            trade_date = date.today()
             for item in data_list:
                 em_code = str(item.get("f12", ""))
                 mapping = EASTMONEY_US_INDICES.get(em_code)
@@ -128,11 +145,12 @@ def _fetch_eastmoney_us_indices(
                 symbol, name = mapping
                 close = float(item.get("f2", 0) or 0)
                 change_pct = float(item.get("f3", 0) or 0)
-                prev_close = float(item.get("f18", 0) or 0)
+                reported_prev = float(item.get("f18", 0) or 0)
                 if close <= 0:
                     continue
-                if prev_close <= 0 and change_pct != 0:
-                    prev_close = close / (1 + change_pct / 100.0)
+
+                trade_date = _parse_trade_date(item)
+                prev_close = _compute_prev_close(close, change_pct, reported_prev)
 
                 results[symbol] = USIndexSnapshot(
                     symbol=symbol,
@@ -200,7 +218,6 @@ def fetch_us_overnight(
         sp500=sp500,
         nasdaq=nasdaq,
         dow=dow,
-        vix=None,
         summary=summary,
         citation=make_citation(
             provider="eastmoney",

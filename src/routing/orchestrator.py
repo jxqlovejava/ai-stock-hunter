@@ -659,10 +659,18 @@ class Orchestrator:
             })
 
             # 资金流分析
+            flow_data = self.data.get_money_flow(symbol)
             flow_analyzer = CapitalFlowAnalyzer()
             flow_result = flow_analyzer.analyze(
                 symbol=symbol,
-                price_change_pct=quote.change_pct if quote else 0.0,
+                super_large_net=getattr(flow_data, "super_large_net", 0.0) or 0.0,
+                large_net=getattr(flow_data, "large_net", 0.0) or 0.0,
+                medium_net=getattr(flow_data, "medium_net", 0.0) or 0.0,
+                small_net=getattr(flow_data, "small_net", 0.0) or 0.0,
+                total_turnover=getattr(flow_data, "total_turnover", 0.0) or 0.0,
+                main_consecutive_days=getattr(flow_data, "main_consecutive_days", 0) or 0,
+                recent_price_trend=getattr(flow_data, "recent_price_trend", "neutral") or "neutral",
+                price_change_pct=(quote.change_pct if quote else 0.0) / 100.0,
             )
 
             # 日级操纵检测

@@ -334,10 +334,10 @@ class DataAggregator:
     # ------------------------------------------------------------------
 
     def get_us_overnight(self) -> Optional[USOvernightSnapshot]:
-        """获取美股隔夜大盘快照（S&P 500 / Nasdaq / Dow / VIX）。
+        """获取美股隔夜大盘快照（S&P 500 / Nasdaq / Dow Jones）。
 
-        使用 10 分钟内存缓存，避免批量分析时重复请求 Yahoo Finance。
-        数据不可用时返回 None，不抛异常。
+        通过东方财富全球指数 API 实时拉取，使用 10 分钟内存缓存，
+        避免批量分析时重复请求。数据不可用时返回 None，不抛异常。
         """
         cache_key = "us_overnight"
         ttl = timedelta(minutes=10)

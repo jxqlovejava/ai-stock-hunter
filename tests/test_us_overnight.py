@@ -25,6 +25,18 @@ def _mock_response(payload: dict) -> MagicMock:
     return mock
 
 
+def _index_item(em_code: str, close: float, change_pct: float, prev_close: float, ts: int) -> dict:
+    names = {"SPX": "标普500", "NDX": "纳斯达克", "DJIA": "道琼斯"}
+    return {
+        "f12": em_code,
+        "f2": close,
+        "f3": change_pct,
+        "f18": prev_close,
+        "f14": names.get(em_code, ""),
+        "f124": ts,
+    }
+
+
 class TestUSIndexSnapshot:
     def test_to_dict(self):
         snap = USIndexSnapshot(
@@ -43,12 +55,13 @@ class TestUSIndexSnapshot:
 class TestFetchUSOvernight:
     @patch("src.data.us_overnight.requests.get")
     def test_fetch_us_overnight_computes_change_pct(self, mock_get):
+        ts = 1783713588  # 2026-07-10 UTC
         payload = {
             "data": {
                 "diff": [
-                    {"f12": "SPX", "f2": 5500.0, "f3": -1.79, "f18": 5600.0, "f14": "标普500"},
-                    {"f12": "NDX", "f2": 17500.0, "f3": -0.85, "f18": 17650.0, "f14": "纳斯达克"},
-                    {"f12": "DJIA", "f2": 42000.0, "f3": 0.35, "f18": 41855.0, "f14": "道琼斯"},
+                    _index_item("SPX", 5500.0, -1.79, 5600.0, ts),
+                    _index_item("NDX", 17500.0, -0.85, 17650.0, ts + 10),
+                    _index_item("DJIA", 42000.0, 0.35, 41855.0, ts + 5),
                 ]
             }
         }
@@ -64,6 +77,7 @@ class TestFetchUSOvernight:
         assert result.nasdaq is not None
         assert result.dow is not None
         assert "S&P500 -1.79%" in result.summary
+        assert result.trade_date.isoformat() == "2026-07-10"
 
     @patch("src.data.us_overnight.requests.get")
     def test_fetch_us_overnight_returns_none_on_empty_response(self, mock_get):
@@ -77,7 +91,7 @@ class TestFetchUSOvernight:
         payload = {
             "data": {
                 "diff": [
-                    {"f12": "SPX", "f2": 5500.0, "f3": -1.79, "f18": 5600.0, "f14": "标普500"},
+                    _index_item("SPX", 5500.0, -1.79, 5600.0, 1783713588),
                 ]
             }
         }
@@ -97,6 +111,38 @@ class TestFetchUSOvernight:
         assert result is None
         assert mock_get.call_count == 3
 
+    @patch("src.data.us_overnight.requests.get")
+    def test_fetch_us_overnight_computes_prev_from_change_pct(self, mock_get):
+        # f18 缺失时从 change_pct 反推 prev_close
+        payload = {
+            "data": {
+                "diff": [
+                    {"f12": "SPX", "f2": 5500.0, "f3": -1.7857, "f18": 0.0, "f14": "标普500", "f124": 1783713588},
+                ]
+            }
+        }
+        mock_get.return_value = _mock_response(payload)
+
+        result = fetch_us_overnight()
+        assert result is not None
+        assert result.sp500 is not None
+        assert result.sp500.prev_close == pytest.approx(5600.0, rel=1e-3)
+
+    @patch("src.data.us_overnight.requests.get")
+    def test_fetch_us_overnight_change_pct_minus_100(self, mock_get):
+        # change_pct == -100 时不能除零
+        payload = {
+            "data": {
+                "diff": [
+                    {"f12": "SPX", "f2": 0.0, "f3": -100.0, "f18": 0.0, "f14": "标普500", "f124": 1783713588},
+                ]
+            }
+        }
+        mock_get.return_value = _mock_response(payload)
+
+        result = fetch_us_overnight()
+        assert result is None  # close <= 0 被跳过
+
 
 class TestDataAggregatorUSOvernight:
     @patch("src.data.aggregator.fetch_us_overnight")
@@ -113,7 +159,6 @@ class TestDataAggregatorUSOvernight:
             ),
             nasdaq=None,
             dow=None,
-            vix=None,
         )
         mock_fetch.return_value = snapshot
 
@@ -131,7 +176,6 @@ class TestDataAggregatorUSOvernight:
             sp500=None,
             nasdaq=None,
             dow=None,
-            vix=None,
         )
         mock_fetch.return_value = snapshot
 
@@ -151,7 +195,6 @@ class TestDiagnosisMacroScoring:
             "us_overnight": {
                 "sp500": {"change_pct": -2.5},
                 "nasdaq": {"change_pct": -3.0},
-                "vix": {"close": 32.0},
             }
         }
         score = engine._score_macro(macro)
@@ -162,7 +205,6 @@ class TestDiagnosisMacroScoring:
         macro = {
             "us_overnight": {
                 "sp500": {"change_pct": 2.5},
-                "vix": {"close": 18.0},
             }
         }
         score = engine._score_macro(macro)
@@ -226,7 +268,6 @@ class TestOrchestratorUSOvernightIntegration:
             ),
             nasdaq=None,
             dow=None,
-            vix=None,
         )
         mock_us_overnight.return_value = snapshot
 
