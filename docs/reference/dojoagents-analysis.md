@@ -171,21 +171,79 @@ DojoAgents 实现了完整的多平台消息适配器层（`gateway/adapters/bas
 
 | 优先级 | 模块 | 复用方式 | 理由 |
 |--------|------|---------|------|
-| **P0** | 微信 iLink 适配器 | 直接移植 | 填补通知空白，最难自建 |
-| **P0** | DuckDuckGo 搜索+抽取 | 直接集成 | 通用能力，白泽缺失 |
-| **P1** | 订单撮合引擎 | 参考实现 | 比白泽 `paper_trading/` 更细 |
-| **P1** | 组合绩效指标 | 移植纯函数 | `compute_risk_stats` 等自包含 |
-| **P1** | 事件 15 类分类 | 归因模板 | 直接增强 `attribution.py` |
+| **P0** | 通知推送（微信/飞书/Telegram） | 直接移植 | `alert.py` 有内存告警但零推送通道 |
+| **P0** | 通用网页搜索 | 直接集成 | A 股特化搜索完备，缺开放互联网搜索 |
+| **P0** | 订单撮合引擎（限价单/部分成交/滑点） | 参考实现 | `paper_trading/` 只有 buy/sell + 参考价成交 |
+| **P1** | 板块热力图/轮动检测 | 参考实现 | `industry/` 有深度学习框架但缺每日排行/热力图 |
+| **P1** | 组合绩效指标（Calmar/Sortino/VaR/Info Ratio） | 移植纯函数 | `backtest/analyzer.py` 有基础指标，缺标准风险指标 |
+| **P2** | 事件 15 类分类体系 | 归因模板 | `AttributionEngine` T0-T3 已完善，分类体系可增强 |
 | **P2** | 板块异动归因工作流 | 参考逻辑 | 可对接白泽数据源 |
-| **P2** | 板块热力图/三级行业树 | 参考实现 | 有重叠但实现更完整 |
 | **P2** | 飞书/Telegram 适配器 | 按需移植 | 需要对应平台时才用 |
+| **P2** | 事件归因定时扫描 | 参考实现 | 白泽 cron 已完善，自动化触发非刚需 |
 | **P3** | NAV 构建 pipeline | 参考架构 | 白泽已有类似链路 |
 | **P3** | 市值加权配置 | 参考算法 | 简单，随手可写 |
+| **P3** | ConfigStore 冻结/嵌套/热加载 | 架构参考 | 当前 env-var dataclass 够用 |
 | **P3** | Plan 引擎 / Harness | 架构参考 | 与 Strands 耦合，需适配 |
 
 ---
 
-## 四、注意事项
+## 四、P1 差距详细分析
+
+### 4.1 板块热力图 / 轮动检测
+
+**白泽现有** (`src/industry/`)：
+
+| 模块 | 文件 | 能力 |
+|------|------|------|
+| `SectorClassifier` | `classifier.py` | 申万一/二级分类（28 行业），东方财富 fallback |
+| `SectorResearchReporter` | `research.py` | 6+1 步深度学习框架，综合评分 0-100 |
+| `CompetitionAnalyzer` | `competition.py` | 波特五力、CR5、HHI、壁垒 |
+| `SectorValuationFramework` | `valuation.py` | PE/PB 分位数、行业适配估值法 |
+| `SupplyChainDeepMapper` | `supply_chain.py` | 供应链映射 |
+| `BottleneckAnalyzer` | `bottleneck.py` | 实体瓶颈 OWNER/ADJACENT/DERIVATIVE/NONE |
+
+**白泽缺少**：
+
+| 能力 | DojoAgents 来源 | 白泽对接方案 |
+|------|---------------|------------|
+| 每日板块涨跌排行 | `market_sector_lead.py:51` `build_market_sectors()` | 新增 `src/industry/daily_ranking.py`，用 mootdx 板块数据 + 申万分类 |
+| 板块热力图 | `market_sector_lead.py:177` `compute_market_sector_lead()` | 基于排行生成矩阵，rich/matplotlib 输出 |
+| 跨市场对比（A/美/港） | `market_sector_lead.py:207` `compute_all_market_sector_leads()` | 初期仅 A 股，后续扩展 |
+| 板块轮动检测 | 动量切换识别（领先板块变化 > X%） | 新增 `detect_rotation()` 对比连续 N 日排行变化 |
+| 市值加权板块指数 | `sector_scope_performance.py:245` `compute_sector_scope_performance()` | 白泽有成分股数据可直接算 |
+| 中英双语板块匹配 | `sector_store.py:125` `SectorStore.find_resolved_path()` | 非刚需，按需加 |
+
+### 4.2 组合绩效指标
+
+**白泽现有** (`src/backtest/analyzer.py`)：
+
+| 分析器 | 已有指标 |
+|--------|---------|
+| `SharpeAnalyzer` | 年化 Sharpe、年化收益、年化波动率、日均收益 |
+| `DrawDownAnalyzer` | 最大回撤（已恢复/进行中）、平均回撤 |
+| `TradeAnalyzer` | 总交易数、胜率、平均盈亏、盈亏比、最大连胜/连亏 |
+| `SQNAnalyzer` | System Quality Number (Van Tharp) + 质量分档 |
+| `TimeReturnAnalyzer` | 逐 bar 收益、累计收益、正/负日计数 |
+
+**白泽缺少**（DojoAgents `portfolio_performance.py` 提供）：
+
+| 指标 | 公式/含义 | 优先级 | 实现位置建议 |
+|------|----------|--------|------------|
+| **Calmar Ratio** | CAGR / max_drawdown | 高 | `analyzer.py` 新增 `CalmarAnalyzer` |
+| **Sortino Ratio** | (收益-无风险利率) / 下行标准差 | 高 | 新增 `SortinoAnalyzer` |
+| **信息比率** | 超额收益 / 跟踪误差 (vs 基准) | 高 | 新增 `InfoRatioAnalyzer` |
+| **VaR (历史/参数/蒙特卡洛)** | 置信度 α 下的最大损失 | 中 | 新增 `VaRAnalyzer` |
+| **CVaR** | 超过 VaR 的尾部期望损失 | 中 | 同上 |
+| **Alpha / Beta** | CAPM 回归分解 | 中 | 新增 `CAPMAnalyzer` |
+| **Up/Down Capture** | 上涨/下跌市相对基准的捕获率 | 低 | 可选 |
+| **滚动 Sharpe / 回撤** | 时间序列滚动窗口指标 | 低 | 可选 |
+| **偏度 / 峰度** | 收益分布的形态指标 | 低 | 可选 |
+
+> DojoAgents 的 `compute_risk_stats(nav)` 是纯函数（`portfolio_performance.py:12`），输入 NAV 序列即输出 Sharpe/波动率/回撤/Calmar，可直接移植核心逻辑。
+
+---
+
+## 五、注意事项
 
 1. **无真实历史回测**：DojoAgents 只有组合诊断、模拟 watchlist 和绩效缓存。回测设计仍以 VectorBT 为主参考。
 2. **Dojo SDK 耦合**：数据网关、板块存储等依赖 `dojo` Python 包。移植到白泽需替换为 mootdx/AKShare/东财等已有数据源。
