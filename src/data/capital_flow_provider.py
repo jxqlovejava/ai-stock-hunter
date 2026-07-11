@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import ssl
 import threading
 import time
 from datetime import datetime, timedelta
@@ -16,6 +18,8 @@ from typing import Optional
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 
 from src.data.schema import MoneyFlowSnapshot
 from src.data.source_citation import (
@@ -125,10 +129,28 @@ def _recent_price_trend(df: pd.DataFrame) -> str:
 
 
 class CapitalFlowProvider:
-    """个股主力资金流提供者。"""
+    """个股主力资金流提供者。
+
+    东财 push2/push2his CDN 在部分网络环境（非大陆 IP）下对 API 路径
+    做地理封锁，TLS 握手成功但 HTTP 请求被 RST。部分网络则需强制 TLS 1.2。
+    设置 EM_FORCE_TLS12=1 可启用 TLS 1.2 适配器；默认不启用（走系统默认）。
+    """
+
+    _FORCE_TLS12 = os.environ.get("EM_FORCE_TLS12", "") == "1"
+
+    class _TLS12Adapter(HTTPAdapter):
+        """强制 TLS 1.2 的适配器。"""
+        def init_poolmanager(self, *args, **kwargs):
+            ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+            kwargs["ssl_context"] = ctx
+            return super().init_poolmanager(*args, **kwargs)
 
     def __init__(self):
         self._session = requests.Session()
+        if self._FORCE_TLS12:
+            self._session.mount("https://", self._TLS12Adapter())
         self._session.headers.update(
             {
                 "User-Agent": (
@@ -204,7 +226,7 @@ class CapitalFlowProvider:
             if df is None or df.empty or "股票代码" not in df.columns:
                 return pd.DataFrame()
             df = df.copy()
-            df["股票代码"] = df["股票代码"].astype(str).str.strip()
+            df["股票代码"] = df["股票代码"].astype(str).str.strip().str.zfill(6)
             df["main_net_wan"] = df["净额"].apply(self._parse_chinese_amount)
             df["turnover_wan"] = df["成交额"].apply(self._parse_chinese_amount)
             df["change_pct_ratio"] = df["涨跌幅"].apply(self._parse_change_pct)
@@ -212,6 +234,18 @@ class CapitalFlowProvider:
         except Exception as e:
             logger.warning("全市场资金流排名获取失败: %s", e)
             return pd.DataFrame()
+
+    def get_history(self, symbol: str, weeks: int = 4) -> pd.DataFrame:
+        """获取个股近 N 周日频资金流 DataFrame（用于因子面板）。"""
+        snapshot = self.get_money_flow(symbol, weeks=weeks)
+        if snapshot is None or snapshot.data_gap_reason:
+            return pd.DataFrame()
+        path = self._cache_path(symbol)
+        if not path.exists():
+            return pd.DataFrame()
+        df = pd.read_csv(path)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     # ------------------------------------------------------------------
     # 东财主源
@@ -406,7 +440,8 @@ class CapitalFlowProvider:
         try:
             df = ak.stock_fund_flow_individual(symbol="即时")
             if df is not None and not df.empty and "股票代码" in df.columns:
-                row = df[df["股票代码"].astype(str).str.strip() == symbol]
+                # AKShare 排名可能去掉前导零，如 002460 → "2460"
+                row = df[df["股票代码"].astype(str).str.strip().str.lstrip("0") == symbol.lstrip("0")]
                 if not row.empty:
                     r = row.iloc[0]
                     net = self._parse_chinese_amount(r.get("净额", 0))

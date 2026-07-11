@@ -334,7 +334,21 @@ def cmd_analyze(args: list[str]):
 
 
 def cmd_macro():
-    """宏观快照 — 货币信用象限 + 三大根本问题诊断。"""
+    """宏观快照 — 美股隔夜 + 货币信用象限 + 三大根本问题诊断。"""
+    # ── 美股隔夜快照 ──
+    try:
+        from src.data.aggregator import DataAggregator
+        _agg = DataAggregator()
+        _us = _agg.get_us_overnight()
+        if _us is not None:
+            print("🌙 美股隔夜快照")
+            print(f"   {_us.summary}")
+            print(f"   数据日期: {_us.trade_date}")
+        else:
+            print("🌙 美股隔夜: [DATA_GAP] 不可用")
+    except Exception:
+        pass
+
     from src.macro.output import MacroSystemizedOutput, IndicatorSnapshot, QUADRANT_SECTOR_MAP
 
     print("🌍 宏观货币信用快照")
@@ -461,6 +475,91 @@ def cmd_macro():
 
 
 @_safe_cmd
+def cmd_market():
+    """大盘市场全景快照 — 大盘涨跌归因 Phase 1 数据基础。
+
+    输出: 美股隔夜 + A股市场情绪 + 宏观货币信用象限。
+    AI Agent 基于此数据执行 Phase 2-4 的结构分析和因果推断。
+    """
+    from src.data.aggregator import DataAggregator
+    from src.sentiment.signals import SentimentDetector
+    from src.sentiment.output import format_sentiment_plain
+    from src.macro.output import MacroSystemizedOutput, IndicatorSnapshot, QUADRANT_SECTOR_MAP
+
+    print("📊 大盘市场全景快照")
+    print("=" * 60)
+
+    # ── 1. 美股隔夜 ──
+    print("\n🌙 美股隔夜")
+    print("-" * 40)
+    try:
+        agg = DataAggregator()
+        us = agg.get_us_overnight()
+        if us is not None:
+            print(f"   {us.summary}")
+            print(f"   数据日期: {us.trade_date}")
+            for idx, label in [(us.sp500, "S&P 500"), (us.nasdaq, "Nasdaq"), (us.dow, "Dow")]:
+                if idx:
+                    print(f"   {label}: {idx.close:.2f} ({idx.change_pct:+.2f}%)")
+        else:
+            print("   [DATA_GAP] 美股隔夜数据不可用")
+    except Exception as e:
+        print(f"   [DATA_GAP] 获取失败: {e}")
+
+    # ── 2. A 股市场情绪 ──
+    print("\n📈 A 股市场情绪")
+    print("-" * 40)
+    try:
+        detector = SentimentDetector()
+        sentiment = detector.detect_market()
+        report = format_sentiment_plain(sentiment)
+        print(report)
+    except Exception as e:
+        print(f"   [DATA_GAP] 情绪数据获取失败: {e}")
+
+    # ── 3. 宏观货币信用象限 ──
+    print("\n🌍 宏观货币信用象限")
+    print("-" * 40)
+    try:
+        from src.macro.monetary_credit import MonetaryCreditAnalyzer
+        analyzer = MonetaryCreditAnalyzer()
+        regime = analyzer.analyze()
+        if regime is not None:
+            quadrant_name = regime.quadrant.value
+            quadrant_info = QUADRANT_SECTOR_MAP.get(quadrant_name, {})
+            output = MacroSystemizedOutput(
+                date=str(regime.updated_at.date()) if regime.updated_at else "",
+                regime=quadrant_name,
+                regime_confidence=getattr(regime, "confidence", 0.5),
+                overall_assessment=quadrant_info.get("description", ""),
+                position_advice=quadrant_info.get("position", "neutral"),
+                position_cap=1.0 if quadrant_info.get("position") == "aggressive" else 0.80,
+                indicators=[
+                    IndicatorSnapshot(name="M2 增速", value=getattr(regime, "m2_growth", 0) or 0, source="央行"),
+                    IndicatorSnapshot(name="社融增速", value=getattr(regime, "social_financing_growth", 0) or 0, source="央行"),
+                    IndicatorSnapshot(name="M1-M2 剪刀差", value=getattr(regime, "m1_m2_gap", 0) or 0, source="计算"),
+                    IndicatorSnapshot(name="DR007", value=getattr(regime, "dr007", 0) or 0, unit="%", source="银行间"),
+                    IndicatorSnapshot(name="LPR 1Y", value=getattr(regime, "lpr_1y", 0) or 0, unit="%", source="央行"),
+                ],
+                sector_impact={s: quadrant_info.get("description", "") for s in quadrant_info.get("sectors", [])},
+            )
+            print(output.to_summary())
+        else:
+            print("   ⚠️ 宏观数据不可用")
+    except ImportError:
+        print("   ⚠️ 宏观分析模块未安装")
+    except Exception as e:
+        print(f"   ⚠️ 宏观分析失败: {e}")
+
+    # ── 数据基础说明 ──
+    print("\n" + "=" * 60)
+    print("💡 以上为大盘涨跌归因 Phase 1 数据基础。")
+    print("   AI Agent 基于此执行 Phase 2-4:")
+    print("   Phase 2: 行业板块排名 + 北向资金 + 涨跌家数 + 成交量 + 涨停/跌停池")
+    print("   Phase 3: 信息源质量检查 → 因果链推导 (8通道) → 触发因素/放大机制/噪音")
+    print("   Phase 4: 应对建议 (情绪极端→恐慌套利 / 政策驱动→持续性评估)")
+
+
 @_safe_cmd
 def cmd_sentiment():
     """情绪信号检测 — 拉取实时数据并输出完整分析。"""
@@ -4365,6 +4464,7 @@ def cmd_start(args: list[str]) -> None:
 # NL→命令 关键词映射 (key: 关键词列表, cmd: 命令, help: 示例)
 _NL_ROUTES: list[dict] = [
     {"keys": ["情绪", "恐慌", "贪婪", "market sentiment", "市场气氛", "大盘情绪", "市场怎么样"], "cmd": "sentiment", "help": "python -m src sentiment"},
+    {"keys": ["大盘", "市场全景", "市场快照", "美股隔夜", "今天A股", "大盘涨跌", "大盘为什么"], "cmd": "market", "help": "python -m src market"},
     {"keys": ["宏观", "宏观快照", "货币", "信用", "社融", "利率", "macro", "lpr", "mlf", "降息", "降准"], "cmd": "macro", "help": "python -m src macro"},
     {"keys": ["选股", "扫描", "筛选", "scan", "选股器", "找股票", "推荐股票", "有什么好股票", "找一些", "价值股", "成长股"], "cmd": "scan --preset value", "help": "python -m src scan --preset value"},
     {"keys": ["回测", "backtest", "策略", "测试策略"], "cmd": "backtest", "help": "python -m src backtest"},
@@ -5141,6 +5241,7 @@ def main():
         print("  scan                    全市场选股扫描")
         print()
         print("📈 市场监控:")
+        print("  market                  大盘市场全景快照 (美股隔夜 + 情绪 + 宏观)")
         print("  macro                   宏观货币信用快照")
         print("  sentiment               市场情绪信号检测")
         print("  game-theory             博弈论知识摘要")
@@ -5242,6 +5343,7 @@ def main():
         "start": lambda: cmd_start(args),
         "scan": lambda: cmd_scan(args),
         "analyze": lambda: cmd_analyze(args) if args else print("用法: analyze <code> [--deep]"),
+        "market": cmd_market,
         "macro": cmd_macro,
         "sentiment": cmd_sentiment,
         "backtest": cmd_backtest,
