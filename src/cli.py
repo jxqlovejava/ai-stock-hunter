@@ -551,11 +551,50 @@ def cmd_market():
     except Exception as e:
         print(f"   ⚠️ 宏观分析失败: {e}")
 
+    # ── 4. 板块热力图 (Phase 2 数据基础) ──
+    print("\n🔥 板块热力图 — Phase 2 结构分析")
+    print("-" * 40)
+    try:
+        from src.industry.daily_ranking import SectorRanking, fetch_sector_quotes_from_mootdx
+        sr = SectorRanking()
+        quotes = fetch_sector_quotes_from_mootdx()
+        if quotes:
+            result = sr.rank(quotes)
+            # 简洁输出：领涨/领跌 + 宽度
+            top_names = ", ".join(f"{i.name}({i.change_pct:+.1f}%)" for i in result.top_gainers)
+            bottom_names = ", ".join(f"{i.name}({i.change_pct:+.1f}%)" for i in result.top_losers)
+            print(f"   市场宽度: {result.market_breadth:.0%} 板块上涨")
+            print(f"   🏆 领涨: {top_names}")
+            print(f"   📉 领跌: {bottom_names}")
+            # 轮动检测 (如果有昨日数据)
+            try:
+                import json
+                from pathlib import Path
+                cache_file = Path("data/sector_ranking_cache.json")
+                if cache_file.exists():
+                    prev_data = json.loads(cache_file.read_text())
+                    prev_quotes = prev_data.get("quotes", {})
+                    if prev_quotes:
+                        prev_result = sr.rank(prev_quotes)
+                        rotation = sr.detect_rotation([prev_result, result])
+                        if rotation.detected:
+                            print(f"   ⚡ 轮动信号: {rotation.description} (评分: {rotation.rotation_score:.0%})")
+                # 缓存当日数据供下次轮动检测
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(json.dumps({"date": result.date, "quotes": quotes}, ensure_ascii=False))
+            except Exception:
+                pass  # 缓存失败不影响主流程
+        else:
+            print("   [DATA_GAP] mootdx 板块数据不可用")
+    except ImportError:
+        print("   ⚠️ 板块排行模块未安装")
+    except Exception as e:
+        print(f"   ⚠️ 板块排行失败: {e}")
+
     # ── 数据基础说明 ──
     print("\n" + "=" * 60)
-    print("💡 以上为大盘涨跌归因 Phase 1 数据基础。")
-    print("   AI Agent 基于此执行 Phase 2-4:")
-    print("   Phase 2: 行业板块排名 + 北向资金 + 涨跌家数 + 成交量 + 涨停/跌停池")
+    print("💡 Phase 1-2 数据基础已完备。")
+    print("   AI Agent 基于此执行 Phase 3-4:")
     print("   Phase 3: 信息源质量检查 → 因果链推导 (8通道) → 触发因素/放大机制/噪音")
     print("   Phase 4: 应对建议 (情绪极端→恐慌套利 / 政策驱动→持续性评估)")
 
