@@ -664,3 +664,120 @@ class InfoRatioAnalyzer(AnalyzerBase):
             "alpha_pct": round(alpha_annual * 100, 2),
             "beta": round(beta, 4),
         }
+
+
+# ------------------------------------------------------------------
+# 独立工具函数 — 不依赖 Strategy，可直接用于任何权益曲线
+# ------------------------------------------------------------------
+
+def compute_advanced_metrics(
+    equity_curve: "pd.Series",
+    benchmark_returns: "pd.Series | None" = None,
+    periods_per_year: int = 252,
+    risk_free: float = 0.02,
+) -> dict:
+    """从权益曲线计算所有高级绩效指标。
+
+    Args:
+        equity_curve: 权益时间序列 (pd.Series, index=datetime)
+        benchmark_returns: 基准日收益率序列 (可选, 用于信息比率)
+        periods_per_year: 年化周期数 (股票=252, 加密货币=365)
+        risk_free: 无风险利率 (默认 2%)
+
+    Returns:
+        dict 包含 calmar/sortino/var/info_ratio 全部指标
+    """
+    import numpy as np
+
+    values = equity_curve.values
+    if len(values) < 2:
+        return {
+            "calmar_ratio": 0.0, "sortino_ratio": 0.0,
+            "var_95_historical": 0.0, "var_95_parametric": 0.0,
+            "cvar_95": 0.0, "info_ratio": 0.0, "alpha": 0.0, "beta": 1.0,
+        }
+
+    # 日收益率
+    returns = np.diff(values) / values[:-1]
+
+    # --- Calmar ---
+    peak = values[0]
+    max_dd = 0.0
+    for v in values:
+        peak = max(peak, v)
+        dd = (v / peak - 1) * 100
+        max_dd = min(max_dd, dd)
+
+    total_return = values[-1] / values[0]
+    n_days = len(values)
+    annualized = (total_return ** (periods_per_year / n_days) - 1) * 100
+    calmar = round(annualized / abs(max_dd), 4) if max_dd < 0 else 0.0
+
+    # --- Sortino ---
+    avg_daily = float(np.mean(returns))
+    annual_ret = float((1 + avg_daily) ** periods_per_year - 1)
+    downside_rets = returns[returns < 0]
+    if len(downside_rets) >= 2:
+        daily_rf = (1 + risk_free) ** (1 / periods_per_year) - 1
+        downside_var = float(np.mean((downside_rets - daily_rf) ** 2))
+        downside_vol = float(np.sqrt(downside_var) * np.sqrt(periods_per_year))
+        sortino = round((annual_ret - risk_free) / downside_vol, 4) if downside_vol > 0 else 0.0
+    else:
+        sortino = float("inf") if annual_ret > risk_free else 0.0
+        downside_vol = 0.0
+
+    # --- VaR / CVaR ---
+    if len(returns) >= 10:
+        var_95 = float(np.percentile(returns, 5))
+        var_99 = float(np.percentile(returns, 1))
+        mean_ret = float(np.mean(returns))
+        std_ret = float(np.std(returns, ddof=1))
+        # 参数法
+        try:
+            from scipy import stats as sp_stats
+            var_95_param = float(mean_ret + sp_stats.norm.ppf(0.05) * std_ret)
+        except ImportError:
+            var_95_param = var_95
+        below_var = returns[returns <= var_95]
+        cvar_95 = float(np.mean(below_var)) if len(below_var) > 0 else var_95
+    else:
+        var_95 = var_99 = var_95_param = cvar_95 = 0.0
+
+    # --- Info Ratio / Alpha / Beta ---
+    info_ratio = alpha = beta = 0.0
+    excess_pct = te_pct = 0.0
+    if benchmark_returns is not None and len(returns) >= 2:
+        n = min(len(returns), len(benchmark_returns))
+        rets = returns[-n:]
+        bm = np.array(benchmark_returns[-n:])
+        excess = rets - bm
+        avg_excess_daily = float(np.mean(excess))
+        std_excess_daily = float(np.std(excess, ddof=1))
+        excess_annual = float((1 + avg_excess_daily) ** periods_per_year - 1)
+        te_annual = float(std_excess_daily * np.sqrt(periods_per_year))
+        info_ratio = round(excess_annual / te_annual, 4) if te_annual > 0 else 0.0
+        excess_pct = round(excess_annual * 100, 2)
+        te_pct = round(te_annual * 100, 2)
+
+        # Alpha / Beta
+        if len(rets) > 1 and len(bm) > 1:
+            cov = float(np.cov(rets, bm)[0, 1])
+            bm_var = float(np.var(bm, ddof=1))
+            beta = round(cov / bm_var, 4) if bm_var > 0 else 1.0
+            alpha_daily = avg_excess_daily - beta * float(np.mean(bm))
+            alpha = round(float((1 + alpha_daily) ** periods_per_year - 1) * 100, 2)
+
+    return {
+        "calmar_ratio": calmar,
+        "sortino_ratio": sortino,
+        "downside_deviation_pct": round(downside_vol * 100, 2),
+        "var_95_historical": round(var_95, 6),
+        "var_95_parametric": round(var_95_param, 6),
+        "var_99_historical": round(var_99, 6),
+        "cvar_95": round(cvar_95, 6),
+        "info_ratio": info_ratio,
+        "excess_return_pct": excess_pct,
+        "tracking_error_pct": te_pct,
+        "alpha_pct": alpha,
+        "beta": beta,
+    }

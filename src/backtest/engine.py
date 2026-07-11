@@ -34,6 +34,14 @@ class BacktestResult:
     win_rate: float
     total_trades: int
     yearly_returns: dict[str, float] = field(default_factory=dict)
+    # P1 高级指标
+    calmar_ratio: float = 0.0
+    sortino_ratio: float = 0.0
+    var_95: float = 0.0
+    cvar_95: float = 0.0
+    info_ratio: float = 0.0
+    alpha_pct: float = 0.0
+    beta: float = 1.0
 
 
 class AShareCommission(bt.CommInfoBase):
@@ -233,6 +241,18 @@ class BacktestEngine:
             if yr_vals and abs(max_dd) > abs(min(yr_vals)) * 3:
                 max_dd = abs(min(yr_vals))  # 兜底: 用最差年收益估算
 
+        # P1 高级指标: 从 Backtrader 的 TimeReturn 分析器构建权益曲线
+        import numpy as np  # noqa: F811
+        from src.backtest.analyzer import compute_advanced_metrics
+        adv: dict = {}
+        if isinstance(rets, dict):
+            rtv = [float(v) for v in rets.values()]
+            if len(rtv) >= 2:
+                eq = [100.0]
+                for v in rtv:
+                    eq.append(eq[-1] * v)
+                adv = compute_advanced_metrics(pd.Series(eq))
+
         return BacktestResult(
             strategy_name=self._strategy_class.__name__,
             start_date=start,
@@ -246,6 +266,13 @@ class BacktestEngine:
             win_rate=self._win_rate(trades),
             total_trades=trades.get("total", {}).get("total", 0),
             yearly_returns={str(k): v for k, v in annual.items()},
+            calmar_ratio=adv.get("calmar_ratio", 0.0),
+            sortino_ratio=adv.get("sortino_ratio", 0.0),
+            var_95=adv.get("var_95_historical", 0.0),
+            cvar_95=adv.get("cvar_95", 0.0),
+            info_ratio=adv.get("info_ratio", 0.0),
+            alpha_pct=adv.get("alpha_pct", 0.0),
+            beta=adv.get("beta", 1.0),
         )
 
     def reverse_test(

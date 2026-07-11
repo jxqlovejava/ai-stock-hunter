@@ -587,6 +587,19 @@ def cmd_backtest():
         print(f"   夏普比率: {result.sharpe_ratio:.2f}")
         print(f"   最大回撤: {result.max_drawdown:.1%}")
         print(f"   胜率: {result.win_rate:.1%}")
+        # P1 高级指标
+        if result.calmar_ratio:
+            print(f"   Calmar:  {result.calmar_ratio:.2f}")
+        if result.sortino_ratio and result.sortino_ratio != float("inf"):
+            print(f"   Sortino: {result.sortino_ratio:.2f}")
+        if abs(result.var_95) > 0:
+            print(f"   VaR 95%: {result.var_95:.4f}")
+        if abs(result.cvar_95) > 0:
+            print(f"   CVaR 95%:{result.cvar_95:.4f}")
+        if result.info_ratio:
+            print(f"   信息比率: {result.info_ratio:.2f}")
+        if result.alpha_pct:
+            print(f"   Alpha:   {result.alpha_pct:.2f}% | Beta: {result.beta:.2f}")
     except Exception as e:
         print(f"❌ 回测失败: {e}")
         print("   (可能需要完整数据源配置)")
@@ -2473,7 +2486,79 @@ def cmd_alpha_rank(args: list[str]):
 
 
 @_safe_cmd
-def cmd_sector_research(args: list[str]):
+def cmd_sector_heatmap(args: list[str]):
+    """板块热力图与轮动检测 — 申万一级行业每日涨跌排行。"""
+    import argparse
+    from src.industry.daily_ranking import SectorRanking, fetch_sector_quotes_from_mootdx
+
+    parser = argparse.ArgumentParser(description="板块热力图与轮动检测")
+    parser.add_argument("--source", default="mootdx", choices=["mootdx", "manual"],
+                        help="数据源 (默认 mootdx)")
+    parser.add_argument("--periods", default="1d", help="时间段: 1d, 1d+5d+20d")
+    parsed = parser.parse_args(args)
+
+    print("🔥 板块热力图")
+    print("=" * 60)
+
+    sr = SectorRanking()
+
+    # 拉取数据
+    if parsed.source == "mootdx":
+        quotes = fetch_sector_quotes_from_mootdx()
+        if not quotes:
+            print("   [DATA_GAP] mootdx 板块数据不可用，用 mock 数据演示")
+            # mock fallback
+            import random
+            random.seed(42)
+            quotes = {s: round(random.uniform(-4, 5), 2) for s in SectorRanking.__module__}
+    else:
+        print("   请通过 --source manual 指定板块数据")
+
+    if not quotes:
+        return
+
+    # 排行
+    result = sr.rank(quotes)
+    print(sr.format_table(result))
+
+    # 多期热力图
+    if "5d" in parsed.periods or "20d" in parsed.periods:
+        # 单期数据凑合做个多期展示 (实际需要不同时间窗口的历史数据)
+        print(f"\n💡 多期热力图需要多个时间窗口的历史数据，当前仅展示 1 日排行。")
+        print("   后续可接入 mootdx 历史板块数据或 AKShare sector 接口。")
+
+    # 轮动检测需要历史数据
+    print(f"\n💡 板块轮动检测需要至少 2 日的历史排行数据。")
+    print("   可通过 cron 每日保存排行结果，积累后自动检测。")
+
+
+def cmd_backtest_compare_extended():
+    """多策略对比 — 含高级绩效指标。"""
+    from src.backtest.runner import run_backtest
+    from src.backtest.analyzer import compute_advanced_metrics
+
+    print("📊 策略对比 (含高级指标)")
+    print("=" * 60)
+    try:
+        result = run_backtest()
+        print(f"\n{'指标':<15} {'值':>10}")
+        print("-" * 28)
+        print(f"{'年化收益':<15} {result.annual_return:>9.1%}")
+        print(f"{'夏普比率':<15} {result.sharpe_ratio:>9.2f}")
+        print(f"{'最大回撤':<15} {result.max_drawdown:>9.1%}")
+        print(f"{'胜率':<15} {result.win_rate:>9.1%}")
+        print(f"{'Calmar':<15} {result.calmar_ratio:>9.2f}")
+        sortino_str = f"{result.sortino_ratio:.2f}" if result.sortino_ratio and result.sortino_ratio != float("inf") else "N/A"
+        print(f"{'Sortino':<15} {sortino_str:>9}")
+        print(f"{'VaR 95%':<15} {result.var_95:>9.4f}")
+        print(f"{'CVaR 95%':<15} {result.cvar_95:>9.4f}")
+        if result.info_ratio:
+            print(f"{'信息比率':<15} {result.info_ratio:>9.2f}")
+        if result.alpha_pct:
+            print(f"{'Alpha':<15} {result.alpha_pct:>8.2f}%")
+        print(f"{'Beta':<15} {result.beta:>9.2f}")
+    except Exception as e:
+        print(f"❌ 对比失败: {e}")
     """行业深度研究 — 全景研报（分类+竞争+估值+催化剂+供应链）。"""
     import argparse
     from src.industry.classifier import SectorClassifier
@@ -5397,6 +5482,8 @@ def main():
         "alpha-rank": lambda: cmd_alpha_rank(args),
         # Phase 9: 行业深度 + 公司深度研究
         "sector-research": lambda: cmd_sector_research(args),
+        "sector-heatmap": lambda: cmd_sector_heatmap(args),
+        "backtest-metrics": cmd_backtest_compare_extended,
         "deep-research": lambda: cmd_deep_research(args),
         # Phase 12: 持仓实时监控 + 动态止盈止损
         "position-monitor": lambda: cmd_position_monitor(args),
