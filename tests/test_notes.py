@@ -319,3 +319,180 @@ class TestNoteSearch:
         # should not find with wrong status filter
         results2 = tmp_search.search("测试", status=NoteStatus.IMPLEMENTED)
         assert len(results2) == 0
+
+
+# ------------------------------------------------------------------
+# repl
+# ------------------------------------------------------------------
+
+
+class TestNotesRepl:
+    """Tests for the interactive notes REPL in src.cli."""
+
+    @pytest.fixture
+    def tmp_repl_search(self):
+        """Create NoteSearch with temp db for REPL tests."""
+        with tempfile.TemporaryDirectory() as d:
+            db_path = Path(d) / "repl_notes.db"
+            s = NoteSearch(db_path=db_path)
+            s.create_tables()
+            yield s
+            s.close()
+
+    def _run_with_inputs(
+        self,
+        monkeypatch,
+        inputs: list[str],
+        tmp_store: NoteStore,
+        tmp_repl_search: NoteSearch,
+    ) -> None:
+        """Run the REPL with a canned input sequence."""
+        from src.cli import _run_notes_repl
+
+        it = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _: next(it))
+        _run_notes_repl(tmp_store, tmp_repl_search)
+
+    def test_help_and_quit(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = ["help", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "add / a" in captured.out
+        assert "list / ls" in captured.out
+        assert "已退出笔记模式" in captured.out
+
+    def test_add_note_interactive(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = [
+            "add",
+            "1",  # topic: first in sorted list
+            "tag1, tag2",
+            "对话",
+            "test summary",
+            "point one",
+            "point two",
+            "",  # end key points
+            "discussion line",
+            "",  # end discussion
+            "quit",
+        ]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "笔记已保存" in captured.out
+
+        notes = tmp_store.list_all()
+        assert len(notes) == 1
+        assert notes[0].summary == "test summary"
+        assert notes[0].tags == ["tag1", "tag2"]
+        assert notes[0].key_points == ["point one", "point two"]
+        assert "discussion line" in notes[0].full_discussion
+
+    def test_list_notes(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        note = ResearchNote(
+            id="2026-07-11-list-test",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            topic=NoteTopic.OTHER,
+            summary="listable note",
+        )
+        tmp_store.save(note)
+        tmp_repl_search.index(note)
+
+        inputs = ["list", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "listable note" in captured.out
+
+    def test_search_notes(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        note = ResearchNote(
+            id="2026-07-11-search-test",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            topic=NoteTopic.OTHER,
+            summary="searchable note content",
+            full_discussion="unique keyword xyz123",
+        )
+        tmp_store.save(note)
+        tmp_repl_search.index(note)
+
+        inputs = ["search xyz123", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "searchable note content" in captured.out
+
+    def test_promote_note(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        note = ResearchNote(
+            id="2026-07-11-promote-test",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            topic=NoteTopic.OTHER,
+            summary="promote me",
+        )
+        tmp_store.save(note)
+        tmp_repl_search.index(note)
+
+        inputs = ["promote 2026-07-11-promote-test --status actionable", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "笔记状态已更新" in captured.out
+
+        updated = tmp_store.get("2026-07-11-promote-test")
+        assert updated.status == NoteStatus.ACTIONABLE
+
+    def test_delete_note(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        note = ResearchNote(
+            id="2026-07-11-delete-test",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            topic=NoteTopic.OTHER,
+            summary="delete me",
+        )
+        tmp_store.save(note)
+        tmp_repl_search.index(note)
+
+        inputs = ["delete 2026-07-11-delete-test", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "笔记已删除" in captured.out
+        assert tmp_store.get("2026-07-11-delete-test") is None
+
+    def test_unknown_command(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = ["foobar", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "未知命令" in captured.out
+
+    def test_reject_path_traversal_id(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = ["show ../../etc/passwd", "delete ../../../secrets", "promote bad--id --status actionable", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "笔记 ID 格式无效" in captured.out
+
+    def test_empty_search_query(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = ["search", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "请输入搜索关键词" in captured.out
+
+    def test_topics_command(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        inputs = ["topics", "quit"]
+        self._run_with_inputs(monkeypatch, inputs, tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        for topic in NoteTopic.ALL:
+            assert topic in captured.out
+
+    def test_add_cancel_by_keyboard_interrupt(self, monkeypatch, tmp_store, tmp_repl_search, capsys):
+        responses = iter(["add", "1", "tag", "对话", "summary"])
+
+        def _raising_input(_prompt: str = ""):
+            try:
+                return next(responses)
+            except StopIteration:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr("builtins.input", _raising_input)
+        from src.cli import _run_notes_repl
+
+        _run_notes_repl(tmp_store, tmp_repl_search)
+        captured = capsys.readouterr()
+        assert "取消添加" in captured.out
+        assert tmp_store.list_all() == []

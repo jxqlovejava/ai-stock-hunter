@@ -39,7 +39,10 @@ import re
 import sys
 import traceback
 from datetime import datetime
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from src.notes import NoteSearch, NoteStore
 
 logger = logging.getLogger(__name__)
 
@@ -4545,6 +4548,262 @@ def cmd_preview_earnings(args: list[str]):
 # ------------------------------------------------------------------
 
 
+def _run_notes_repl(store: "NoteStore", searcher: "NoteSearch", default_limit: int = 50) -> None:
+    """交互式投研笔记 REPL。"""
+    import re
+    from datetime import datetime as _dt
+
+    from src.notes import NoteStatus, NoteTopic, ResearchNote
+
+    status_icon = {"discussion": "💬", "actionable": "⚡", "implemented": "✅"}
+    _NOTE_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+    def _is_valid_note_id(note_id: str) -> bool:
+        return bool(_NOTE_ID_RE.match(note_id))
+
+    def _print_help() -> None:
+        print("\n📚 投研笔记模式 — 可用命令:")
+        print("  add / a                交互式添加笔记")
+        print("  list / ls              列出笔记 (可接 --status/--topic/--tag/--limit)")
+        print("  search / s <关键词>     全文搜索")
+        print("  show / view <id>       查看笔记详情")
+        print("  promote / p <id> --status <s>  更新状态")
+        print("  delete / rm <id>       删除笔记")
+        print("  topics                 列出主题分类")
+        print("  help / ?               显示帮助")
+        print("  quit / exit / q        退出笔记模式")
+        print()
+
+    def _read_multiline_lines(prompt: str) -> list[str] | None:
+        print(f"{prompt} (多行，空行结束):")
+        lines: list[str] = []
+        while True:
+            try:
+                line = input("  > ")
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                print("\n⚠️ 已取消当前输入")
+                return None
+            if not line.strip():
+                break
+            lines.append(line)
+        return lines
+
+    def _cmd_add() -> None:
+        print("\n📝 新建笔记")
+        topics = sorted(NoteTopic.ALL)
+        for i, t in enumerate(topics, 1):
+            print(f"  {i}. {t}")
+        topic_choice = input("选择主题 (数字或名称): ").strip()
+        topic = None
+        if topic_choice.isdigit():
+            idx = int(topic_choice) - 1
+            if 0 <= idx < len(topics):
+                topic = topics[idx]
+        if topic is None and NoteTopic.valid(topic_choice):
+            topic = topic_choice
+        if topic is None:
+            print("❌ 无效主题，已设为'其他'")
+            topic = NoteTopic.OTHER
+
+        tags_raw = input("标签 (逗号分隔，可空): ").strip()
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+
+        source = input("来源 (默认 对话): ").strip() or "对话"
+
+        summary = input("摘要: ").strip()
+        if not summary:
+            print("❌ 摘要不能为空，取消添加")
+            return
+
+        key_points = _read_multiline_lines("关键要点")
+        if key_points is None:
+            print("❌ 取消添加\n")
+            return
+        discussion_lines = _read_multiline_lines("完整讨论")
+        if discussion_lines is None:
+            print("❌ 取消添加\n")
+            return
+
+        note = ResearchNote(
+            id="",
+            created_at=_dt.now(),
+            updated_at=_dt.now(),
+            topic=topic,
+            tags=tags,
+            trigger_by="user",
+            source=source,
+            summary=summary,
+            key_points=key_points,
+            full_discussion="\n".join(discussion_lines),
+            status=NoteStatus.DISCUSSION,
+        )
+        store.save(note)
+        try:
+            searcher.index(note)
+        except Exception:
+            pass
+        print(f"✅ 笔记已保存: {note.id}")
+        print(f"   主题: {note.topic} | 标签: {', '.join(note.tags)}\n")
+
+    def _parse_flags(tokens: list[str]) -> tuple[dict[str, str], list[str]]:
+        """Extract --key value flags and return remaining positional tokens."""
+        flags: dict[str, str] = {}
+        positionals: list[str] = []
+        i = 0
+        while i < len(tokens):
+            if tokens[i].startswith("--"):
+                if i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
+                    flags[tokens[i].lstrip("-")] = tokens[i + 1]
+                    i += 2
+                else:
+                    print(f"⚠️ 忽略无效标志: {tokens[i]}")
+                    i += 1
+            else:
+                positionals.append(tokens[i])
+                i += 1
+        return flags, positionals
+
+    def _cmd_list(tokens: list[str]) -> None:
+        flags, _ = _parse_flags(tokens)
+        limit = int(flags.get("limit", str(default_limit)))
+        notes = store.list_all(
+            status=flags.get("status"),
+            topic=flags.get("topic"),
+            tag=flags.get("tag"),
+            limit=limit,
+        )
+        if not notes:
+            print("📝 暂无笔记\n")
+            return
+        print(f"📝 共 {len(notes)} 条笔记:\n")
+        for n in notes:
+            icon = status_icon.get(n.status, "📌")
+            print(f"  {icon} [{n.topic}] {n.id}")
+            print(f"     {n.summary[:80]}{'...' if len(n.summary) > 80 else ''}")
+            print()
+
+    def _cmd_search(tokens: list[str]) -> None:
+        query = " ".join(tokens).strip()
+        if not query:
+            print("❌ 请输入搜索关键词\n")
+            return
+        try:
+            results = searcher.search(query, limit=20)
+        except Exception:
+            results = searcher.search_simple(query, limit=20)
+        if not results:
+            print(f'🔍 未找到与 "{query}" 相关的结果\n')
+            return
+        print(f'🔍 搜索 "{query}" — 共 {len(results)} 条结果:\n')
+        for r in results:
+            icon = status_icon.get(r["status"], "📌")
+            print(f"  {icon} [{r['topic']}] {r['note_id']}")
+            print(f"     {r['summary'][:100]}{'...' if len(r.get('summary', '')) > 100 else ''}")
+            if r.get("snippet"):
+                print(f"     🔍 {r['snippet']}")
+            print()
+
+    def _cmd_show(tokens: list[str]) -> None:
+        note_id = " ".join(tokens).strip()
+        if not note_id:
+            print("❌ 请提供笔记 ID\n")
+            return
+        if not _is_valid_note_id(note_id):
+            print(f"❌ 笔记 ID 格式无效: {note_id}\n")
+            return
+        note = store.get(note_id)
+        if note is None:
+            print(f"❌ 笔记不存在: {note_id}\n")
+            return
+        print(note.to_markdown())
+        print()
+
+    def _cmd_promote(tokens: list[str]) -> None:
+        flags, positionals = _parse_flags(tokens)
+        note_id = " ".join(positionals).strip()
+        new_status = flags.get("status")
+        if not note_id or not new_status:
+            print("❌ 用法: promote <id> --status <discussion|actionable|implemented>\n")
+            return
+        if not _is_valid_note_id(note_id):
+            print(f"❌ 笔记 ID 格式无效: {note_id}\n")
+            return
+        note = store.update_status(note_id, new_status)
+        if note is None:
+            print(f"❌ 笔记不存在或状态无效: {note_id}\n")
+            return
+        try:
+            searcher.index(note)
+        except Exception:
+            pass
+        icon = status_icon.get(note.status, "📌")
+        print(f"{icon} 笔记状态已更新: {note.id} → {note.status}\n")
+
+    def _cmd_delete(tokens: list[str]) -> None:
+        note_id = " ".join(tokens).strip()
+        if not note_id:
+            print("❌ 请提供笔记 ID\n")
+            return
+        if not _is_valid_note_id(note_id):
+            print(f"❌ 笔记 ID 格式无效: {note_id}\n")
+            return
+        try:
+            searcher.remove(note_id)
+        except Exception:
+            pass
+        if store.delete(note_id):
+            print(f"🗑️ 笔记已删除: {note_id}\n")
+        else:
+            print(f"❌ 笔记不存在: {note_id}\n")
+
+    print("\n📝 进入投研笔记模式。输入 help 查看命令，quit 退出。\n")
+    _print_help()
+
+    while True:
+        try:
+            raw = input("笔记> ")
+        except (EOFError, KeyboardInterrupt):
+            print("\n")
+            break
+        line = raw.strip()
+        if not line:
+            continue
+
+        parts = line.split()
+        cmd = parts[0].lower()
+        rest = parts[1:]
+
+        try:
+            if cmd in {"quit", "exit", "q"}:
+                print("👋 已退出笔记模式")
+                break
+            elif cmd in {"help", "?"}:
+                _print_help()
+            elif cmd in {"add", "a"}:
+                _cmd_add()
+            elif cmd in {"list", "ls"}:
+                _cmd_list(rest)
+            elif cmd in {"search", "s"}:
+                _cmd_search(rest)
+            elif cmd in {"show", "view"}:
+                _cmd_show(rest)
+            elif cmd in {"promote", "p"}:
+                _cmd_promote(rest)
+            elif cmd in {"delete", "rm"}:
+                _cmd_delete(rest)
+            elif cmd == "topics":
+                print("📂 可用主题分类:")
+                for t in sorted(NoteTopic.ALL):
+                    print(f"  - {t}")
+                print()
+            else:
+                print(f"❓ 未知命令: {cmd}。输入 help 查看可用命令。\n")
+        except Exception as e:
+            print(f"❌ 执行出错: {e}\n")
+
+
 def cmd_note(args: list[str]):
     """投研笔记管理 — 长期讨论记录、检索、状态流转。"""
     import argparse
@@ -4595,6 +4854,10 @@ def cmd_note(args: list[str]):
     # note topics
     sub.add_parser("topics", help="列出所有主题分类")
 
+    # note repl
+    repl_p = sub.add_parser("repl", help="进入交互式笔记模式")
+    repl_p.add_argument("--limit", type=int, default=50, help="list 命令默认最大数量")
+
     if not args:
         parser.print_help()
         return
@@ -4604,6 +4867,14 @@ def cmd_note(args: list[str]):
     from src.notes import NoteSearch, NoteStatus, NoteStore, NoteTopic, ResearchNote
 
     store = NoteStore()
+
+    if opts.subcmd == "repl":
+        searcher = NoteSearch()
+        try:
+            _run_notes_repl(store, searcher, default_limit=opts.limit)
+        finally:
+            searcher.close()
+        return
 
     if opts.subcmd == "add":
         note = ResearchNote(
