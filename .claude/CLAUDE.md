@@ -503,6 +503,106 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
 
 > ⚠️ **注意**：DojoAgents **没有真正的历史回测引擎**，只有组合诊断、模拟 watchlist 和绩效缓存。其回测逻辑不能直接复用，回测设计仍需以 VectorBT 为主参考。
 
+#### 七、可直接复用的功能模块
+
+DojoAgents 有若干功能模块可直接移植或作为白泽对应模块的参考实现：
+
+##### 📨 多平台通知网关 (`gateway/adapters/`)
+
+DojoAgents 实现了完整的多平台消息适配器层（`gateway/adapters/base.py:99` 的 `BaseGatewayAdapter`），白泽可直接参考：
+
+| 适配器 | 文件 | 能力 | 白泽可复用场景 |
+|--------|------|------|---------------|
+| **微信** | `gateway/adapters/wechat.py` | iLink 协议、轮询、上下文 token、消息去重、1900字分块 | A 股预警推送到微信 |
+| **飞书** | `gateway/adapters/feishu.py` | Webhook 消息发送 | 投资笔记/日报/周报推送 |
+| **Telegram** | `gateway/adapters/telegram.py` | Bot 轮询 | 个人盯盘通知 |
+| **企业微信** | `gateway/adapters/wecom.py` | Webhook 发送 | 团队协作通知 |
+| **Slack** / **Discord** | `gateway/adapters/slack.py` `discord.py` | 标准消息发送 | 社区/海外用户 |
+
+> 白泽当前 `src/output/alert.py` 只有基础通知。微信适配器（含 iLink 协议）是最复杂的平台实现，DojoAgents 提供了完整、测试过的版本，直接参考可节省大量开发时间。
+
+##### 📊 组合绩效与风控指标 (`dashboard/services/portfolio_performance.py`)
+
+纯函数，可直接移植：
+
+| 函数 | 位置 | 能力 |
+|------|------|------|
+| `compute_risk_stats(nav)` | `portfolio_performance.py:12` | Sharpe 比率、年化波动率、最大回撤、Calmar 比率 |
+| `rebase_nav(values)` | `portfolio_performance.py:49` | NAV 序列归一化到 100 |
+| `build_market_performance(...)` | `portfolio_performance.py:129` | 成交订单 + K线 → NAV 曲线 + 基准对比 |
+| `build_candidate_index_performance(...)` | `portfolio_performance.py:102` | 候选票组合的等权指数 vs 基准 |
+
+> 白泽 `src/backtest/analyzer.py` 有类似的指标计算，但 DojoAgents 的版本更简洁、自包含，且包含 NAV 序列构建的完整 pipeline（订单 → 前向填充价格 → NAV → 基准对比）。
+
+##### 💰 模拟订单执行引擎 (`dashboard/services/portfolio_order_execution.py`)
+
+完整的纸上交易订单撮合逻辑，可与白泽 `src/paper_trading/engine.py` 对比参考：
+
+| 函数 | 位置 | 能力 |
+|------|------|------|
+| `try_fill_order()` | `portfolio_order_execution.py:317` | 限价单验证、K线日内价格范围撮合、滑点模拟 |
+| `process_pending_orders()` | `portfolio_order_execution.py:396` | 批量处理挂单，按时间顺序 + 现金约束 |
+| `aggregate_positions()` | `portfolio_order_execution.py:418` | 成交订单 → 持仓聚合 + 成本基计算 |
+| `replay_market_balance()` | `portfolio_order_execution.py:787` | 回放到任意日期的现金+持仓状态 |
+| `sanitize_invalid_filled_orders()` | `portfolio_order_execution.py:650` | 清理违反现金/股数约束的订单 |
+| `evaluate_order_fill_failure()` | `portfolio_order_execution.py:183` | 诊断订单为什么成交失败 |
+
+##### 📈 行业板块分析 (`dashboard/services/market_sector_lead.py`)
+
+跨市场板块排行榜计算，对应白泽 `src/industry/` 模块：
+
+| 函数 | 位置 | 能力 |
+|------|------|------|
+| `build_market_sectors()` | `market_sector_lead.py:51` | 每个市场的板块涨跌榜 + 成分股数 + 样本票 |
+| `compute_market_sector_lead()` | `market_sector_lead.py:177` | 单市场板块热力图 |
+| `compute_all_market_sector_leads()` | `market_sector_lead.py:207` | 跨市场（A/美/港）板块对比 |
+| `compute_sector_scope_performance()` | `sector_scope_performance.py:245` | 市值加权的 L1/L2/L3 板块指数曲线 |
+
+##### 🗂️ 板块分类与股票映射 (`dashboard/services/sector_store.py` + `stock_sector_store.py`)
+
+| 功能 | 位置 | 能力 |
+|------|------|------|
+| `SectorStore` | `sector_store.py:125` | L1/L2/L3 三级行业树、中英文双语匹配 |
+| `StockSectorStore` | `stock_sector_store.py` | 股票 → 板块反向映射 |
+
+##### 🧩 内置量化分析任务 (`tasks/built_in/`)
+
+DojoAgents 有两个可以直接借鉴分析逻辑的任务：
+
+**1. 板块异动归因** (`tasks/built_in/sector-attribution/TASK.md` + `contract.yaml`)
+- 工作流：识别异常板块（涨跌幅 ≥ 3% 或 涨/跌榜 Top 3 或 跨市场共振 或 大市值 ≥ 1.5%）→ 搜索相关新闻 → 输出结构化 JSON
+- 白泽可对接：结合 `src/industry/` + `a-stock-data` skill 的数据源，自动生成每日板块异动归因报告
+
+**2. 全球市场异动事件分类** (`tasks/built_in/event-trigger/TASK.md` + `contract.yaml`)
+- 读入板块归因输出，合并相关新闻为独立事件
+- 将事件归入 15 个类别：geo_military / macro_data / corporate_earnings / central_bank / trade_tariff / regulatory / energy_commodity / tech_disruption / financial_stress / public_health / climate_disaster / industry_policy / market_structure / sovereign_credit / other
+- 每个事件输出 `event_summary`（标题、类别、来源、内容、意外程度）+ `sector_impacts[]`（板块、方向、原因）
+- 白泽可对接：将此事件分类体系作为 `src/routing/attribution.py` 的归因模板，替代目前的开放式分析
+
+##### 🔍 DuckDuckGo 搜索与网页抽取 (`tools/web_searcher.py`)
+
+独立工具，可直接集成：
+
+| 功能 | 位置 | 能力 |
+|------|------|------|
+| `web_search` | `web_searcher.py` | DuckDuckGo HTML 抓取搜索后端 |
+| `web_extract` | `web_searcher.py` | 下载网页 → 去除 HTML → 截断文本（URL 安全检查含内网 IP 和密钥参数屏蔽） |
+
+> 白泽 `src/information/sources/` 对各平台有专门抓取，但缺少通用的 DuckDuckGo 搜索 + 网页抽取工具。这个可直接作为备选数据源。
+
+##### 📐 其他可直接参考的模块
+
+| 功能 | 文件 | 能力 |
+|------|------|------|
+| 市值加权配置 | `portfolio_allocation.py:93` | 按持仓市值权重分配资金 |
+| 市值/PE 聚合 | `market_stats.py:21` | 加权 PE、总市值计算 |
+| 板块上榜筛选 | `sector_movers_ranking.py:9` | 按最小成分股数过滤上榜板块 |
+| K线对齐工具 | `portfolio_performance.py` | `_forward_fill_on_or_before()`、`_align_series_to_dates()` |
+| 中文意图检测 | `portfolio_task_intent.py:55` | 中英文正则匹配识清算/建仓意图 |
+| Dojo SDK 数据网关 | `dojo_data_gateway.py:110` | 17 个 API 端点的类型化封装（A股+美股+港股行情/K线/财务/事件/行业/外汇） |
+
+> ⚠️ Dojo SDK 数据网关依赖 `dojo` Python 包。若白泽不引入 Dojo SDK 作为数据源，此模块仅作为多源数据网关的架构参考。
+
 ## 开发工作流
 
 - **测试**：`pytest tests/`（类级 Test* 命名 + 方法级 test_* 命名）
