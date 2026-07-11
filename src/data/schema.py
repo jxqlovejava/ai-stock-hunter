@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -375,3 +376,36 @@ from src.alpha.schema import (  # noqa: F401, E402
     NarrativeStage,
     SourceTier,
 )
+
+
+# ---------------------------------------------------------------------------
+# 个股资金流向快照
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MoneyFlowSnapshot:
+    """个股主力资金流快照（单位：万元）。"""
+
+    symbol: str
+    # 日度拆单资金流
+    super_large_net: float = 0.0  # 超大单净流入（万元）
+    large_net: float = 0.0        # 大单净流入（万元）
+    medium_net: float = 0.0       # 中单净流入（万元）
+    small_net: float = 0.0        # 小单净流入（万元）
+    main_net: float = 0.0         # 主力净流入 = 超大单 + 大单（万元）
+    total_turnover: float = 0.0   # 总成交额（万元）
+
+    # 历史序列相关
+    main_consecutive_days: int = 0       # 正=连续流入天数，负=连续流出天数
+    price_change_pct: float = 0.0        # 当日涨跌幅（%）
+    recent_price_trend: str = "neutral"  # up / down / neutral
+
+    # 数据质量
+    data_gap_reason: str = ""
+    citation: Optional[SourceCitation] = None
+
+    @property
+    def empty(self) -> bool:
+        """是否无任何有效资金流数据。"""
+        return self.total_turnover == 0 and self.main_net == 0 and not self.data_gap_reason

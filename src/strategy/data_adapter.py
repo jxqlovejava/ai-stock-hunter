@@ -142,9 +142,9 @@ class MarketDataAdapter:
                     medium_net=getattr(flow_data, "medium_net", 0) or 0,
                     small_net=getattr(flow_data, "small_net", 0) or 0,
                     total_turnover=getattr(flow_data, "total_turnover", 0) or 0,
-                    price_change_pct=0.0,
+                    price_change_pct=(getattr(flow_data, "price_change_pct", 0) or 0) / 100.0,
                     main_consecutive_days=getattr(flow_data, "main_consecutive_days", 0) or 0,
-                    recent_price_trend="neutral",
+                    recent_price_trend=getattr(flow_data, "recent_price_trend", "neutral") or "neutral",
                 )
                 self._capital_flow_cache[symbol] = result
                 return result

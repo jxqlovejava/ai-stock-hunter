@@ -521,6 +521,55 @@ class AttributionEngine:
         except Exception as e:
             logger.warning("大宗交易数据获取失败: %s", e)
 
+        # 4e: 个股主力资金流 (T1/T2)
+        try:
+            mf = self.aggregator.get_money_flow(symbol, weeks=4)
+            if mf is not None and not mf.empty:
+                parts = [
+                    f"个股资金流: 主力净额 {mf.main_net:+.0f}万",
+                    f"超大单 {mf.super_large_net:+.0f}万",
+                    f"大单 {mf.large_net:+.0f}万",
+                ]
+                if mf.main_consecutive_days != 0:
+                    direction = "流入" if mf.main_consecutive_days > 0 else "流出"
+                    parts.append(f"连续{direction} {abs(mf.main_consecutive_days)} 天")
+                if mf.data_gap_reason:
+                    parts.append(mf.data_gap_reason)
+
+                citation = mf.citation
+                if citation is None:
+                    if mf.data_gap_reason:
+                        citation = SourceCitation(
+                            provider="system",
+                            field="individual_fund_flow",
+                            fetch_timestamp=now,
+                            data_freshness=timedelta(hours=4),
+                            confidence=0.1,
+                            source_tier=SOURCE_TIER_T3,
+                            nature=NATURE_SPECULATION,
+                        )
+                    else:
+                        citation = SourceCitation(
+                            provider="eastmoney",
+                            field="individual_fund_flow",
+                            fetch_timestamp=now,
+                            data_freshness=timedelta(hours=4),
+                            confidence=0.80,
+                            source_tier=SOURCE_TIER_T1,
+                            nature=NATURE_FACT,
+                        )
+                points.append(
+                    AttributionDataPoint(
+                        category="capital_flow",
+                        description="; ".join(parts),
+                        source_citation=citation,
+                        is_stale=False,
+                        cross_validated=False,
+                    )
+                )
+        except Exception as e:
+            logger.warning("个股资金流数据获取失败: %s", e)
+
         # 如果所有资金面数据都获取失败，标记 DATA_GAP
         capital_points = [p for p in points if p.category == "capital_flow"]
         if not capital_points:
@@ -533,7 +582,7 @@ class AttributionEngine:
                         source_tier=SOURCE_TIER_T3, nature=NATURE_SPECULATION,
                         confidence=0.1,
                     ),
-                    data_gap_reason="龙虎榜/北向/融资融券/大宗交易数据源均不可用",
+                    data_gap_reason="龙虎榜/北向/融资融券/大宗交易/个股资金流数据源均不可用",
                 )
             )
 

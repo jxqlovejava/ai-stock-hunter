@@ -449,6 +449,16 @@ class AKShareProvider(DataProvider):
         except Exception:
             return pd.DataFrame()
 
+    def get_stock_money_flow(self, symbol: str) -> pd.DataFrame:
+        """获取个股资金流向（AKShare 备用接口）。"""
+        try:
+            code = symbol.strip()[-6:]
+            first = code[0]
+            market = "sh" if first in ("6", "9") else "sz"
+            return ak.stock_individual_fund_flow(stock=code, market=market)
+        except Exception:
+            return pd.DataFrame()
+
     # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
