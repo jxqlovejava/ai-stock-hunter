@@ -409,3 +409,258 @@ class TimeReturnAnalyzer(AnalyzerBase):
             "negative_days": negative,
             "total_days": len(self._returns),
         }
+
+
+# ------------------------------------------------------------------
+# CalmarAnalyzer — Calmar 比率
+#
+# Adapted from DojoAgents portfolio_performance.py:compute_risk_stats()
+# Calmar = 年化收益率 / |最大回撤|
+# ------------------------------------------------------------------
+
+class CalmarAnalyzer(AnalyzerBase):
+    """Calmar 比率分析器。
+
+    输出:
+      - calmar_ratio: 年化收益率 / |最大回撤|
+      - annual_return: 年化收益率
+      - max_drawdown: 最大回撤 %
+    """
+
+    name = "calmar"
+
+    def __init__(self, strategy, periods_per_year: int = 252):
+        super().__init__(strategy, periods_per_year=periods_per_year)
+        self._values: list[float] = []
+
+    def next(self):
+        self._values.append(self.strategy.getvalue())
+
+    def get_analysis(self) -> dict:
+        periods = self.params.get("periods_per_year", 252)
+        if len(self._values) < 2:
+            return {"calmar_ratio": 0.0, "annual_return": 0.0, "max_drawdown_pct": 0.0}
+
+        values = [v for v in self._values if v > 0]
+        if len(values) < 2:
+            return {"calmar_ratio": 0.0, "annual_return": 0.0, "max_drawdown_pct": 0.0}
+
+        # 年化收益
+        total_return = values[-1] / values[0]
+        n_days = len(values)
+        annualized = (total_return ** (periods / n_days) - 1) * 100
+
+        # 最大回撤 (参考 DojoAgents 的线性扫描)
+        peak = values[0]
+        max_dd = 0.0
+        for v in values:
+            peak = max(peak, v)
+            dd = (v / peak - 1) * 100
+            max_dd = min(max_dd, dd)
+
+        calmar = round(annualized / abs(max_dd), 4) if max_dd < 0 else 0.0
+
+        return {
+            "calmar_ratio": calmar,
+            "annual_return_pct": round(annualized, 2),
+            "max_drawdown_pct": round(max_dd, 2),
+        }
+
+
+# ------------------------------------------------------------------
+# SortinoAnalyzer — Sortino 比率
+#
+# Sortino = (年化收益 - 无风险利率) / 下行标准差
+# 比 Sharpe 更合理，只惩罚下行波动
+# ------------------------------------------------------------------
+
+class SortinoAnalyzer(AnalyzerBase):
+    """Sortino 比率分析器。
+
+    输出:
+      - sortino_ratio: Sortino 比率（年化）
+      - downside_deviation: 下行标准差（年化）
+      - annual_return: 年化收益率
+    """
+
+    name = "sortino"
+
+    def __init__(self, strategy, periods_per_year: int = 252, risk_free: float = 0.02):
+        super().__init__(strategy, periods_per_year=periods_per_year, risk_free=risk_free)
+        self._returns: list[float] = []
+        self._prev_value: float | None = None
+
+    def next(self):
+        val = self.strategy.getvalue()
+        if self._prev_value is not None and self._prev_value > 0:
+            ret = (val - self._prev_value) / self._prev_value
+            self._returns.append(ret)
+        self._prev_value = val
+
+    def get_analysis(self) -> dict:
+        periods = self.params.get("periods_per_year", 252)
+        rf = self.params.get("risk_free", 0.02)
+
+        if len(self._returns) < 2:
+            return {"sortino_ratio": 0.0, "downside_deviation": 0.0, "annual_return": 0.0}
+
+        rets = np.array(self._returns)
+        avg_daily = float(np.mean(rets))
+        annual_ret = float((1 + avg_daily) ** periods - 1)
+
+        # 下行标准差：只计入负收益
+        downside_rets = rets[rets < 0]
+        if len(downside_rets) < 1:
+            return {"sortino_ratio": float("inf") if annual_ret > rf else 0.0,
+                    "downside_deviation": 0.0,
+                    "annual_return": round(annual_ret, 4)}
+
+        daily_rf = (1 + rf) ** (1 / periods) - 1
+        downside_var = float(np.mean((downside_rets - daily_rf) ** 2))
+        downside_vol = float(np.sqrt(downside_var) * np.sqrt(periods))
+        sortino = round((annual_ret - rf) / downside_vol, 4) if downside_vol > 0 else 0.0
+
+        return {
+            "sortino_ratio": sortino,
+            "downside_deviation": round(downside_vol, 4),
+            "annual_return": round(annual_ret, 4),
+        }
+
+
+# ------------------------------------------------------------------
+# VaRAnalyzer — Value at Risk
+#
+# 历史模拟法 + 参数法 (假设正态分布)
+# ------------------------------------------------------------------
+
+class VaRAnalyzer(AnalyzerBase):
+    """VaR (Value at Risk) 分析器。
+
+    输出:
+      - var_95_historical: 历史模拟法 VaR (置信度 95%)
+      - var_95_parametric: 参数法 VaR (置信度 95%)
+      - var_99_historical: VaR (99%)
+      - cvar_95: 条件 VaR / 期望尾部损失 (95%)
+    """
+
+    name = "var"
+
+    def __init__(self, strategy, confidence: float = 0.95):
+        super().__init__(strategy, confidence=confidence)
+        self._returns: list[float] = []
+        self._prev_value: float | None = None
+
+    def next(self):
+        val = self.strategy.getvalue()
+        if self._prev_value is not None and self._prev_value > 0:
+            ret = (val - self._prev_value) / self._prev_value
+            self._returns.append(ret)
+        self._prev_value = val
+
+    def get_analysis(self) -> dict:
+        if len(self._returns) < 10:
+            return {
+                "var_95_historical": 0.0, "var_95_parametric": 0.0,
+                "var_99_historical": 0.0, "cvar_95": 0.0,
+            }
+
+        rets = np.array(self._returns)
+        mean = float(np.mean(rets))
+        std = float(np.std(rets, ddof=1))
+
+        # 历史模拟法
+        var_95_hist = float(np.percentile(rets, 5))
+        var_99_hist = float(np.percentile(rets, 1))
+
+        # 参数法 (正态分布)
+        from scipy import stats as sp_stats  # ponytail: scipy needed only here
+        try:
+            z_95 = sp_stats.norm.ppf(0.05)
+            z_99 = sp_stats.norm.ppf(0.01)
+            var_95_param = float(mean + z_95 * std)
+            var_99_param = float(mean + z_99 * std)
+        except ImportError:
+            var_95_param = var_95_hist
+            var_99_param = var_99_hist
+
+        # CVaR (历史模拟法) — 低于 VaR 的所有收益的均值
+        below_var = rets[rets <= var_95_hist]
+        cvar_95 = float(np.mean(below_var)) if len(below_var) > 0 else var_95_hist
+
+        return {
+            "var_95_historical": round(var_95_hist, 6),
+            "var_95_parametric": round(var_95_param, 6),
+            "var_99_historical": round(var_99_hist, 6),
+            "cvar_95": round(cvar_95, 6),
+        }
+
+
+# ------------------------------------------------------------------
+# InfoRatioAnalyzer — 信息比率
+#
+# 信息比率 = 超额收益 / 跟踪误差
+# 衡量策略相对于基准的风险调整后超额收益
+# ------------------------------------------------------------------
+
+class InfoRatioAnalyzer(AnalyzerBase):
+    """信息比率分析器。
+
+    输出:
+      - info_ratio: 信息比率（年化）
+      - excess_return: 年化超额收益
+      - tracking_error: 年化跟踪误差
+      - alpha: CAPM Alpha（简化版）
+    """
+
+    name = "info_ratio"
+
+    def __init__(self, strategy, periods_per_year: int = 252,
+                 benchmark_returns: list[float] | None = None):
+        super().__init__(strategy, periods_per_year=periods_per_year, benchmark_returns=benchmark_returns)
+        self._returns: list[float] = []
+        self._prev_value: float | None = None
+
+    def next(self):
+        val = self.strategy.getvalue()
+        if self._prev_value is not None and self._prev_value > 0:
+            ret = (val - self._prev_value) / self._prev_value
+            self._returns.append(ret)
+        self._prev_value = val
+
+    def get_analysis(self) -> dict:
+        periods = self.params.get("periods_per_year", 252)
+        bm_returns = self.params.get("benchmark_returns")
+
+        if not bm_returns or len(self._returns) < 2:
+            return {
+                "info_ratio": 0.0, "excess_return": 0.0,
+                "tracking_error": 0.0, "alpha": 0.0,
+            }
+
+        n = min(len(self._returns), len(bm_returns))
+        rets = np.array(self._returns[-n:])
+        bm = np.array(bm_returns[-n:])
+
+        excess = rets - bm
+        avg_excess_daily = float(np.mean(excess))
+        std_excess_daily = float(np.std(excess, ddof=1))
+
+        excess_annual = float((1 + avg_excess_daily) ** periods - 1)
+        te_annual = float(std_excess_daily * np.sqrt(periods))
+        info_ratio = round(excess_annual / te_annual, 4) if te_annual > 0 else 0.0
+
+        # 简化 Alpha: 超额收益 - Beta × 基准超额
+        avg_bm_daily = float(np.mean(bm))
+        cov = float(np.cov(rets, bm)[0, 1]) if len(rets) > 1 else 0.0
+        bm_var = float(np.var(bm, ddof=1)) if len(bm) > 1 else 1.0
+        beta = cov / bm_var if bm_var > 0 else 1.0
+        alpha_daily = avg_excess_daily - beta * avg_bm_daily
+        alpha_annual = float((1 + alpha_daily) ** periods - 1)
+
+        return {
+            "info_ratio": info_ratio,
+            "excess_return_pct": round(excess_annual * 100, 2),
+            "tracking_error_pct": round(te_annual * 100, 2),
+            "alpha_pct": round(alpha_annual * 100, 2),
+            "beta": round(beta, 4),
+        }
