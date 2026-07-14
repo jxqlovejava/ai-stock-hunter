@@ -294,10 +294,14 @@ def cmd_scan(args: list[str]):
 
 @_safe_cmd
 def cmd_analyze(args: list[str]):
-    """单只股票全链路分析。"""
+    """单只股票分析。默认 daily 全链路；--light 持仓体检；--deep 深度研究。"""
     import argparse
-    parser = argparse.ArgumentParser(description="单只股票全链路分析")
+    parser = argparse.ArgumentParser(description="单只股票分析")
     parser.add_argument("symbol", help="股票代码")
+    parser.add_argument(
+        "--light", action="store_true",
+        help="持仓轻体检：行情+军规+准入+轻诊断+裁决+仓位/风控（跳过辩论/T+0/深度研究）",
+    )
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
     parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析（Alpha/中长期机会搜索时推荐）")
     parser.add_argument("--event", type=str, default="", help="当日重大宏观事件描述（如: 美联储加息50bp）")
@@ -309,13 +313,23 @@ def cmd_analyze(args: list[str]):
         return
     from src.routing.orchestrator import Orchestrator
 
-    mode = "full" if parsed.deep else "daily"
+    if parsed.light and parsed.deep:
+        print("⚠️  --light 与 --deep 互斥，采用 --light")
+    if parsed.light:
+        mode = "light"
+        skip_t0 = True
+    elif parsed.deep:
+        mode = "full"
+        skip_t0 = parsed.no_t0
+    else:
+        mode = "daily"
+        skip_t0 = parsed.no_t0
     orch = Orchestrator()
     result = orch.run(
         symbol, market=_infer_market(symbol), mode=mode,
-        macro_event_desc=parsed.event,
-        macro_event_category=parsed.event_category,
-        skip_t0=parsed.no_t0,
+        macro_event_desc="" if parsed.light else parsed.event,
+        macro_event_category="" if parsed.light else parsed.event_category,
+        skip_t0=skip_t0,
     )
 
     if not result.passed:
@@ -937,13 +951,19 @@ def cmd_diagnose(args: list[str]):
     """一键诊断（小白入口）。支持单票和批量模式。
 
     用法:
-      python -m src diagnose 002415                  # 单票诊断
+      python -m src diagnose 002415                  # 标准全链路
+      python -m src diagnose 002415 --light          # 持仓轻体检（推荐盘中）
+      python -m src diagnose 002415 --deep           # 深度研究
       python -m src diagnose --batch 002415,000938   # 批量对比
       python -m src diagnose 300750 --as-of 2025-09-01  # 历史回测
     """
     import argparse
     parser = argparse.ArgumentParser(description="一键诊断")
     parser.add_argument("symbol", nargs="?", help="股票代码（单票模式）")
+    parser.add_argument(
+        "--light", action="store_true",
+        help="持仓轻体检：跳过辩论/T+0/深度研究，适合盘中看持仓",
+    )
     parser.add_argument("--deep", action="store_true", help="深度模式（含行业+公司深度研究）")
     parser.add_argument("--no-t0", action="store_true", dest="no_t0", help="跳过 T+0 日内时机分析")
     parser.add_argument("--batch", type=str, default="", metavar="CODES",
@@ -994,13 +1014,15 @@ def cmd_diagnose(args: list[str]):
         print("✅ 军规通过 — 无硬阻断")
     else:
         print(f"⛔ 被拦截: {', '.join(r.name for r in result.blocked_by)}")
-    # 传递 --deep / --no-t0 flag
+    # 传递 --light / --deep / --no-t0 flag
     deep_args = [symbol]
-    if parsed.deep:
+    if parsed.light:
+        deep_args.append("--light")
+    if parsed.deep and not parsed.light:
         deep_args.append("--deep")
-    if parsed.no_t0:
+    if parsed.no_t0 and not parsed.light:
         deep_args.append("--no-t0")
-    if parsed.as_of:
+    if parsed.as_of and not parsed.light:
         deep_args.append("--as-of")
         deep_args.append(parsed.as_of)
     cmd_analyze(deep_args)

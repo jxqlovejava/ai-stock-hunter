@@ -2,7 +2,17 @@
 
 轻量盘中预警：只盯 `positions.json`，不跑全链路 `diagnose`。
 
-## 行为
+## 三档分析体系
+
+| 档 | 入口 | 耗时 | 用途 |
+|----|------|------|------|
+| **sentinel** | Hermes cron `baize_sentinel.py` | ~0.3s | 盘中持仓硬规则推送 |
+| **light** | `python -m src diagnose CODE --light` | 约十秒级 | 持仓体检：行情+军规+轻诊断+裁决+仓位/风控 |
+| **daily/full** | `diagnose` / `analyze --deep` | 几十秒～分钟 | 建仓研究 / 深度研究 |
+
+light **跳过**：四大师辩论、Munger 全量、博弈论深扫、T+0、行业/公司深度、多通道资讯。
+
+## 行为（sentinel）
 
 | 情况 | 输出 | Hermes |
 |------|------|--------|

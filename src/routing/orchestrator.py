@@ -243,16 +243,32 @@ class Orchestrator:
         as_of_date: str = "",
         selection_mode: bool = False,
     ) -> OrchestratorResult:
-        """执行全链路分析。
+        """执行分析管道。
 
         Args:
-            mode: "daily"=日常持仓监控(轻量), "full"=选股分析(含行业+公司深度研究)
+            mode:
+              - "light"=持仓轻体检（跳过辩论/T+0/深度研究，十秒级）
+              - "daily"=标准全链路（无行业公司深度）
+              - "full"/"deep"/"selection"=深度（含行业+公司研究）
             macro_event_desc: 当日重大宏观事件描述（如有），触发因果链分析
             macro_event_category: 事件类型 hint (monetary/geopolitical/trade_policy/...)
             skip_t0: True=跳过 T+0 日内时机分析（Alpha/中长期机会搜索时建议禁用）
             as_of_date: 历史回测日期 (YYYY-MM-DD)，替代当前日期。
             selection_mode: True=选股模式，Alpha使用压缩版(保留相对排名,不因赛道无差全体打折)
         """
+        # ── light: 持仓轻体检（与 Hermes 哨兵形成三档：sentinel / light / full）──
+        if mode == "light":
+            from src.routing.light_run import run_light
+            return run_light(
+                self,
+                symbol=symbol,
+                market=market,
+                name=name,
+                portfolio=portfolio,
+                strategy_version=strategy_version,
+                strategy_params=strategy_params,
+            )
+
         result = OrchestratorResult(
             symbol=symbol, name=name,
             strategy_version=strategy_version,
