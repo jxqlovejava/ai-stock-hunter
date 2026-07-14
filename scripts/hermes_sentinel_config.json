@@ -1,0 +1,11 @@
+{
+  "stop_near_pct": 1.5,
+  "day_drop_pct": 5.0,
+  "day_rise_pct": 5.0,
+  "jump_pct": 1.5,
+  "amplitude_thresholds": [3.0, 5.0, 7.0, 10.0],
+  "cool_p0": 5,
+  "cool_p1": 20,
+  "cool_p2": 45,
+  "prefer_huatai": false
+}
