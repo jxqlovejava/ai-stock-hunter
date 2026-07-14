@@ -85,6 +85,8 @@ class OrchestratorResult:
     # Phase 6: 博弈论 + 投资思维模型
     game_theory_info: Optional[dict] = None
     mental_model_info: Optional[dict] = None
+    # 买点/卖点（技术 × 博弈论融合）
+    timing_advice: Optional[dict] = None
     # Phase 6+: AI Berkshire 四视角辩论
     debate_result: Optional[dict] = None
     # Phase 6+: 四视角详细观点 (含各大师独立评分/论点/担忧)

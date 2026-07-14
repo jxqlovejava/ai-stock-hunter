@@ -46,6 +46,7 @@ def test_run_light_happy_path():
     orch.data.get_quote.return_value = _fake_quote()
     orch.data.get_cross_validated_quote.return_value = (_fake_quote(), False, False)
     orch.data.get_financials.return_value = []
+    orch.data.get_history.return_value = None
     orch._quote_from_cache.return_value = None
     orch._inject_ma_data.return_value = None
     orch._inject_bottom_structure_ctx.return_value = None
@@ -70,13 +71,26 @@ def test_run_light_happy_path():
     report.source_citations = []
     orch.diagnosis.analyze.return_value = report
 
+    gt = SimpleNamespace(
+        score=55,
+        dominant_player="institutional",
+        market_regime="mixed",
+        seat_signal="neutral",
+        crowding_score=40,
+        northbound_score=50,
+        margin_score=50,
+        risks=[],
+        source_citations=[],
+        to_dict=lambda: {"score": 55, "dominant_player": "institutional"},
+    )
+    orch.gt_analyzer.analyze.return_value = gt
+
     verdict = Verdict(
         symbol="002460",
         score=48.0,
         confidence=0.65,
         recommendation="HOLD",
     )
-    # fill required fields if Verdict needs more
     orch.verdict_engine.judge.return_value = verdict
 
     signal = SimpleNamespace(
@@ -96,17 +110,20 @@ def test_run_light_happy_path():
          patch("src.output.step_output.print_doctrine"), \
          patch("src.output.step_output.print_verdict"), \
          patch("src.output.step_output.print_positioning"), \
-         patch("src.output.step_output.print_risk_control"):
+         patch("src.output.step_output.print_risk_control"), \
+         patch("src.routing.gt_timing.print_gt_timing"), \
+         patch("src.routing.light_run._load_position_row", return_value=None):
         result = run_light(orch, symbol="002460", market="SZ", name="赣锋锂业")
 
     assert result.passed is True
     assert result.report is report
     assert result.verdict is verdict
     assert result.signal is signal
+    assert result.timing_advice is not None
+    assert result.game_theory_info is not None
     assert any("light" in g for g in result.data_gaps)
     orch.diagnosis.analyze.assert_called_once()
-    # 轻路径不应走辩论
-    assert not hasattr(orch, "perspective_analyzer") or True
+    orch.gt_analyzer.analyze.assert_called_once()
 
 
 def test_orchestrator_dispatches_light():

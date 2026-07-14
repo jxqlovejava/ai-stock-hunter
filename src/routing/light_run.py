@@ -6,8 +6,11 @@
   light     — 本模块：行情+军规+准入+轻诊断+裁决+轻仓位/风控（十秒级）
   daily/full— orchestrator 全链路（几十秒～分钟）
 
-跳过: 四大师辩论、Munger 全量、博弈论深扫、T+0、行业/公司深度、
+跳过: 四大师辩论、Munger 全量、T+0 深扫、行业/公司深度、
       多通道资讯、高管/政策传导链、反操纵深扫、Alpha Lens 全量。
+
+保留轻量博弈论: GameTheoryAnalyzer + EntryExit 技术时机 → 买/卖点融合
+（用户纪律: 买点卖点不能只看技术，必须看谁在定价）。
 """
 
 from __future__ import annotations
@@ -57,7 +60,7 @@ def run_light(
 
     print()
     print("  ⚡ 分析模式: light（持仓轻体检）")
-    print("  📋 管道: 行情 → 军规 → 准入 → 轻诊断 → 裁决 → 仓位/风控")
+    print("  📋 管道: 行情 → 军规 → 准入 → 轻诊断 → 博弈/时机 → 裁决 → 仓位/风控")
 
     # ── 1. 行情（优先单源快路径，失败再双源）──
     step_start(1, "行情获取 (light)")
@@ -245,8 +248,56 @@ def run_light(
     except Exception:
         pass
 
-    # ── 5. 轻裁决 ──
-    step_start(5, "综合裁决 (light)")
+    # ── 5. 博弈论 + 技术时机 → 买/卖点 ──
+    step_start(5, "博弈论 + 买/卖点")
+    from src.routing.gt_timing import fuse_timing_with_game_theory, print_gt_timing
+
+    gt_profile = None
+    try:
+        mcap = getattr(quote, "market_cap", None) or quote_dict.get("market_cap")
+        gt_profile = orch.gt_analyzer.analyze(symbol, name, mcap, "")
+        report.game_theory_profile = gt_profile
+        result.game_theory_info = gt_profile.to_dict() if gt_profile else None
+        if gt_profile and getattr(gt_profile, "source_citations", None):
+            report.source_citations.extend(gt_profile.source_citations)
+    except Exception as e:
+        logger.debug("light game_theory failed: %s", e)
+        result.data_gaps.append("[DATA_GAP] 博弈论轻扫失败")
+
+    timing_result = _build_timing(orch, symbol, name, quote_dict)
+    pos_snap = _load_position_row(symbol)
+    held = bool(pos_snap)
+    loss_pct = 0.0
+    if pos_snap:
+        loss_pct = _pos_loss_pct(getattr(quote, "price", 0), pos_snap.get("entry_price"))
+
+    bottom_phase = ""
+    if result.doctrine_result:
+        bottom_phase = str(result.doctrine_result.get("bottom_phase") or "")
+    if not bottom_phase:
+        bottom_phase = str(getattr(report, "bottom_phase", "") or "")
+
+    advice = fuse_timing_with_game_theory(
+        timing_result,
+        gt_profile,
+        held=held,
+        current_price=float(getattr(quote, "price", 0) or 0),
+        position_loss_pct=loss_pct,
+        bottom_phase=bottom_phase,
+    )
+    result.timing_advice = advice.to_dict()
+    step_done(
+        "✅",
+        f"{advice.action} 买点={'有' if advice.entry_allowed else '无'} "
+        f"玩家={advice.dominant_player or '?'} 拥挤{advice.crowding_score}",
+    )
+    try:
+        print_gt_timing(advice)
+    except Exception:
+        pass
+
+    # ── 6. 轻裁决（含博弈乘数）──
+    step_start(6, "综合裁决 (light)")
     from src.routing.verdict import VerdictEngine
 
     verdict = orch.verdict_engine.judge(report, weights_override=weights, mode="trading")
@@ -255,43 +306,67 @@ def run_light(
         result.warnings.append(
             f"置信度偏低 ({verdict.confidence:.2f}) — light 模式仅提示不阻断"
         )
+    # 买/卖点与裁决交叉提示
+    if advice.action in ("EXIT", "REDUCE") and verdict.recommendation in ("ADD", "BUY", "STRONG_BUY"):
+        result.warnings.append(
+            f"博弈卖点({advice.action}) 与裁决({verdict.recommendation}) 冲突 — 以卖点纪律优先"
+        )
+    if advice.action == "ENTER" and verdict.recommendation in ("REDUCE", "SELL", "AVOID"):
+        result.warnings.append(
+            f"技术买点与裁决({verdict.recommendation}) 冲突 — 勿逆裁决追入"
+        )
+        advice.entry_allowed = False
+        advice.action = "WAIT"
+        result.timing_advice = advice.to_dict()
     step_done("✅", f"评分{verdict.score:.0f} {verdict.recommendation} 置信{verdict.confidence:.0%}")
     try:
         print_verdict(verdict, None, None)
     except Exception:
         pass
 
-    # ── 6. 仓位 + 风控（轻）──
-    step_start(6, "仓位调度 + 风控 (light)")
-    effective_macro_cap = 0.80 * risk_mult
+    # ── 7. 仓位 + 风控（轻，叠加 size_hint / timing）──
+    step_start(7, "仓位调度 + 风控 (light)")
+    effective_macro_cap = 0.80 * risk_mult * float(advice.size_hint or 1.0)
     signal = orch.positioning.generate_signal(
         verdict,
         macro_cap=effective_macro_cap,
         position_limits=position_limits,
-        risk_multiplier=risk_mult,
+        risk_multiplier=risk_mult * float(advice.size_hint or 1.0),
         name=name,
         extra=quote_dict,
+        timing_result=timing_result,
     )
+    # 持仓卖点纪律：EXIT/REDUCE 覆盖动作（TradeSignal: OPEN/ADD/HOLD/REDUCE/CLOSE）
+    if held and advice.action in ("EXIT", "REDUCE"):
+        mapped = "CLOSE" if advice.action == "EXIT" else "REDUCE"
+        try:
+            signal.action = mapped  # type: ignore[attr-defined]
+            if advice.action == "EXIT":
+                if hasattr(signal, "weight"):
+                    signal.weight = 0.0  # type: ignore[attr-defined]
+                if hasattr(signal, "target_weight"):
+                    signal.target_weight = 0.0  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.debug("override signal action failed: %s", e)
     result.signal = signal
     result.sizing_detail = {
         "method": getattr(signal, "sizing_method", "light"),
         "macro_cap": effective_macro_cap,
         "risk_multiplier": risk_mult,
+        "size_hint": advice.size_hint,
+        "timing_action": advice.action,
         "mode": "light",
     }
 
     # 合并持仓文件到 portfolio，供风控读止损/现价
     enriched = dict(portfolio or {})
-    pos_snap = _load_position_row(symbol)
     if pos_snap:
         enriched.update({
             "current_price": getattr(quote, "price", 0),
             "entry_price": pos_snap.get("entry_price"),
             "stop_price": pos_snap.get("stop_price"),
             "quantity": pos_snap.get("quantity"),
-            "position_loss_pct": _pos_loss_pct(
-                getattr(quote, "price", 0), pos_snap.get("entry_price")
-            ),
+            "position_loss_pct": loss_pct,
             "held": True,
         })
         print(
@@ -302,6 +377,13 @@ def run_light(
     else:
         enriched["held"] = False
         enriched["current_price"] = getattr(quote, "price", 0)
+
+    if gt_profile:
+        enriched["game_theory_risks"] = list(getattr(gt_profile, "risks", None) or [])
+        enriched["dominant_player"] = getattr(gt_profile, "dominant_player", "")
+        enriched["market_regime"] = getattr(gt_profile, "market_regime", "")
+    enriched["timing_action"] = advice.action
+    enriched["exit_urgency"] = advice.exit_urgency
 
     risk = orch.risk_ctrl.check(
         signal,
@@ -322,12 +404,14 @@ def run_light(
     except Exception:
         pass
 
-    # ── 7. 摘要 ──
+    # ── 8. 摘要 ──
     print("\n" + "=" * 50)
     print("  ⚡ light 体检完成（非全链路）")
     print(f"  标的: {name} {symbol}  价 {getattr(quote, 'price', 0):.2f}")
     print(f"  裁决: {verdict.score:.0f}/100  {verdict.recommendation}  置信{verdict.confidence:.0%}")
     print(f"  信号: {getattr(signal, 'action', '-')}  建议仓位 {getattr(signal, 'weight', 0):.1%}")
+    print(f"  买点: {advice.buy_point}")
+    print(f"  卖点: {advice.sell_point}")
     if result.warnings:
         print(f"  警告: {', '.join(result.warnings[:5])}")
     if result.data_gaps:
@@ -345,6 +429,63 @@ def run_light(
     ))
     result.passed = True
     return result
+
+
+def _build_timing(orch, symbol: str, name: str, quote_dict: dict):
+    """从日线历史构造 EntryExit TimingResult；失败返回 None。"""
+    try:
+        import pandas as pd
+        from datetime import datetime, timedelta
+        from src.routing.entry_exit_engine import EntryExitEngine
+
+        end = datetime.now()
+        start = (end - timedelta(days=180)).strftime("%Y%m%d")
+        bars = orch.data.get_history(
+            symbol, start_date=start, end_date=end.strftime("%Y%m%d"), period="daily"
+        )
+        if bars is None or getattr(bars, "empty", True):
+            # fallback: close_series only → synthetic flat OHLC
+            series = quote_dict.get("close_series") or []
+            if len(series) < 20:
+                return None
+            close = pd.DataFrame({symbol: series})
+            panel = {
+                "close": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "volume": pd.DataFrame({symbol: [1e6] * len(series)}),
+            }
+            return EntryExitEngine().evaluate(symbol, name, panel)
+
+        def _col(name_en: str, name_cn: str):
+            if name_en in bars.columns:
+                return bars[name_en]
+            if name_cn in bars.columns:
+                return bars[name_cn]
+            return None
+
+        c = _col("close", "收盘")
+        h = _col("high", "最高")
+        l = _col("low", "最低")
+        v = _col("volume", "成交量")
+        if c is None:
+            return None
+        if h is None:
+            h = c
+        if l is None:
+            l = c
+        if v is None:
+            v = c * 0 + 1e6
+        panel = {
+            "close": pd.DataFrame({symbol: c.values}, index=c.index),
+            "high": pd.DataFrame({symbol: h.values}, index=h.index),
+            "low": pd.DataFrame({symbol: l.values}, index=l.index),
+            "volume": pd.DataFrame({symbol: v.values}, index=v.index),
+        }
+        return EntryExitEngine().evaluate(symbol, name, panel)
+    except Exception as e:
+        logger.debug("light timing build failed: %s", e)
+        return None
 
 
 def _load_position_row(symbol: str) -> Optional[dict]:

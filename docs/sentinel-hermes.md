@@ -7,10 +7,13 @@
 | 档 | 入口 | 耗时 | 用途 |
 |----|------|------|------|
 | **sentinel** | Hermes cron `baize_sentinel.py` | ~0.3s | 盘中持仓硬规则推送 |
-| **light** | `python -m src diagnose CODE --light` | 约十秒级 | 持仓体检：行情+军规+轻诊断+裁决+仓位/风控 |
+| **light** | `python -m src diagnose CODE --light` | 约十秒级 | 持仓体检：行情+军规+轻诊断+**博弈/买卖点**+裁决+仓位/风控 |
 | **daily/full** | `diagnose` / `analyze --deep` | 几十秒～分钟 | 建仓研究 / 深度研究 |
 
-light **跳过**：四大师辩论、Munger 全量、博弈论深扫、T+0、行业/公司深度、多通道资讯。
+light **跳过**：四大师辩论、Munger 全量、T+0 深扫、行业/公司深度、多通道资讯、反操纵深扫。
+
+light **保留**：`GameTheoryAnalyzer`（主导玩家/拥挤/席位/北向）+ `EntryExitEngine` 技术时机 → `gt_timing` 融合买/卖点。  
+原则：买点卖点不能只看技术，必须看谁在定价。
 
 ## 行为（sentinel）
 
