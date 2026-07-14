@@ -28,6 +28,7 @@ class PositionSnapshot:
     stop_price: Optional[float] = None
     high_price: Optional[float] = None
     last_price: Optional[float] = None
+    initial_stop_pct: Optional[float] = None  # 如 -0.08
 
     @classmethod
     def from_dict(cls, symbol: str, data: dict) -> "PositionSnapshot":
@@ -40,7 +41,31 @@ class PositionSnapshot:
             stop_price=_opt_float(data.get("stop_price")),
             high_price=_opt_float(data.get("high_price")),
             last_price=_opt_float(data.get("last_price")),
+            initial_stop_pct=_opt_float(data.get("initial_stop_pct")),
         )
+
+    def market_value(self, price: float) -> float:
+        if price <= 0 or self.quantity <= 0:
+            return 0.0
+        return price * self.quantity
+
+    def cost_value(self) -> float:
+        if self.entry_price <= 0 or self.quantity <= 0:
+            return 0.0
+        return self.entry_price * self.quantity
+
+
+@dataclass(frozen=True)
+class PortfolioLimits:
+    """来自 portfolio.yaml 的仓位/风控上限（轻量）。"""
+
+    total_capital: float = 500_000.0
+    max_single_pct: float = 0.20
+    max_total_exposure: float = 0.80
+    min_cash_pct: float = 0.20
+    single_stop_loss_pct: float = 0.08  # 单票浮亏告警（相对成本）
+    portfolio_drawdown_pct: float = 0.05  # 组合相对成本的浮亏告警
+    peak_drawdown_pct: float = 0.08  # 从持仓最高价回撤
 
 
 @dataclass(frozen=True)

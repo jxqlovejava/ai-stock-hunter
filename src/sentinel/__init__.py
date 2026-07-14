@@ -8,10 +8,11 @@
 """
 
 from .engine import SentinelConfig, SentinelEngine, SentinelResult
-from .models import AlertLevel, PositionSnapshot, SentinelAlert
+from .models import AlertLevel, PortfolioLimits, PositionSnapshot, SentinelAlert
 
 __all__ = [
     "AlertLevel",
+    "PortfolioLimits",
     "PositionSnapshot",
     "SentinelAlert",
     "SentinelConfig",

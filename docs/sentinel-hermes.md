@@ -11,7 +11,9 @@
 | 有异动 | 短卡片 | 推微信 |
 | 报价失败 | stderr | 不推（避免刷屏） |
 
-## 规则（MVP）
+## 规则
+
+### 价格 / 结构（Phase A）
 
 | 级 | 规则 | 说明 |
 |----|------|------|
@@ -21,6 +23,26 @@
 | P1 | `day_drop` / `day_rise` | 日内 ±5% |
 | P2 | `jump` / `accel` | 采样跳变 / 连续同向 |
 | P2 | `amplitude_*` | 日内振幅阈值 |
+
+### 轻量风控（非完整 L4）
+
+| 级 | 规则 | 说明 |
+|----|------|------|
+| P0 | `float_loss` | 单票浮亏超阈（默认 8% 或持仓 `initial_stop_pct`） |
+| P0 | `portfolio_loss` | 组合相对成本浮亏超阈（默认 5%） |
+| P1 | `peak_drawdown` | 从持仓最高价回撤超阈（默认 8%） |
+
+### 轻量仓位管理（非完整 L3）
+
+读 `data/portfolio.yaml` → `position_limits`：
+
+| 级 | 规则 | 说明 |
+|----|------|------|
+| P1 | `single_overweight` | 单票市值 / 总资金 > `max_single_pct`（默认 20%） |
+| P1 | `total_exposure` | 总市值 / 资金 > `max_total_exposure`（默认 80%） |
+| P1 | `cash_low` | 现金比例 < `min_cash_pct`（默认 20%） |
+
+**仍然不跑** 完整 `positioning.py` / `risk_control.py` 管道。
 
 冷却：P0 5min / P1 20min / P2 45min（可配置）。
 

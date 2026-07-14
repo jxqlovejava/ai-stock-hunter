@@ -33,25 +33,41 @@ echo "==> 同步 sentinel 代码与入口"
   "$ROOT/scripts/hermes_sentinel_config.json" \
   "$HOST:$REMOTE_ROOT/scripts/"
 
-echo "==> 同步 positions.json"
+echo "==> 同步 positions.json + portfolio.yaml"
 if [[ -f "$ROOT/data/positions.json" ]]; then
   "${SCP[@]}" "$ROOT/data/positions.json" "$HOST:$REMOTE_POS"
 else
   echo "本地无 data/positions.json，跳过持仓同步"
 fi
+REMOTE_PORTFOLIO="$(dirname "$REMOTE_POS")/portfolio.yaml"
+if [[ -f "$ROOT/data/portfolio.yaml" ]]; then
+  "${SCP[@]}" "$ROOT/data/portfolio.yaml" "$HOST:$REMOTE_PORTFOLIO"
+fi
 
 echo "==> 写入默认配置（若不存在）"
 "${SSH[@]}" "$HOST" "test -f '$REMOTE_CFG' || cp '$REMOTE_ROOT/scripts/hermes_sentinel_config.json' '$REMOTE_CFG'"
 
+REMOTE_PORTFOLIO="$(dirname "$REMOTE_POS")/portfolio.yaml"
 echo "==> 安装薄包装到 ~/.hermes/scripts"
-"${SSH[@]}" "$HOST" "cat > /home/ubuntu/.hermes/scripts/baize_sentinel.py <<'PY'
+# 注意：外层双引号展开 REMOTE_*；内层 HEREDOC 用 EOF 无引号以便展开变量写入远程文件
+"${SSH[@]}" "$HOST" "cat > /home/ubuntu/.hermes/scripts/baize_sentinel.py <<EOF
 #!/usr/bin/env python3
-import os, sys
-os.environ.setdefault('BAIZE_ROOT', '$REMOTE_ROOT')
-os.environ.setdefault('BAIZE_POSITIONS', '$REMOTE_POS')
-os.environ.setdefault('BAIZE_SENTINEL_STATE', '$REMOTE_STATE')
-os.environ.setdefault('BAIZE_SENTINEL_CONFIG', '$REMOTE_CFG')
-# 把 config 路径注入 argv
+import os, sys, json
+from pathlib import Path
+os.environ.setdefault('BAIZE_ROOT', '${REMOTE_ROOT}')
+os.environ.setdefault('BAIZE_POSITIONS', '${REMOTE_POS}')
+os.environ.setdefault('BAIZE_SENTINEL_STATE', '${REMOTE_STATE}')
+os.environ.setdefault('BAIZE_SENTINEL_CONFIG', '${REMOTE_CFG}')
+cfg_path = Path(os.environ['BAIZE_SENTINEL_CONFIG'])
+try:
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+except Exception:
+    cfg = {}
+cfg['portfolio_path'] = '${REMOTE_PORTFOLIO}'
+cfg['positions_path'] = os.environ['BAIZE_POSITIONS']
+cfg['state_path'] = os.environ['BAIZE_SENTINEL_STATE']
+cfg_path.parent.mkdir(parents=True, exist_ok=True)
+cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
 args = sys.argv[1:]
 if '--config' not in args:
     args = ['--config', os.environ['BAIZE_SENTINEL_CONFIG']] + args
@@ -59,7 +75,7 @@ sys.argv = [sys.argv[0]] + args
 sys.path.insert(0, os.environ['BAIZE_ROOT'])
 from src.sentinel.__main__ import main
 raise SystemExit(main())
-PY
+EOF
 chmod +x /home/ubuntu/.hermes/scripts/baize_sentinel.py"
 
 echo "==> 试跑（--force 忽略交易时段）"
