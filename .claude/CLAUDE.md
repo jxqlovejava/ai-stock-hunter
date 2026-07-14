@@ -521,3 +521,14 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
   3. 修复后重新验证（测试通过）
   4. 调用 `/gcp` 提交并推送
   无需等待用户确认，直接执行。
+- **报错自愈（强制）**：任何 Bash 命令、Python 脚本、管道命令执行报错（exit code ≠ 0），必须：
+  1. 分析错误原因（语法错误/数据缺失/边界条件/API变更/网络超时）
+  2. 自动修复代码后重新执行
+  3. 修复 3 次仍失败 → 报告根因 + 影响范围 + 给用户的替代方案
+  4. 常见模式防御：
+     - `.format()` / f-string 中的 `None` → 加 `is not None` 守卫或 fallback 值
+     - pandas `sort_values('datetime')` 与 index 重名 → `drop(columns=['datetime'])` 后再操作
+     - API 返回空 DataFrame → `len(df) > 0` 检查
+     - 数学运算前 → `np.isfinite()` 防御 NaN
+     - 权重/百分比计算 → 分母为 0 检查
+  **禁止**：报错后假装没看见继续输出结论；报错后让用户手动修。
