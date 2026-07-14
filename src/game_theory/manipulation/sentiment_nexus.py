@@ -61,6 +61,10 @@ _NEXUS_RULES: list[tuple[tuple[str, ...], tuple[str, ...], str]] = [
     (("PANIC", "EXTREME_PANIC"),
      ("washout_small_rise_big_drop",),
      "panic_repeated_washout"),
+    # 恐慌盘面 + 多波洗盘生命周期后半段/第二波 → 割肉高峰
+    (("PANIC", "EXTREME_PANIC"),
+     ("wash_then_markup",),
+     "panic_wash_cycle_capitulation"),
 ]
 
 # 情绪分数 FEAR 逻辑（NORMAL 但分数 < 40 + 尾盘 = 恐惧收盘）
@@ -99,6 +103,9 @@ _NEXUS_ADJUSTMENTS: dict[str, dict[str, float]] = {
     },
     "panic_repeated_washout": {
         "washout_small_rise_big_drop": 0.10,
+    },
+    "panic_wash_cycle_capitulation": {
+        "wash_then_markup": 0.12,
     },
 }
 

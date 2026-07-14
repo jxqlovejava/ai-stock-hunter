@@ -35,6 +35,33 @@ except ImportError:
     SignalQualityFilter = None
     FilterResult = None
 
+try:
+    from .board_lot import BOARD_LOT, resolve_sell_quantity, resolve_buy_quantity
+    from .swing_overlay import (
+        SwingOverlayEngine,
+        SwingOverlayConfig,
+        OverlayAction,
+        OverlayDecision,
+        OverlayMarketContext,
+        PositionBucketView,
+        BucketPlan,
+        format_decision,
+    )
+    from .overlay_integration import (
+        evaluate_overlay,
+        decision_to_paper_order,
+        wrap_signal_engine_with_overlay,
+        adjust_target_weights_with_overlay,
+    )
+except ImportError:
+    BOARD_LOT = 100
+    resolve_sell_quantity = resolve_buy_quantity = None
+    SwingOverlayEngine = SwingOverlayConfig = None
+    OverlayAction = OverlayDecision = OverlayMarketContext = None
+    PositionBucketView = BucketPlan = format_decision = None
+    evaluate_overlay = decision_to_paper_order = None
+    wrap_signal_engine_with_overlay = adjust_target_weights_with_overlay = None
+
 __all__ = [
     "StrategyEngine", "PositionSizer", "ExitRuleEngine", "AddRuleEngine",
     "SignalQualityFilter", "FilterResult",
@@ -44,4 +71,11 @@ __all__ = [
     "ALL_TEMPLATES",
     "trend_following", "mean_reversion", "momentum_breakout",
     "volatility_expansion", "capital_inflow", "sector_resonance", "dragon_tiger",
+    # V1/V2 持仓 overlay
+    "BOARD_LOT", "resolve_sell_quantity", "resolve_buy_quantity",
+    "SwingOverlayEngine", "SwingOverlayConfig",
+    "OverlayAction", "OverlayDecision", "OverlayMarketContext",
+    "PositionBucketView", "BucketPlan", "format_decision",
+    "evaluate_overlay", "decision_to_paper_order",
+    "wrap_signal_engine_with_overlay", "adjust_target_weights_with_overlay",
 ]

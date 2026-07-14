@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
 """洗盘阶段操纵手法检测器 (WashoutDetector)。
 
-基于分钟级和日线行情数据，识别洗盘阶段 7 种经典庄家操纵模式:
-  日内: 高开低走 / 低开高走 / 分时单边下跌 / 持续压低
-  日级: 连续阴线洗盘 / 击穿支撑位 / 小涨大跌K线形态
+基于分钟级和日线行情数据，识别洗盘阶段经典庄家操纵模式:
+  日内: 急跌 / 高开低走 / 低开高走 / 分时单边下跌 / 持续压低
+  日级: 连续阴线 / 击穿支撑 / 小涨大跌
+  生命周期（互补，不重复形态）: 多波洗盘→后半段割肉→砸不动→拉升候选
+    见 ``wash_cycle.WashCycleAnalyzer`` / playbook ``wash_then_markup``
 
 设计原则:
   - 复用现有 ManipulationSignal / ManipulationResult 输出格式
   - 阈值常量集中定义，便于调参
   - 检测方法独立，可单独调用或批量运行
+  - 多波生命周期只做状态机，不重复单日形态检测
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -110,6 +114,8 @@ class WashoutResult:
     signals: list[ManipulationSignal] = field(default_factory=list)
     risk_level: str = "low"               # "high" / "medium" / "low"
     summary: str = ""
+    # 多波生命周期（可选；形态信号之外的状态机层）
+    wash_cycle: Any = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -204,6 +210,9 @@ class WashoutDetector:
         daily_bars: list[dict],
         name: str = "",
         ma_data: dict[int, float] | None = None,
+        *,
+        earnings_window: bool = False,
+        include_wash_cycle: bool = True,
     ) -> WashoutResult:
         """执行日级洗盘模式检测。
 
@@ -212,6 +221,8 @@ class WashoutDetector:
             daily_bars: 日线数据 [{open, high, low, close, volume, date}, ...]
             name: 股票名称
             ma_data: 均线数据 {20: 1.23, 60: 1.15, ...} 或 None（自动计算）
+            earnings_window: 是否财报窗口（注入多波生命周期）
+            include_wash_cycle: 是否附加 WashCycleAnalyzer（默认开）
 
         Returns:
             WashoutResult
@@ -229,16 +240,39 @@ class WashoutDetector:
         date_str = daily_bars[-1].get("date", datetime.now().strftime("%Y-%m-%d"))
         signals: list[ManipulationSignal] = []
 
-        # 日级 3 种检测
+        # 日级 3 种形态检测（不重复生命周期）
         signals.append(self._detect_consecutive_yin_washout(daily_bars))
         signals.append(self._detect_support_breakdown(daily_bars, ma_data))
         signals.append(self._detect_small_rise_big_drop(daily_bars))
 
         signals = [s for s in signals if s is not None]
 
+        # 多波生命周期状态机（与形态互补；quiet 不注入信号）
+        wash_cycle = None
+        if include_wash_cycle and len(daily_bars) >= 8:
+            from .wash_cycle import WashCycleAnalyzer, WashCyclePhase
+
+            wash_cycle = WashCycleAnalyzer().analyze(
+                symbol,
+                daily_bars,
+                name=name,
+                earnings_window=earnings_window,
+            )
+            cycle_sig = self._wash_cycle_to_signal(wash_cycle)
+            if cycle_sig is not None:
+                # 避免与已有形态 playbook 完全同名重复堆叠：只追加 meta 信号
+                signals.append(cycle_sig)
+            # 形态信号文案加强：后半段/第二波
+            signals = self._enrich_daily_signals_with_cycle(signals, wash_cycle)
+
         risk_score = self._calc_risk_score(signals)
         risk_level = self._classify_risk(risk_score)
         summary = self._generate_summary(signals, risk_score, risk_level)
+        if wash_cycle is not None and getattr(wash_cycle, "phase", None) is not None:
+            from .wash_cycle import WashCyclePhase
+
+            if wash_cycle.phase != WashCyclePhase.QUIET:
+                summary = f"{summary}\n  【生命周期】{wash_cycle.summary}"
 
         return WashoutResult(
             symbol=symbol,
@@ -248,6 +282,7 @@ class WashoutDetector:
             signals=signals,
             risk_level=risk_level,
             summary=summary,
+            wash_cycle=wash_cycle,
         )
 
     def detect_full(
@@ -258,28 +293,44 @@ class WashoutDetector:
         name: str = "",
         prev_close: float | None = None,
         ma_data: dict[int, float] | None = None,
+        *,
+        earnings_window: bool = False,
+        include_wash_cycle: bool = True,
     ) -> WashoutResult:
         """组合日内和日级检测，返回综合结果。"""
         intraday_signals: list[ManipulationSignal] = []
         daily_signals: list[ManipulationSignal] = []
+        wash_cycle = None
+        date_str = datetime.now().strftime("%Y-%m-%d")
 
         if minute_data is not None and not minute_data.empty:
             result = self.detect_intraday(symbol, minute_data, name, prev_close)
             intraday_signals = result.signals
             date_str = result.date
-        else:
-            date_str = datetime.now().strftime("%Y-%m-%d")
 
         if daily_bars:
-            result = self.detect_daily(symbol, daily_bars, name, ma_data)
+            result = self.detect_daily(
+                symbol,
+                daily_bars,
+                name,
+                ma_data,
+                earnings_window=earnings_window,
+                include_wash_cycle=include_wash_cycle,
+            )
             daily_signals = result.signals
-            if not date_str or date_str == datetime.now().strftime("%Y-%m-%d"):
+            wash_cycle = result.wash_cycle
+            if result.date:
                 date_str = result.date
 
         all_signals = intraday_signals + daily_signals
         risk_score = self._calc_risk_score(all_signals)
         risk_level = self._classify_risk(risk_score)
         summary = self._generate_summary(all_signals, risk_score, risk_level)
+        if wash_cycle is not None:
+            from .wash_cycle import WashCyclePhase
+
+            if wash_cycle.phase != WashCyclePhase.QUIET:
+                summary = f"{summary}\n  【生命周期】{wash_cycle.summary}"
 
         return WashoutResult(
             symbol=symbol,
@@ -289,7 +340,95 @@ class WashoutDetector:
             signals=all_signals,
             risk_level=risk_level,
             summary=summary,
+            wash_cycle=wash_cycle,
         )
+
+    @staticmethod
+    def _wash_cycle_to_signal(cycle) -> Optional[ManipulationSignal]:
+        """将多波生命周期转为 ManipulationSignal；QUIET 返回 None。"""
+        from .wash_cycle import WashCyclePhase
+
+        if cycle is None or cycle.phase == WashCyclePhase.QUIET:
+            return None
+        if cycle.confidence < 0.45 and cycle.phase not in (
+            WashCyclePhase.LATTER_HALF_CAPITULATION,
+            WashCyclePhase.WASH_EXHAUSTION,
+            WashCyclePhase.MARKUP_CANDIDATE,
+            WashCyclePhase.FAILED_WASHOUT,
+        ):
+            return None
+
+        risk = "medium"
+        if cycle.phase in (
+            WashCyclePhase.LATTER_HALF_CAPITULATION,
+            WashCyclePhase.WAVE2_DECLINE,
+            WashCyclePhase.FAILED_WASHOUT,
+        ):
+            risk = "high"
+        elif cycle.phase in (
+            WashCyclePhase.WASH_EXHAUSTION,
+            WashCyclePhase.MARKUP_CANDIDATE,
+        ):
+            risk = "medium"
+
+        return ManipulationSignal(
+            playbook_id="wash_then_markup",
+            playbook_name="多波洗盘后拉升 (连杀→后半段割肉→再洗→砸不动才拉)",
+            confidence=float(cycle.confidence),
+            risk_level=risk,
+            detected_at=str(cycle.phase.value),
+            evidence=list(cycle.evidence),
+            suggestion=cycle.retail_action_hint or cycle.summary,
+            scene="daily",
+        )
+
+    @staticmethod
+    def _enrich_daily_signals_with_cycle(
+        signals: list[ManipulationSignal],
+        cycle,
+    ) -> list[ManipulationSignal]:
+        """对已有形态信号追加后半段/第二波提示（加强，不新建重复检测）。"""
+        if cycle is None:
+            return signals
+        from .wash_cycle import WashCyclePhase
+
+        extras: list[str] = []
+        if cycle.latter_half_cut_risk or cycle.phase == WashCyclePhase.LATTER_HALF_CAPITULATION:
+            extras.append("生命周期: 处于连跌后半段，割肉高峰窗口")
+        if cycle.second_wave_active or cycle.phase == WashCyclePhase.WAVE2_DECLINE:
+            extras.append("生命周期: 第二波再洗活跃，弱反弹勿当反转")
+        if cycle.phase == WashCyclePhase.WASH_EXHAUSTION:
+            extras.append("生命周期: 量能枯竭/砸不动，洗盘或近尾声")
+        if cycle.phase == WashCyclePhase.FAILED_WASHOUT:
+            extras.append("生命周期: 跌幅过大，更像真出货，勿按洗盘硬扛")
+        if not extras:
+            return signals
+
+        enriched: list[ManipulationSignal] = []
+        for s in signals:
+            if s.playbook_id in (
+                "washout_consecutive_yin",
+                "washout_small_rise_big_drop",
+                "washout_support_breakdown",
+            ):
+                new_ev = list(s.evidence) + extras
+                tip = " | ".join(extras)
+                new_sug = f"{s.suggestion}（{tip}）"
+                enriched.append(
+                    ManipulationSignal(
+                        playbook_id=s.playbook_id,
+                        playbook_name=s.playbook_name,
+                        confidence=s.confidence,
+                        risk_level=s.risk_level,
+                        detected_at=s.detected_at,
+                        evidence=new_ev,
+                        suggestion=new_sug,
+                        scene=s.scene,
+                    )
+                )
+            else:
+                enriched.append(s)
+        return enriched
 
     # ────────────────────────────────────────────────────
     # 检测 1: 股价异常-价格急跌
@@ -847,7 +986,15 @@ class WashoutDetector:
             detected_at=yin_bars[-1].get("date", ""),
             evidence=evidence,
             scene="daily",
-            suggestion=f"🔴 连续 {yin_count} 根阴线洗盘形态。量能递减表明卖压在衰竭，非真出货。不建议在此阶段割肉。",
+            suggestion=(
+                f"🔴 连续 {yin_count} 根阴线洗盘形态。量能递减表明卖压在衰竭，非真出货。"
+                f"不建议在此阶段割肉。"
+                + (
+                    " 注意：连阴后半段是散户割肉高峰（对照 wash_then_markup）。"
+                    if yin_count >= 6
+                    else ""
+                )
+            ),
         )
 
     # ────────────────────────────────────────────────────
@@ -1070,7 +1217,11 @@ class WashoutDetector:
             detected_at=bars[-1].get("date", ""),
             evidence=evidence,
             scene="daily",
-            suggestion=f'⚠️ {pattern_name} 洗盘形态，每次小反弹后即大跌，制造"反弹就是逃命机会"的心理暗示。不建议在恐慌中出局。',
+            suggestion=(
+                f'⚠️ {pattern_name} 洗盘形态，每次小反弹后即大跌，'
+                f'制造"反弹就是逃命机会"的心理暗示。不建议在恐慌中出局。'
+                f" 弱反弹后再杀=第二波再洗，勿把小阳当反转满仓回补（对照 wash_then_markup）。"
+            ),
         )
 
     # ────────────────────────────────────────────────────
@@ -1119,14 +1270,16 @@ class WashoutDetector:
             return 0.0
 
         weights = {
-            "washout_sharp_drop": 0.20,
-            "washout_consecutive_yin": 0.20,
-            "washout_continuous_suppression": 0.15,
-            "washout_one_sided_decline": 0.15,
-            "washout_support_breakdown": 0.12,
-            "washout_small_rise_big_drop": 0.08,
-            "washout_high_open_low": 0.05,
-            "washout_low_open_high": 0.05,
+            "washout_sharp_drop": 0.18,
+            "washout_consecutive_yin": 0.18,
+            "washout_continuous_suppression": 0.13,
+            "washout_one_sided_decline": 0.13,
+            "washout_support_breakdown": 0.10,
+            "washout_small_rise_big_drop": 0.07,
+            "washout_high_open_low": 0.04,
+            "washout_low_open_high": 0.04,
+            # 多波生命周期 meta（与形态互补，权重中等避免双计放大）
+            "wash_then_markup": 0.13,
         }
 
         score = 0.0

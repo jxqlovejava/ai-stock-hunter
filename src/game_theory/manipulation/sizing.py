@@ -216,6 +216,15 @@ class ManipulationSizingEngine:
             urgency="normal",
             description="洗盘小涨大跌常规止损",
         ),
+        # 多波洗盘生命周期：默认宽止损避免后半段被洗；真出货由 FAILED 阶段调用方改纪律
+        "wash_then_markup": ManipulationStopStrategy(
+            pattern_type="wash_then_markup",
+            stop_type="wide",
+            stop_loss_pct=-0.05,
+            time_stop_days=5,
+            urgency="low",
+            description="多波洗盘宽止损：防后半段割肉/第二波再洗；破硬止损仍执行纪律",
+        ),
         "default": ManipulationStopStrategy(
             pattern_type="default",
             stop_type="normal",

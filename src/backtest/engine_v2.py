@@ -26,9 +26,20 @@ class VibeBacktestEngine:
         self,
         initial_cash: float = 1_000_000.0,
         signal_engine: Optional[Callable[[dict[str, pd.DataFrame]], pd.DataFrame]] = None,
+        use_swing_overlay: bool = True,
+        overlay_stop_pct: float = 0.08,
     ):
         self.initial_cash = initial_cash
-        self.signal_engine = signal_engine or self._default_signal
+        base = signal_engine or self._default_signal
+        self.use_swing_overlay = use_swing_overlay
+        self.overlay_stop_pct = overlay_stop_pct
+        if use_swing_overlay:
+            from src.strategy.overlay_integration import wrap_signal_engine_with_overlay
+            self.signal_engine = wrap_signal_engine_with_overlay(
+                base, initial_stop_pct=overlay_stop_pct,
+            )
+        else:
+            self.signal_engine = base
         self.guard = AShareHardGuard()
         self.aggregator = DataAggregator()
 

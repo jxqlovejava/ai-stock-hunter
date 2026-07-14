@@ -20,6 +20,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
+
 from src.backtest.cost_model import AShareCostCalculator
 from src.data.aggregator import DataAggregator
 from src.routing.orchestrator import Orchestrator, OrchestratorResult
@@ -173,6 +175,11 @@ class PaperTradingEngine:
             # 2. 同步持仓行情
             state = self._sync_positions(state)
 
+            # 2b. Swing Overlay（V1/V2 改写）— 持仓优先生成卖/滚仓订单
+            overlay_orders = self._create_overlay_orders(state)
+            if overlay_orders:
+                logger.info("Overlay 生成 %d 个订单", len(overlay_orders))
+
             # 3. 筛选候选
             candidates = self._screen_candidates(state)
             logger.info("今日候选 %d 支: %s", len(candidates), ", ".join(candidates))
@@ -181,8 +188,9 @@ class PaperTradingEngine:
             analysis_results = self._analyze_candidates(candidates, state)
             result.candidates_analyzed = len(analysis_results)
 
-            # 5. 生成订单
-            orders = self._create_orders(analysis_results, state)
+            # 5. 生成订单（overlay 卖单优先，同标的去重时 overlay 优先）
+            pipe_orders = self._create_orders(analysis_results, state)
+            orders = self._merge_orders(overlay_orders, pipe_orders)
             result.orders_generated = len(orders)
 
             # 6. 执行订单
@@ -422,8 +430,94 @@ class PaperTradingEngine:
         return results
 
     # ------------------------------------------------------------------
-    # 步骤 5: 创建订单
+    # 步骤 2b / 5: Overlay + 管道订单
     # ------------------------------------------------------------------
+
+    def _create_overlay_orders(self, state: PortfolioState) -> list[PaperOrder]:
+        """对已持仓运行 SwingOverlay，产出 PaperOrder（止损/破位优先）。"""
+        if not state.positions:
+            return []
+
+        from src.strategy.overlay_integration import (
+            position_like_to_input,
+            evaluate_overlay,
+            decision_to_paper_order,
+            compute_ma20,
+        )
+
+        orders: list[PaperOrder] = []
+        equity = float(state.total_equity or self._capital or 500_000)
+
+        for symbol, pos in state.positions.items():
+            try:
+                price = float(getattr(pos, "last_price", 0) or getattr(pos, "entry_price", 0) or 0)
+                ma20: float | None = None
+                try:
+                    # 尝试用日线算 MA20（失败则仅靠止损规则）
+                    market = "SH" if symbol.startswith(("6", "68")) else "SZ"
+                    bars = None
+                    if hasattr(self._data, "get_bars"):
+                        from datetime import timedelta
+                        from src.data.schema import Resolution
+                        end = datetime.now()
+                        start = end - timedelta(days=60)
+                        bars = self._data.get_bars(symbol, start, end, Resolution.DAY_1)
+                    if bars is not None and len(list(bars)) >= 5:
+                        closes = pd.Series(
+                            [float(getattr(b, "close", 0) or 0) for b in bars if getattr(b, "close", 0)]
+                        )
+                        ma20 = compute_ma20(closes)
+                except Exception:
+                    ma20 = None
+
+                inp = position_like_to_input(pos, equity=equity, price_override=price)
+                decision = evaluate_overlay(
+                    inp,
+                    ma20=ma20,
+                    structure_broken=(price < ma20) if ma20 and price > 0 else None,
+                    pipeline_action="HOLD",
+                    pipeline_score=50.0,
+                )
+                order = decision_to_paper_order(
+                    decision,
+                    name=getattr(pos, "name", "") or symbol,
+                    price=price,
+                    stop_price=float(getattr(pos, "stop_price", 0) or 0),
+                    score=70.0 if decision.urgency == "HIGH" else 55.0,
+                )
+                if order:
+                    orders.append(order)
+                    logger.info(
+                        "Overlay %s → %s %d股 (%s)",
+                        symbol, order.action, order.quantity, decision.rule,
+                    )
+            except Exception as e:
+                logger.warning("Overlay 评估 %s 失败: %s", symbol, e)
+
+        return orders
+
+    @staticmethod
+    def _merge_orders(
+        overlay_orders: list[PaperOrder],
+        pipe_orders: list[PaperOrder],
+    ) -> list[PaperOrder]:
+        """合并订单：同标的优先保留 overlay（持仓风控优先于新开仓）。"""
+        by_sym: dict[str, PaperOrder] = {}
+        for o in overlay_orders:
+            by_sym[o.symbol] = o
+        for o in pipe_orders:
+            if o.symbol in by_sym:
+                # 已有 overlay 卖出时，跳过同标的买入，避免对冲噪声
+                if by_sym[o.symbol].action == "sell" and o.action == "buy":
+                    logger.info("跳过管道买入 %s：overlay 已建议卖出", o.symbol)
+                    continue
+                if by_sym[o.symbol].action == o.action:
+                    continue  # overlay 优先
+            by_sym[o.symbol] = o
+        # overlay 卖单在前
+        sells = [o for o in by_sym.values() if o.action == "sell"]
+        buys = [o for o in by_sym.values() if o.action == "buy"]
+        return sells + buys
 
     def _create_orders(
         self,

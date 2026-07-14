@@ -26,6 +26,7 @@
   python -m src poster --title --text         # AI 社区发帖
   python -m src evolution <sub>               # 策略进化（论文驱动）
   python -m src trade-track <add|list|kelly>  # 交易追踪（凯利公式）
+  python -m src swing-overlay [code]          # 持仓 overlay（V1解套改写+V2分桶做T）
 
 数据源: mootdx+腾讯 > 国信 > AKShare. 设置 MX_APIKEY 以启用妙想API.
 """
@@ -1078,26 +1079,32 @@ def cmd_policy(args: list[str]):
 
 @_safe_cmd
 def cmd_manipulation(args: list[str]):
-    """庄家操盘手法检测 — 7 种经典操纵模式实时识别。
+    """庄家操盘手法检测 — 日内操纵 + 日级洗盘 + 多波生命周期。
 
-    用法: python -m src manipulation <code> [--date YYYY-MM-DD]
+    用法: python -m src manipulation <code> [--date YYYY-MM-DD] [--earnings]
 
     检测模式: 诱多出货 / 诱空吸筹 / 对倒拉升 / 洗盘震仓 /
              分时钓鱼线 / 尾盘偷袭拉升 / 尾盘偷袭砸盘
+             + 洗盘形态 / 多波洗盘后拉升 (wash_then_markup)
     """
     import argparse
     from datetime import datetime
-    from src.game_theory.manipulation import ManipulationDetector
+    from src.game_theory.manipulation import ManipulationDetector, WashoutDetector
     from src.data.aggregator import DataAggregator
 
     parser = argparse.ArgumentParser(description="庄家操盘手法检测")
     parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
     parser.add_argument("--date", type=str, default="", help="检测日期 YYYY-MM-DD")
+    parser.add_argument(
+        "--earnings",
+        action="store_true",
+        help="标记处于财报/中报窗口（多波洗盘可能用业绩叙事掩护）",
+    )
     parsed = parser.parse_args(args)
 
     symbol = parsed.symbol
     if not symbol:
-        print("用法: python -m src manipulation <code> [--date YYYY-MM-DD]")
+        print("用法: python -m src manipulation <code> [--date YYYY-MM-DD] [--earnings]")
         print()
         print("检测 7 种经典庄家操纵模式:")
         print("  🔴 诱多出货 — 虚假突破→高位放量→跳水")
@@ -1107,6 +1114,10 @@ def cmd_manipulation(args: list[str]):
         print("  🔴 分时钓鱼线 — 直线拉升→缓慢阴跌出货")
         print("  🟡 尾盘偷袭拉升 — 14:50后异常拉升操纵收盘价")
         print("  🟡 尾盘偷袭砸盘 — 14:50后异常砸盘打压股价")
+        print()
+        print("日级洗盘 + 生命周期（与上列形态互补）:")
+        print("  🟠 连续阴线 / 小涨大跌 / 击穿支撑 等洗盘形态")
+        print("  🟡 多波洗盘后拉升 — 后半段割肉高峰 / 第二波再洗 / 砸不动才拉")
         return
 
     if not re.match(r"^\d{6}$", symbol):
@@ -1164,7 +1175,7 @@ def cmd_manipulation(args: list[str]):
         detector = ManipulationDetector()
         result = detector.detect(symbol, minute_df, name=name)
 
-    # 输出结果
+    # 输出日内操纵结果
     print(f"   操纵风险评分: {result.risk_score:.0f}/100")
     print(f"   风险等级: {result.risk_level.upper()}")
     print()
@@ -1184,6 +1195,63 @@ def cmd_manipulation(args: list[str]):
 
     print("─" * 60)
     print(result.summary)
+
+    # ── 日级洗盘形态 + 多波生命周期（去重：形态归 WashoutDetector，生命周期状态机附加）──
+    print()
+    print("🌊 日级洗盘 / 多波生命周期")
+    print("─" * 60)
+    daily_bars: list[dict] = []
+    try:
+        hist = agg.get_history(symbol)
+        if hist is not None and hasattr(hist, "iterrows"):
+            for _, row in hist.tail(40).iterrows():
+                daily_bars.append({
+                    "open": float(row.get("open", row.get("开盘", 0)) or 0),
+                    "high": float(row.get("high", row.get("最高", 0)) or 0),
+                    "low": float(row.get("low", row.get("最低", 0)) or 0),
+                    "close": float(row.get("close", row.get("收盘", 0)) or 0),
+                    "volume": float(row.get("volume", row.get("成交量", row.get("vol", 0))) or 0),
+                    "date": str(row.get("date", row.get("datetime", row.get("日期", "")))),
+                })
+        elif isinstance(hist, list):
+            daily_bars = hist[-40:]
+    except Exception as exc:
+        print(f"   ⚠️ 日线获取失败，跳过洗盘生命周期: {exc}")
+        daily_bars = []
+
+    if daily_bars:
+        wo = WashoutDetector().detect_daily(
+            symbol,
+            daily_bars,
+            name=name,
+            earnings_window=bool(parsed.earnings),
+        )
+        print(f"   洗盘风险评分: {wo.washout_risk_score:.0f}/100 | {wo.risk_level.upper()}")
+        if wo.signals:
+            for sig in wo.signals:
+                emoji = {"high": "🔴", "medium": "🟠", "low": "🟡"}.get(sig.risk_level, "⚪")
+                print(f"   {emoji} {sig.playbook_name}")
+                print(f"      置信度: {sig.confidence:.0%} | 阶段/时间: {sig.detected_at}")
+                for e in sig.evidence[:5]:
+                    print(f"      • {e}")
+                if sig.suggestion:
+                    print(f"      → {sig.suggestion}")
+                print()
+        else:
+            print("   🟢 未检测到日级洗盘形态 / 活跃多波序列")
+        if wo.wash_cycle is not None:
+            c = wo.wash_cycle
+            print(
+                f"   生命周期: {c.phase.value} | 波次≈{c.wave_count} | "
+                f"连弱{c.decline_days}日 | 累计{c.cumulative_drop_pct:.1%} | "
+                f"后半段割肉风险={'是' if c.latter_half_cut_risk else '否'}"
+            )
+            if c.retail_action_hint:
+                print(f"   → {c.retail_action_hint}")
+        print()
+        print(wo.summary)
+    else:
+        print("   ⚠️ 无可用日线，跳过 washout / wash_cycle")
 
 
 def cmd_calibrate():
@@ -3352,26 +3420,76 @@ def cmd_position_monitor(args: list[str]):
 
     elif parsed.action == "check":
         from src.data.aggregator import DataAggregator
+        from src.strategy.overlay_integration import (
+            position_like_to_input,
+            evaluate_overlay,
+            format_overlay_monitor_lines,
+            compute_ma20,
+        )
+        from datetime import timedelta
+        import pandas as pd
+
         agg = DataAggregator()
         positions = mgr.get_all()
         if not positions:
             print("📭 暂无开仓头寸。")
             return
         total_alerts = 0
+        overlay_hits = 0
+        equity = 500_000.0
+        try:
+            from src.learner.preference.loader import InvestorPreferenceLoader
+            equity = float(InvestorPreferenceLoader().load().position_limits.total_capital)
+        except Exception:
+            pass
+
+        print("\n📡 价格更新 + 止损检查 + Swing Overlay\n")
         for p in positions:
             try:
                 q = agg.get_quote(p.symbol)
+                price = float(q.price) if q and q.price else float(p.last_price or p.entry_price or 0)
                 if q and q.price:
-                    _, alerts = mgr.update_price(p.symbol, float(q.price))
+                    _, alerts = mgr.update_price(p.symbol, price)
                     for a in alerts:
                         icon = {"CRITICAL": "🚨", "WARNING": "⚠️", "INFO": "ℹ️"}.get(a.severity, "📌")
                         print(f"  {icon} [{a.severity}] {p.symbol} {p.name}: {a.message}")
                         total_alerts += 1
                 else:
-                    print(f"  ⚠️ {p.symbol}: 行情获取失败")
+                    print(f"  ⚠️ {p.symbol}: 行情获取失败，用 last_price={price:.2f}")
+
+                # MA20（尽力）
+                ma20 = None
+                try:
+                    from src.data.schema import Resolution
+                    end = datetime.now()
+                    start = end - timedelta(days=60)
+                    bars = agg.get_bars(p.symbol, start, end, Resolution.DAY_1)
+                    if bars:
+                        closes = pd.Series(
+                            [float(getattr(b, "close", 0) or 0) for b in bars if getattr(b, "close", 0)]
+                        )
+                        ma20 = compute_ma20(closes)
+                except Exception:
+                    ma20 = None
+
+                # 重新读更新后的状态
+                p2 = mgr.get(p.symbol) or p
+                inp = position_like_to_input(p2, equity=equity, price_override=price)
+                decision = evaluate_overlay(
+                    inp,
+                    ma20=ma20,
+                    structure_broken=(price < ma20) if ma20 and price > 0 else None,
+                    pipeline_score=50.0,
+                    pipeline_action="HOLD",
+                )
+                for line in format_overlay_monitor_lines(decision):
+                    print(line)
+                if decision.action.value not in ("HOLD",):
+                    overlay_hits += 1
             except Exception as e:
                 print(f"  ⚠️ {p.symbol}: {e}")
-        print(f"\n✅ 检查完成。{total_alerts} 条预警。")
+        print(f"\n✅ 检查完成。止损预警 {total_alerts} 条 · Overlay 非 HOLD {overlay_hits} 条")
+        print("   （只读建议；执行请用 paper-trade 或人工确认）")
 
     elif parsed.action == "detail":
         sym = parsed.symbol
@@ -3419,6 +3537,130 @@ def cmd_position_monitor(args: list[str]):
             print(f"✅ 持仓状态已清除: {sym} (入场 {state.entry_price:.2f}, 最大浮盈 {state.max_favor_pct*100:.1f}%)")
         else:
             print(f"📭 持仓未找到: {sym}")
+
+
+@_safe_cmd
+def cmd_swing_overlay(args: list[str]):
+    """持仓 Swing Overlay — V1 解套改写 + V2 分桶做 T（只读建议，不自动下单）。
+
+    用法:
+      python -m src swing-overlay              # 对 data/positions.json 全部持仓评估
+      python -m src swing-overlay 002460       # 单票
+      python -m src swing-overlay plan --equity 500000 --price 50 --pct 0.15
+    """
+    import argparse
+    from src.strategy.swing_overlay import (
+        SwingOverlayEngine,
+        OverlayMarketContext,
+        PositionBucketView,
+        format_decision,
+    )
+    from src.routing.position_state import PositionStateManager
+    from src.learner.preference.loader import InvestorPreferenceLoader
+
+    parser = argparse.ArgumentParser(description="Swing Overlay 持仓建议")
+    parser.add_argument("symbol", nargs="?", default="", help="股票代码（空=全部持仓）")
+    parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
+    parser.add_argument("--equity", type=float, default=0.0, help="总权益（默认读偏好 total_capital）")
+    parser.add_argument("--price", type=float, default=0.0, help="plan 模式用现价")
+    parser.add_argument("--pct", type=float, default=0.10, help="plan 模式目标仓位占比")
+    parser.add_argument("--ma20", type=float, default=0.0, help="可选 MA20")
+    parser.add_argument("--near-support", action="store_true")
+    parser.add_argument("--near-resistance", action="store_true")
+    parser.add_argument("--pipeline-score", type=float, default=50.0)
+    parser.add_argument("--pipeline-action", default="HOLD")
+    # support: python -m src swing-overlay plan ...
+    if args and args[0] == "plan":
+        plan_args = args[1:]
+        parsed, _ = parser.parse_known_args(plan_args)
+        eng = SwingOverlayEngine()
+        equity = parsed.equity
+        if equity <= 0:
+            try:
+                prefs = InvestorPreferenceLoader().load()
+                equity = float(prefs.position_limits.total_capital)
+            except Exception:
+                equity = 500_000.0
+        price = parsed.price
+        if price <= 0:
+            print("用法: swing-overlay plan --price <现价> [--equity N] [--pct 0.10]")
+            return
+        plan = eng.plan_buckets(equity, price, parsed.pct)
+        print("📦 分桶计划 (V2 改写)")
+        print(f"   权益={equity:.0f}  现价={price:.2f}  目标权重={parsed.pct:.0%}")
+        print(f"   core={plan.core_shares} 股 ({plan.core_weight_pct:.2%})")
+        print(f"   swing={plan.swing_shares} 股 ({plan.swing_weight_pct:.2%})")
+        print(f"   total={plan.total_shares} 股  note={plan.note}")
+        print("   ⚠️ 仅规划；建仓须走管道 + L4 风控")
+        return
+
+    parsed, _ = parser.parse_known_args(args)
+    eng = SwingOverlayEngine()
+    mgr = PositionStateManager()
+
+    equity = parsed.equity
+    if equity <= 0:
+        try:
+            prefs = InvestorPreferenceLoader().load()
+            equity = float(prefs.position_limits.total_capital)
+        except Exception:
+            equity = 500_000.0
+
+    positions = mgr.get_all()
+    if parsed.symbol:
+        positions = [p for p in positions if p.symbol == parsed.symbol]
+        if not positions:
+            print(f"📭 未找到持仓 {parsed.symbol}（data/positions.json）")
+            return
+    if not positions:
+        print("📭 暂无开仓。先 record-position / 管道建仓后再评估 overlay。")
+        return
+
+    print(f"\n🎯 Swing Overlay 评估（{len(positions)} 只）— 只读建议，不自动下单")
+    print("   规则: V1 破位/止损优先 · 禁越跌越加 · V2 core/swing · A股一手=100股\n")
+
+    from src.data.aggregator import DataAggregator
+    agg = DataAggregator()
+
+    for p in positions:
+        price = parsed.price if parsed.price > 0 else float(p.last_price or p.entry_price)
+        ma20 = parsed.ma20 if parsed.ma20 > 0 else None
+        try:
+            q = agg.get_quote(p.symbol)
+            if q and q.price:
+                price = float(q.price)
+        except Exception:
+            pass
+
+        core, swing = eng.split_existing(int(p.quantity))
+        view = PositionBucketView(
+            symbol=p.symbol,
+            name=p.name or "",
+            total_shares=int(p.quantity),
+            core_shares=core,
+            swing_shares=swing,
+            entry_price=float(p.entry_price),
+            current_price=price,
+            stop_price=float(p.stop_price or 0),
+            equity=equity,
+        )
+        ctx = OverlayMarketContext(
+            price=price,
+            ma20=ma20,
+            stop_price=float(p.stop_price or 0),
+            near_support=bool(parsed.near_support),
+            near_resistance=bool(parsed.near_resistance),
+            pipeline_score=float(parsed.pipeline_score),
+            pipeline_action=str(parsed.pipeline_action),
+            structure_broken=(price < ma20) if ma20 else None,
+            swing_shares_sellable=swing,
+        )
+        decision = eng.evaluate(view, ctx)
+        print(format_decision(decision))
+        print()
+
+    print("说明: EXIT/REDUCE 数量已按 100 股一手处理；1 手持仓半仓不可行→建议清仓。")
+    print("      本命令不改 positions.json，不产生交易指令。")
 
 
 def _get_quotes_dict(aggregator, symbols: list[str]) -> dict[str, dict]:
@@ -5527,6 +5769,8 @@ def main():
         # Phase 12: 持仓实时监控 + 动态止盈止损
         "position-monitor": lambda: cmd_position_monitor(args),
         "pm": lambda: cmd_position_monitor(args),
+        # V1/V2 改写: 持仓 swing overlay（只读）
+        "swing-overlay": lambda: cmd_swing_overlay(args),
         # Phase 12: 回调入场
         "pullback-scan": lambda: cmd_pullback_scan(args),
         "pullback-watch": lambda: cmd_pullback_watch(args),
