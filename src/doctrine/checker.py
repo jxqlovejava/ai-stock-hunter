@@ -99,6 +99,38 @@ class DoctrineChecker:
         if rule.id == "r012":
             return ctx.get("is_limit_up", False)
 
+        # 不接飞刀：急跌无基本面改善，或 A/B 段空头仍强
+        if rule.id == "r013":
+            drop_3 = ctx.get("drop_3day_pct", 0.0) or 0.0
+            fund_ok = ctx.get("fundamental_improving", False)
+            if drop_3 <= -15.0 and not fund_ok:
+                return True
+            phase = str(ctx.get("bottom_phase", "") or "")
+            ab = ctx.get("bottom_ab_ratio", None)
+            if phase == "CATCHING_KNIFE":
+                return True
+            if ab is not None and float(ab) >= 1.0 and phase not in (
+                "LIGHT_LONG_SETUP", "COUNTER_CONFIRMED", "NOT_IN_DOWNTREND", ""
+            ):
+                return True
+            return False
+
+        # 大底须走出：禁止「感觉抄底」；未走完结构不得试多
+        if rule.id == "r013b":
+            phase = str(ctx.get("bottom_phase", "") or "")
+            # 明确接飞刀 / 顺势未衰竭
+            if phase == "CATCHING_KNIFE":
+                return True
+            # 下跌中但仅顺势衰竭、逆势未确认 — 提醒不得动手
+            if phase == "TREND_EXHAUSTED":
+                return True
+            # 外部显式标记：想抄底但结构未允许
+            if ctx.get("wants_bottom_fish", False) and not ctx.get(
+                "bottom_entry_allowed", False
+            ):
+                return True
+            return False
+
         # 利好出尽是利空：重大利好 + 5 日涨幅 > 15%
         if rule.id == "r014":
             has_news = ctx.get("has_major_positive_news", False)

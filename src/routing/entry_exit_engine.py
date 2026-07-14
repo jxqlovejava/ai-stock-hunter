@@ -5,7 +5,7 @@
 输出具体的入场区间、目标区间、建议止损价和时间止损天数。
 
 信号类型:
-  入场: 放量突破 / 均线金叉+量能确认 / 回踩支撑反弹 / 超卖反弹
+  入场: 放量突破 / 均线金叉+量能确认 / 回踩支撑反弹 / 超卖反弹 / 底部结构(A/B段)
   出场: 跌破关键均线 / 放量滞涨 / 超买回落 / 连板中断 / 达目标位
 """
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EntrySignal:
     """入场信号。"""
-    type: str                      # BREAKOUT / MA_GOLDEN_CROSS / PULLBACK_SUPPORT / OVERSOLD_BOUNCE
+    type: str                      # BREAKOUT / MA_GOLDEN_CROSS / PULLBACK_SUPPORT / OVERSOLD_BOUNCE / BOTTOM_STRUCTURE
     description: str
     entry_zone_low: float          # 入场区间下限
     entry_zone_high: float         # 入场区间上限
@@ -146,6 +146,11 @@ class EntryExitEngine:
         ob = self._detect_oversold_bounce(close)
         if ob:
             entry_signals.append(ob)
+
+        # 5. 底部结构（A/B 段 + 逆势确认 + 回踩不破）
+        bs = self._detect_bottom_structure_entry(close, high, low)
+        if bs:
+            entry_signals.append(bs)
 
         result.entry_signals = entry_signals
         if entry_signals:
@@ -346,6 +351,59 @@ class EntryExitEngine:
                 ],
             )
         return None
+
+    def _detect_bottom_structure_entry(
+        self,
+        close: pd.DataFrame,
+        high: pd.DataFrame,
+        low: pd.DataFrame,
+    ) -> Optional[EntrySignal]:
+        """底部结构入场：顺势衰竭 + 逆势确认 + 回踩不破 → 仅轻仓试多。
+
+        单列面板（主分析标的）优先；多列时取第一列。
+        """
+        if close is None or close.shape[0] < 40:
+            return None
+        try:
+            from src.analysis.bottom_structure import (
+                BottomPhase,
+                analyze_bottom_structure,
+            )
+
+            col = close.columns[0]
+            c = close[col].astype(float).values
+            h = high[col].astype(float).values if high is not None and col in high.columns else c
+            l = low[col].astype(float).values if low is not None and col in low.columns else c
+            # open 近似用前收
+            o = np.roll(c, 1)
+            o[0] = c[0]
+
+            result = analyze_bottom_structure(h, l, c, o)
+            phase = result.phase
+            if phase == BottomPhase.LIGHT_LONG_SETUP and result.entry_allowed:
+                px = float(c[-1])
+                stop = result.swing_low * 0.997 if result.swing_low > 0 else px * 0.98
+                return EntrySignal(
+                    type="BOTTOM_STRUCTURE",
+                    description=(
+                        f"底部结构成立(B/A={result.ab_ratio:.2f}): "
+                        f"顺势不足+逆势确认+回踩不破 → 轻仓试多"
+                    ),
+                    entry_zone_low=round(max(stop, px * 0.99), 2),
+                    entry_zone_high=round(px * 1.01, 2),
+                    confidence=min(0.78, max(0.55, result.confidence)),
+                    trigger_conditions=[
+                        f"A段跌幅 {result.a_decline_pct:.1f}% > B段 {result.b_decline_pct:.1f}%",
+                        "逆势 K 线确认（看涨吞没/底部分形）+ 结构突破",
+                        f"回踩不破前低 {result.swing_low:.2f}",
+                        "仅轻仓试多，前高附近止盈",
+                    ],
+                )
+            # 接飞刀阶段不产生入场；其他阶段静默
+            return None
+        except Exception:
+            logger.debug("底部结构入场检测跳过", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # 出场检测

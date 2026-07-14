@@ -74,6 +74,11 @@ class DiagnosisReport:
     pullback_score: float = 50.0             # 回调质量分 0-100
     pullback_state: Optional[object] = None  # PullbackState (lazy import)
     pullback_authentic: bool = True          # 回调是否通过反操纵验证
+    # Phase 12b: 底部结构 A/B 段（大底须走出）
+    bottom_structure: Optional[object] = None  # BottomStructureResult
+    bottom_structure_score: float = 50.0       # 0-100
+    bottom_phase: str = ""                     # BottomPhase value
+    bottom_entry_allowed: bool = False         # 仅 LIGHT_LONG_SETUP
     # Phase 12: 大宗交易机构资金
     block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
     block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
@@ -284,6 +289,35 @@ class DiagnosisEngine:
             0.6 + 0.4 * (report.pullback_score / 100.0),
         )
 
+        # Phase 12b: 底部结构 A/B 段（顺势不足 + 逆势确认）
+        bs = self._detect_bottom_structure(quote)
+        report.bottom_structure = bs
+        if bs is not None:
+            report.bottom_structure_score = float(getattr(bs, "score", 50.0))
+            report.bottom_phase = str(getattr(getattr(bs, "phase", ""), "value", "") or getattr(bs, "phase", ""))
+            report.bottom_entry_allowed = bool(getattr(bs, "entry_allowed", False))
+            # 接飞刀阶段显著压制动量；轻仓 setup 小幅抬升
+            if report.bottom_phase == "CATCHING_KNIFE":
+                report.momentum_score = self._apply_weight(report.momentum_score, 0.55)
+                report.data_gaps.append(
+                    f"[WARN] 底部结构接飞刀: B/A="
+                    f"{getattr(bs, 'ab_ratio', 0):.2f} — 禁止抄底"
+                )
+            elif report.bottom_phase == "TREND_EXHAUSTED":
+                report.data_gaps.append(
+                    "[INFO] 顺势力量衰竭（B<A），等待逆势确认，不可动手"
+                )
+            elif report.bottom_phase == "LIGHT_LONG_SETUP":
+                report.momentum_score = self._apply_weight(report.momentum_score, 1.08)
+                report.data_gaps.append(
+                    "[INFO] 底部结构成立：顺势不足+逆势确认+回踩不破 → 仅轻仓试多"
+                )
+            # 结构分与回调分合成微调（权重轻，避免盖过基本面）
+            report.momentum_score = self._apply_weight(
+                report.momentum_score,
+                0.85 + 0.15 * (report.bottom_structure_score / 100.0),
+            )
+
         # Phase 12: 大宗交易机构资金信号
         report.block_trade_score, report.block_trade_signal = (
             self._score_block_trade(block_trade_profile)
@@ -342,6 +376,58 @@ class DiagnosisEngine:
                 "回调检测跳过 [%s]: 依赖模块不可用或数据不足", symbol
             )
             return 50.0, None, True
+
+    @staticmethod
+    def _detect_bottom_structure(quote: dict | None) -> object | None:
+        """Phase 12b: A/B 段底部结构（大底须走出）。
+
+        优先 daily_bars；回退 close/high/low series。
+        """
+        if not quote:
+            return None
+        try:
+            from src.analysis.bottom_structure import analyze_bottom_structure
+
+            daily_bars = quote.get("daily_bars") or []
+            opens: list[float] = []
+            highs: list[float] = []
+            lows: list[float] = []
+            closes: list[float] = []
+
+            if daily_bars and len(daily_bars) >= 40:
+                for b in daily_bars:
+                    # Bar dataclass 或 dict
+                    if hasattr(b, "close"):
+                        opens.append(float(getattr(b, "open", b.close)))
+                        highs.append(float(b.high))
+                        lows.append(float(b.low))
+                        closes.append(float(b.close))
+                    elif isinstance(b, dict):
+                        closes.append(float(b.get("close", 0) or 0))
+                        highs.append(float(b.get("high", closes[-1]) or closes[-1]))
+                        lows.append(float(b.get("low", closes[-1]) or closes[-1]))
+                        opens.append(float(b.get("open", closes[-1]) or closes[-1]))
+            else:
+                closes = list(quote.get("close_series") or [])
+                highs = list(quote.get("high_series") or closes)
+                lows = list(quote.get("low_series") or closes)
+                opens = list(quote.get("open_series") or closes)
+
+            if len(closes) < 40:
+                return None
+            # 对齐长度
+            n = min(len(opens), len(highs), len(lows), len(closes))
+            if n < 40:
+                return None
+            return analyze_bottom_structure(
+                highs[-n:], lows[-n:], closes[-n:], opens[-n:],
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "底部结构分析跳过: 数据不足或计算异常", exc_info=True
+            )
+            return None
 
     def _collect_citations(
         self,

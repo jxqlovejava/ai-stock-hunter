@@ -341,6 +341,29 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if report.cycle_phase:
             lines.append(f"  周期 {CN.get(report.cycle_phase, report.cycle_phase)}  适配 {report.cycle_score:.0f}/100")
 
+        # 底部结构 A/B 段
+        bottom_phase = getattr(report, "bottom_phase", "") or ""
+        if bottom_phase:
+            bs = getattr(report, "bottom_structure", None)
+            ab = getattr(bs, "ab_ratio", None) if bs is not None else None
+            bs_score = getattr(report, "bottom_structure_score", 50.0)
+            entry_ok = getattr(report, "bottom_entry_allowed", False)
+            phase_cn = {
+                "CATCHING_KNIFE": "🔴接飞刀",
+                "TREND_EXHAUSTED": "🟡顺势衰竭",
+                "COUNTER_CONFIRMED": "🟡逆势确认",
+                "LIGHT_LONG_SETUP": "🟢轻仓试多",
+                "NOT_IN_DOWNTREND": "⚪非下跌",
+                "NO_PIVOT": "⚪无中枢",
+            }.get(bottom_phase, bottom_phase)
+            ab_txt = f" B/A={ab:.2f}" if isinstance(ab, (int, float)) and ab > 0 else ""
+            lines.append(
+                f"  📐 底部结构 {phase_cn}{ab_txt}  分{bs_score:.0f}"
+                f"  {'可轻仓' if entry_ok else '禁抄底'}"
+            )
+            if bs is not None and getattr(bs, "summary", ""):
+                lines.append(f"     {bs.summary}")
+
         # 多空
         # 多维诊断综述
         if report.dimension_synthesis:

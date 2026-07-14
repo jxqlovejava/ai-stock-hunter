@@ -87,7 +87,7 @@ WEIGHT_PRESETS: dict[tuple[RiskProfile, InvestmentGoal], dict[str, float]] = {
 BLOCK_RULE_IDS = {
     "r001", "r002", "r003", "r004", "r005",    # 仓位与资金管理
     "r006",                                      # ST 一票否决
-    "r012", "r013", "r014",                      # 买卖纪律
+    "r012", "r013", "r013b", "r014",             # 买卖纪律（含大底须走出）
     "r017", "r018",                              # 情绪纪律
     "r022", "r023",                              # 信息纪律
     "r025", "r026",                              # 风控与止盈止损

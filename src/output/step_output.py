@@ -193,6 +193,28 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
 
     print(f"  置信度 {getattr(report, 'confidence', 0):.0%}  数据 {getattr(report, 'data_freshness', '?')}")
 
+    # 底部结构 A/B 段（大底须走出）
+    bottom_phase = getattr(report, "bottom_phase", "") or ""
+    if bottom_phase:
+        bs_score = getattr(report, "bottom_structure_score", 50.0)
+        bs = getattr(report, "bottom_structure", None)
+        ab = getattr(bs, "ab_ratio", None) if bs is not None else None
+        entry_ok = getattr(report, "bottom_entry_allowed", False)
+        phase_cn = {
+            "CATCHING_KNIFE": "🔴 接飞刀(B≥A)",
+            "TREND_EXHAUSTED": "🟡 顺势衰竭(B<A)",
+            "COUNTER_CONFIRMED": "🟡 逆势已确认",
+            "LIGHT_LONG_SETUP": "🟢 轻仓试多窗口",
+            "NOT_IN_DOWNTREND": "⚪ 非下跌环境",
+            "NO_PIVOT": "⚪ 无有效中枢",
+            "DATA_INSUFFICIENT": "⚪ 数据不足",
+        }.get(bottom_phase, bottom_phase)
+        ab_txt = f" B/A={ab:.2f}" if isinstance(ab, (int, float)) and ab > 0 else ""
+        entry_txt = " | 允许轻仓试多" if entry_ok else " | 禁止抄底/试多"
+        print(f"  📐 底部结构 {phase_cn}{ab_txt}  分{bs_score:.0f}{entry_txt}")
+        if bs is not None and getattr(bs, "summary", ""):
+            print(f"     {bs.summary}")
+
     # 诊断综述
     synthesis = getattr(report, "dimension_synthesis", "")
     if synthesis:

@@ -379,6 +379,16 @@ class Orchestrator:
         # r014b 不受影响（不依赖新闻）；r014 由后续 diagnosis.surge_risk 兜底。
         ctx["has_major_positive_news"] = False
 
+        # 注入 r013/r013b：3 日急跌 + 底部结构 A/B 段
+        if len(close_series) >= 4:
+            c0, c3 = close_series[-1], close_series[-4]
+            if c3 and c3 > 0:
+                ctx["drop_3day_pct"] = round((c0 - c3) / c3 * 100.0, 2)
+        ctx["fundamental_improving"] = bool(
+            quote_dict.get("fundamental_improving", False)
+        )
+        self._inject_bottom_structure_ctx(symbol, market, quote_dict, ctx)
+
         # 注入 r032/r033/r034 财务质量军规所需上下文
         self._inject_financial_doctrine_ctx(symbol, market, ctx)
 
@@ -3031,6 +3041,46 @@ class Orchestrator:
             "summary": "不可用", "errors": [str(e) if 'e' in dir() else "unknown"],
             "total_items": 0,
         }
+
+    def _inject_bottom_structure_ctx(
+        self,
+        symbol: str,
+        market: str,
+        quote_dict: dict,
+        ctx: dict,
+    ) -> None:
+        """注入 r013/r013b 所需的底部结构上下文（A/B 段相位）。
+
+        优先 quote_dict 内 daily_bars / OHLC series；不足时尝试拉日线。
+        失败时静默，不阻断军规主流程。
+        """
+        try:
+            from src.analysis.bottom_structure import analyze_bottom_structure
+            from src.routing.diagnosis import DiagnosisEngine
+
+            # 复用诊断侧抽取逻辑：构造最小 quote
+            q = dict(quote_dict or {})
+            if not q.get("daily_bars") and hasattr(self, "data") and self.data is not None:
+                try:
+                    bars = None
+                    if hasattr(self.data, "get_daily_bars"):
+                        bars = self.data.get_daily_bars(symbol, market, count=90)
+                    if bars:
+                        q["daily_bars"] = bars
+                except Exception:
+                    pass
+
+            bs = DiagnosisEngine._detect_bottom_structure(q)
+            if bs is None:
+                return
+            phase = getattr(bs, "phase", None)
+            phase_val = getattr(phase, "value", None) or str(phase or "")
+            ctx["bottom_phase"] = phase_val
+            ctx["bottom_ab_ratio"] = float(getattr(bs, "ab_ratio", 0.0) or 0.0)
+            ctx["bottom_entry_allowed"] = bool(getattr(bs, "entry_allowed", False))
+            ctx["bottom_structure_summary"] = str(getattr(bs, "summary", "") or "")
+        except Exception as e:
+            logger.debug("Failed to inject bottom structure ctx for %s: %s", symbol, e)
 
     @staticmethod
     def _inject_financial_doctrine_ctx(symbol: str, market: str, ctx: dict) -> None:

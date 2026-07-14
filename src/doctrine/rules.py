@@ -70,7 +70,17 @@ MILITARY_RULES: list[Rule] = [
 
     # ── 买卖纪律 ──
     Rule("r012", RuleCategory.TRADING, "不追涨停", Severity.BLOCK, "当日涨停板不挂买单"),
-    Rule("r013", RuleCategory.TRADING, "不接飞刀", Severity.WARN, "连续 3 日跌幅 > 15% 且无基本面改善 → 等止跌确认"),
+    Rule(
+        "r013", RuleCategory.TRADING, "不接飞刀", Severity.WARN,
+        "连续 3 日跌幅 > 15% 且无基本面改善 → 等止跌确认；"
+        "或底部结构 A/B 段显示空头仍强（B≥A）→ 禁止抄底",
+    ),
+    Rule(
+        "r013b", RuleCategory.TRADING, "大底须走出", Severity.WARN,
+        "顺势力量未衰竭（B≥A）禁止抄底；"
+        "顺势衰竭但逆势未确认禁止试多；"
+        "仅当「顺势不足 + 逆势确认 + 回踩不破」才允许轻仓试多",
+    ),
     Rule("r014", RuleCategory.TRADING, "利好出尽是利空", Severity.WARN, "重大利好+股价 5 日内已涨 > 15% → 置信度 -0.15"),
     Rule("r014b", RuleCategory.TRADING, "追涨熔断", Severity.WARN, "5 日涨幅 > 20%（不论消息面）→ 评分上限 HOLD（55），强制标注追涨风险"),
     Rule("r015", RuleCategory.TRADING, "不赌财报", Severity.BLOCK, "财报公布前 2 个交易日不新建仓"),

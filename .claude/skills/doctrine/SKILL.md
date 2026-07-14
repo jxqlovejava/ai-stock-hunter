@@ -49,9 +49,22 @@ DoctrineResult(
 ## A 股特定
 
 - r006: ST/*ST 股票一律排除
+- r013: 不接飞刀 — 3 日急跌>15% 或 A/B 段 B≥A（空头仍强）→ 禁止抄底
+- r013b: 大底须走出 — 仅「顺势不足 + 逆势确认 + 回踩不破」才允许轻仓试多
 - r015: 财报公布前 3 日禁止开新仓（A 股业绩变脸风险）
 - r022: 财务数据必须至少 2 个独立来源交叉验证
 - r024: 微信/QQ/论坛传闻零信任
+
+## 底部结构联动（r013 / r013b）
+
+实现：`src/analysis/bottom_structure.py` → 诊断 `DiagnosisEngine` + 军规 ctx + `EntryExitEngine.BOTTOM_STRUCTURE`
+
+| 相位 | 含义 | 动作 |
+|------|------|------|
+| CATCHING_KNIFE | B≥A，空头仍有劲 | 触发 r013/r013b，禁止抄底 |
+| TREND_EXHAUSTED | B<A，顺势衰竭 | 触发 r013b，可关注不可动手 |
+| COUNTER_CONFIRMED | 逆势 K 线+结构突破 | 等回踩不破 |
+| LIGHT_LONG_SETUP | 回踩不破前低 | 仅轻仓试多入场信号 |
 
 ## 护栏
 
