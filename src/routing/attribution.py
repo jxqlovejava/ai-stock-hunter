@@ -115,9 +115,11 @@ class AttributionEngine:
             "price_data": lambda: self._fetch_price_data(symbol, date),
             "capital_flow": lambda: self._fetch_capital_data(symbol, date),
             "policy_hint": lambda: self._fetch_policy_hint(symbol, name),
+            "commodity_prices": lambda: self._fetch_commodity_prices(symbol, name),
+            "management_guidance": lambda: self._fetch_management_guidance(symbol, name),
         }
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=7) as executor:
             futures = {executor.submit(fn): key for key, fn in tasks.items()}
             for future in as_completed(futures):
                 key = futures[future]
@@ -630,6 +632,303 @@ class AttributionEngine:
                 )
         except Exception:
             pass
+
+        return points
+
+    # ────────────────────────────────────────────────────────
+    # 通道 6: 周期品价格追踪 🆕
+    # ────────────────────────────────────────────────────────
+
+    # 行业 → 关联大宗商品/周期品映射
+    COMMODITY_MAP: dict[str, list[str]] = {
+        "电网设备": ["硅料(多晶硅)", "动力煤", "铜", "铝"],
+        "光伏设备": ["硅料(多晶硅)", "硅片", "组件价格", "逆变器"],
+        "电力设备": ["铜", "铝", "硅钢", "变压器油"],
+        "能源金属": ["碳酸锂", "氢氧化锂", "钴", "镍"],
+        "有色金属": ["铜", "铝", "锂", "钴", "镍", "稀土", "黄金"],
+        "小金属": ["钨", "钼", "锑", "镁", "钛白粉"],
+        "工业金属": ["铜", "铝", "锌", "铅", "锡"],
+        "贵金属": ["黄金", "白银"],
+        "普钢": ["螺纹钢", "热轧卷板", "铁矿石", "焦炭"],
+        "特钢": ["螺纹钢", "热轧卷板", "铁矿石", "镍"],
+        "钢铁": ["螺纹钢", "热轧卷板", "铁矿石", "焦炭"],
+        "煤炭开采": ["动力煤", "焦煤", "焦炭"],
+        "焦炭": ["焦煤", "焦炭", "螺纹钢"],
+        "石油石化": ["原油", "天然气", "PTA", "涤纶"],
+        "炼化及贸易": ["原油", "天然气", "PTA"],
+        "油气开采": ["原油", "天然气"],
+        "基础化工": ["纯碱", "烧碱", "PVC", "MDI", "TDI", "尿素"],
+        "农化制品": ["草甘膦", "草铵膦", "复合肥", "尿素"],
+        "化学制品": ["MDI", "TDI", "纯碱", "钛白粉"],
+        "化学原料": ["纯碱", "烧碱", "PVC", "电石"],
+        "化学纤维": ["PTA", "涤纶", "锦纶", "氨纶"],
+        "塑料": ["PVC", "PE", "PP", "ABS"],
+        "橡胶": ["天然橡胶", "合成橡胶"],
+        "建筑材料": ["水泥", "玻璃", "玻纤"],
+        "水泥": ["水泥", "熟料"],
+        "玻璃玻纤": ["玻璃", "玻纤", "纯碱"],
+        "化学制药": ["维生素A", "维生素E", "抗生素中间体"],
+        "原料药": ["维生素A", "维生素E", "抗生素中间体", "肝素"],
+        "养殖业": ["生猪", "白羽鸡", "饲料"],
+        "饲料": ["豆粕", "玉米", "鱼粉"],
+        "农产品加工": ["豆粕", "玉米", "棕榈油", "白糖"],
+        "种植业": ["玉米", "小麦", "大豆", "棉花", "白糖"],
+        "造纸": ["纸浆", "废纸"],
+        "航运港口": ["BDI(波罗的海干散货)", "SCFI(集装箱运价)"],
+        "物流": ["BDI(波罗的海干散货)", "SCFI(集装箱运价)"],
+        "航空机场": ["原油(航空煤油)", "汇率(美元/人民币)"],
+        "电力": ["动力煤", "天然气", "碳排放权"],
+        "燃气": ["天然气", "LNG"],
+        "新能源发电": ["硅料(多晶硅)", "光伏组件", "风电设备"],
+    }
+
+    def _fetch_commodity_prices(
+        self, symbol: str, name: str
+    ) -> list[AttributionDataPoint]:
+        """通道 6: 周期品/大宗商品价格追踪。
+
+        根据股票所属行业，自动拉取关联大宗商品近期价格走势。
+        对非周期行业（消费/医药/TMT等）返回空列表。
+        """
+        points: list[AttributionDataPoint] = []
+        now = datetime.now()
+
+        # 1. 获取行业分类
+        industry = ""
+        try:
+            import urllib.request
+            import json
+            market_code = 1 if symbol.startswith("6") else 0
+            url = (
+                f"https://push2.eastmoney.com/api/qt/stock/get"
+                f"?fltt=2&invt=2&fields=f57,f58,f127&secid={market_code}.{symbol}"
+            )
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            resp = urllib.request.urlopen(req, timeout=10)
+            d = json.loads(resp.read().decode()).get("data", {})
+            industry = d.get("f127", "")
+        except Exception:
+            pass
+
+        # 2. 判断是否周期行业，找到关联品种
+        matched_commodities: list[str] = []
+        for sector_key, commodities in self.COMMODITY_MAP.items():
+            if sector_key in (industry or ""):
+                matched_commodities = commodities
+                break
+
+        if not matched_commodities:
+            # 非周期行业，输出空
+            return points
+
+        # 3. 拉取品种价格数据
+        commodity_data: list[str] = []
+        try:
+            import akshare as ak
+            for commodity in matched_commodities:
+                try:
+                    price_info = self._fetch_single_commodity(commodity, ak)
+                    if price_info:
+                        commodity_data.append(price_info)
+                except Exception:
+                    commodity_data.append(f"{commodity}: 数据获取失败")
+        except ImportError:
+            commodity_data.append("周期品价格: akshare 不可用")
+
+        if not commodity_data:
+            return points
+
+        desc = f"关联周期品价格 ({industry}): " + "; ".join(commodity_data)
+        citation = SourceCitation(
+            provider="akshare+industry_map",
+            field="commodity_price",
+            fetch_timestamp=now,
+            data_freshness=timedelta(hours=24),
+            confidence=0.75,
+            source_tier=SOURCE_TIER_T2,
+            nature=NATURE_FACT,
+        )
+        points.append(
+            AttributionDataPoint(
+                category="commodity",
+                description=desc[:300],
+                source_citation=citation,
+                is_stale=False,
+                cross_validated=False,
+            )
+        )
+
+        return points
+
+    def _fetch_single_commodity(self, commodity: str, ak_module=None) -> str:
+        """拉取单个品种近期价格并返回摘要。"""
+        # 常见品种的 akshare 接口映射
+        COMMODITY_AK_INTERFACE: dict[str, tuple[str, str]] = {
+            "动力煤": ("futures", "ZC"),
+            "焦煤": ("futures", "JM"),
+            "焦炭": ("futures", "J"),
+            "螺纹钢": ("futures", "RB"),
+            "热轧卷板": ("futures", "HC"),
+            "铁矿石": ("futures", "I"),
+            "铜": ("futures", "CU"),
+            "铝": ("futures", "AL"),
+            "锌": ("futures", "ZN"),
+            "铅": ("futures", "PB"),
+            "锡": ("futures", "SN"),
+            "镍": ("futures", "NI"),
+            "黄金": ("futures", "AU"),
+            "原油": ("futures", "SC"),
+            "天然橡胶": ("futures", "RU"),
+            "PTA": ("futures", "TA"),
+            "PVC": ("futures", "V"),
+            "纯碱": ("futures", "SA"),
+            "玻璃": ("futures", "FG"),
+            "尿素": ("futures", "UR"),
+            "生猪": ("futures", "LH"),
+            "碳酸锂": ("spot", "碳酸锂"),
+            "硅料(多晶硅)": ("spot", "多晶硅"),
+            "水泥": ("spot", "水泥"),
+            "BDI(波罗的海干散货)": ("spot", "BDI"),
+            "SCFI(集装箱运价)": ("spot", "SCFI"),
+        }
+
+        try:
+            if commodity in COMMODITY_AK_INTERFACE:
+                src_type, code = COMMODITY_AK_INTERFACE[commodity]
+                if src_type == "futures" and ak_module:
+                    # 期货主力合约
+                    df = ak_module.futures_main_sina(symbol=code)
+                    if df is not None and len(df) > 0:
+                        recent = df.tail(30)
+                        current = float(recent.iloc[-1])
+                        high = float(recent["high"].max()) if "high" in recent.columns else current
+                        low = float(recent["low"].min()) if "low" in recent.columns else current
+                        chg_30d = (current / float(recent.iloc[0]) - 1) * 100 if len(recent) >= 2 else 0
+                        return (
+                            f"{commodity}: 最新 {current:.0f} "
+                            f"(30日 {chg_30d:+.1f}%, "
+                            f"区间 {low:.0f}-{high:.0f})"
+                        )
+            elif "硅料" in commodity:
+                # 通过 news 替代 — 见管理层指引
+                return f"{commodity}: 见管理层指引/研报 (无实时报价)"
+            else:
+                return f"{commodity}: 无标准化接口"
+        except Exception as e:
+            logger.debug("获取 %s 价格失败: %s", commodity, e)
+
+        return f"{commodity}: 数据暂不可用"
+
+    # ────────────────────────────────────────────────────────
+    # 通道 7: 管理层指引 🆕
+    # ────────────────────────────────────────────────────────
+
+    def _fetch_management_guidance(
+        self, symbol: str, name: str
+    ) -> list[AttributionDataPoint]:
+        """通道 7: 管理层指引 — 投资者交流会/业绩说明会/互动易回复。
+
+        强制搜索公司最近的管理层公开沟通，提取前瞻性判断。
+        """
+        points: list[AttributionDataPoint] = []
+        now = datetime.now()
+
+        # 1. 搜索新闻中的管理层沟通
+        guidance_keywords = [
+            "投资者交流会", "业绩说明会", "调研纪要", "互动易",
+            "投资者关系活动", "电话会议", "路演",
+        ]
+        all_guidance: list[str] = []
+
+        try:
+            # 搜索公告中的投资者关系记录
+            anns = self.aggregator.search_announcements(symbol)
+            for ann in anns:
+                if not ann.title:
+                    continue
+                title = str(ann.title)
+                if any(kw in title for kw in ["投资者关系活动记录", "调研", "业绩说明会", "路演"]):
+                    all_guidance.append(f"[公告] {title[:100]}")
+
+            # 搜索新闻中的管理层表态
+            for kw in guidance_keywords[:3]:  # 只搜前3个关键词避免过多请求
+                try:
+                    query = f"{name} {kw}"
+                    news = self.aggregator.search_news(query, max_results=5)
+                    for item in news:
+                        if not item.title:
+                            continue
+                        title = str(item.title)
+                        if any(kw2 in title for kw2 in guidance_keywords):
+                            desc = f"[{item.source or 'news'}] {title[:100]}"
+                            if desc not in all_guidance:
+                                all_guidance.append(desc)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.warning("管理层指引搜索失败: %s", e)
+
+        if all_guidance:
+            # 标记关键措辞
+            sentiment_markers = {
+                "筑底": "🟢 周期见底信号",
+                "反转": "🟢 趋势反转信号",
+                "触底": "🟢 底部确认",
+                "承压": "🔴 压力持续",
+                "过剩": "🔴 产能过剩",
+                "亏损": "🔴 亏损",
+                "高增": "🟢 高增长",
+                "超预期": "🟢 超预期",
+                "不存在反转": "🔴 公司自认无反转",
+                "短期难": "🔴 短期困难",
+            }
+            markers_found = []
+            for item in all_guidance:
+                for keyword, label in sentiment_markers.items():
+                    if keyword in item and label not in markers_found:
+                        markers_found.append(label)
+
+            desc_parts = [f"管理层指引 ({len(all_guidance)}条):"]
+            if markers_found:
+                desc_parts.append(f"关键信号: {'; '.join(markers_found[:5])}")
+            desc_parts.append(all_guidance[0][:150])
+
+            citation = SourceCitation(
+                provider="cninfo+news_search",
+                field="management_guidance",
+                fetch_timestamp=now,
+                data_freshness=timedelta(hours=24),
+                confidence=0.85,
+                source_tier=SOURCE_TIER_T1,
+                nature=NATURE_FACT,
+            )
+            points.append(
+                AttributionDataPoint(
+                    category="management_guidance",
+                    description="; ".join(desc_parts)[:350],
+                    source_citation=citation,
+                    is_stale=False,
+                    cross_validated=False,
+                )
+            )
+        else:
+            # 没有找到管理层指引，标记为 DATA_GAP
+            points.append(
+                AttributionDataPoint(
+                    category="management_guidance",
+                    description="管理层指引: 近期无投资者交流/业绩说明会记录",
+                    source_citation=SourceCitation(
+                        provider="system",
+                        field="management_guidance",
+                        source_tier=SOURCE_TIER_T3,
+                        nature=NATURE_SPECULATION,
+                        confidence=0.3,
+                    ),
+                    data_gap_reason="未找到近期管理层公开沟通记录",
+                )
+            )
 
         return points
 

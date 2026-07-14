@@ -1,6 +1,6 @@
 ---
 name: stock-attribution
-description: 个股涨跌归因 — 回答"XX 为什么涨停/跌停/大涨/大跌"。强制 3 阶段 workflow：信息搜集(AttributionEngine 自动并行)→多维归因(6维度并行)→因果推断(信息源质量检查+主因排序)。输出格式严格遵守 guardrails.md 强制要求。触发词：为什么涨停、为什么跌停、为什么大涨、为什么大跌、涨跌原因、归因分析、attribute。
+description: 个股涨跌归因 — 回答"XX 为什么涨停/跌停/大涨/大跌"。强制 3 阶段 workflow：信息搜集(AttributionEngine 自动并行 7 通道)→多维归因(8 维度并行)→因果推断(信息源质量检查+主因排序)。输出格式严格遵守 guardrails.md 强制要求。触发词：为什么涨停、为什么跌停、为什么大涨、为什么大跌、涨跌原因、归因分析、attribute。
 user-invocable: true
 ---
 
@@ -20,20 +20,24 @@ user-invocable: true
 ## 工作流总览 (强制)
 
 ```
-Phase 1: 信息搜集 (AttributionEngine 自动并行)
+Phase 1: 信息搜集 (AttributionEngine 自动并行 — 7 通道)
   ├→ 资讯/新闻
   ├→ 公告 (巨潮)
   ├→ 行情/K线
   ├→ 资金面 (龙虎榜/北向/融资融券/大宗交易)
-  └→ 行业分类
+  ├→ 行业分类
+  ├→ 🆕 周期品价格 (大宗商品/原材料) — 周期股自动拉取
+  └→ 🆕 管理层指引 (投资者交流/业绩说明会/互动易)
 
-Phase 2: 多维归因 (6 维度并行 AI 分析)
+Phase 2: 多维归因 (8 维度并行 AI 分析)
   ├→ macro-monitor (宏观背景)
   ├→ sector-research (板块联动)
   ├→ sentiment-analysis (情绪状态)
   ├→ topic-manager (主题生命周期)
   ├→ policy-tracker (行业政策)
-  └→ 资金面 + T+0 技术面
+  ├→ 资金面 + T+0 技术面
+  ├→ 🆕 市场风格/资金主线 (板块热力图/主线在哪/板块被输血还是抽血)
+  └→ 🆕 业务结构拆解 (各业务板块周期位置+利润贡献)
 
 Phase 3: 因果推断 (串行，质量检查优先)
   ├→ 信息源质量检查 (T0-T3分级/时效性/STALE排除/交叉验证)
@@ -49,16 +53,20 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 ```
 
 **AttributionEngine 自动完成：**
-1. 并行搜集 5 个数据通道 (新闻/公告/行情/资金面/行业)
+1. 并行搜集 7 个数据通道 (新闻/公告/行情/资金面/行业/周期品价格/管理层指引)
 2. 每条数据点自动创建 `SourceCitation` (含 T0-T3 分级 + nature + freshness)
 3. 新闻 > 12h 自动标记 `[STALE]`
 4. 无法获取的维度自动标记 `[DATA_GAP]`
 5. 输出 `QualitySummary` (各 tier 数量/质量分/示例)
+6. 🆕 周期股自动拉取关联大宗商品/原材料价格走势 (行业→品种映射)
+7. 🆕 强制搜索管理层投资者交流/业绩说明会/互动易回复
 
 **AI 代理职责：**
 - 审查 `raw_data_points`，确认数据完整性
 - 识别引擎未覆盖的额外信息源 (如微博/知乎讨论)
 - 补充 `last30days-cn` 搜索的社交媒体讨论
+- 🆕 审查周期品价格数据：确认关联品种是否正确、价格趋势是否与归因逻辑一致
+- 🆕 审查管理层指引：确认提取的关键判断是否准确、时效性是否有效
 
 ## Phase 2: 多维归因 (并行调用)
 
@@ -73,8 +81,10 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 | 行业政策 | `policy-tracker` | 近期有无行业政策变化？影响方向？ | 合并入 `sector_assessment` |
 | 资金面 | a-stock-data | 北向/龙虎榜/融资融券/大宗交易 具体数据 | `capital_flow_assessment` |
 | 技术面 | a-stock-data | T+0 盘中信号/量价关系/均线位置 | `technical_assessment` |
+| 🆕 市场风格/资金主线 | `python -m src market` 板块热力图 + 涨停池 + 连板高度 + 主力资金行业流向 | 当前市场主线在什么板块？本标的所在板块是被输血还是被抽血？是否存在"买预期卖事实"的利好兑现？ | `style_assessment` |
+| 🆕 业务结构拆解 | 财报数据 + 周期品价格 + 管理层指引 + 研报 | 公司有哪些业务板块？各自处于什么周期位置？哪个板块是主要拖累/驱动？各板块利润贡献占比？ | `business_structure_assessment` |
 
-**并行执行**: 6 个维度可同时进行，互不依赖。
+**并行执行**: 8 个维度可同时进行，互不依赖。
 
 > **数据基础**: Phase 1 的 AttributionEngine 自动获取并注入 `enriched_macro`（含美股隔夜快照 S&P500/Nasdaq/Dow 和 A 股市场情绪数据）。AI Agent 在执行多维归因前，可运行 `python -m src market` 查看统一数据基础（美股隔夜 + A 股情绪 + 宏观象限）。
 
@@ -157,8 +167,12 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 在输出归因结论前，逐项确认：
 
 - [ ] Phase 1: `AttributionEngine.collect()` 已完成？raw_data_points 已审查？
-- [ ] Phase 2: 6 个维度 (宏观/板块/情绪/主题/政策/资金+技术) 全部覆盖？
+  - [ ] 🆕 周期品价格数据已获取？（周期股必查——硅料/碳酸锂/螺纹钢/动力煤等）
+  - [ ] 🆕 管理层近期投资者交流/业绩说明会/互动易已搜索？
+- [ ] Phase 2: 8 个维度 (宏观/板块/情绪/主题/政策/资金+技术/市场风格/业务结构) 全部覆盖？
   - [ ] 缺失维度已标记 `[DATA_GAP]`？
+  - [ ] 🆕 市场风格/资金主线已分析？（本板块是输血还是抽血？是否存在"买预期卖事实"？）
+  - [ ] 🆕 业务结构已拆解？（各板块周期位置+利润贡献）
 - [ ] Phase 3.0 — 信息源质量检查:
   - [ ] `📋 信息源质量总览` 表已输出？
   - [ ] 所有 citation 标注了 `tier` (T0-T3) 与 `nature` (fact/interpretation/speculation)？

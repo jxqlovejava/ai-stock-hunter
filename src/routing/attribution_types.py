@@ -89,6 +89,12 @@ class AttributionResult:
     topic_assessment: str = ""  # 主题生命周期摘要
     capital_flow_assessment: str = ""  # 资金面 (北向/龙虎榜/融资融券) 摘要
     technical_assessment: str = ""  # T+0 技术面摘要
+    style_assessment: str = ""  # 🆕 市场风格/资金主线摘要 (Phase 2 第7维度)
+    business_structure_assessment: str = ""  # 🆕 业务结构拆解摘要 (Phase 2 第8维度)
+
+    # ── Phase 1-2 扩展数据 (AttributionEngine 自动填充) ──
+    commodity_price_data: str = ""  # 🆕 周期品价格摘要 (Phase 1 第6通道)
+    management_guidance: str = ""  # 🆕 管理层指引摘要 (Phase 1 第7通道)
 
     # ── Phase 3: 因果推断 (AI 代理填充) ──
     drivers: list[DriverFactor] = field(default_factory=list)  # 按 weight 降序
