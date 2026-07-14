@@ -29,6 +29,7 @@ data/evolution_lifecycles.json
 data/portfolio.yaml
 data/watchlist.json
 data/positions.json
+data/sentinel_state.json
 
 # Claude
 .claude/plans/
