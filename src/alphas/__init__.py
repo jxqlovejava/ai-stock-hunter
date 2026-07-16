@@ -8,6 +8,7 @@
 from .base import AlphaModel
 from .ema_cross import EmaCrossAlphaModel
 from .macd import MacdAlphaModel
+from .macd_kdj import MacdKdjAlphaModel, MacdKdjAction, MacdKdjMethod, analyze_ohlc, latest_state
 from .rsi import RsiAlphaModel
 from .momentum import MomentumAlphaModel
 
@@ -15,6 +16,11 @@ __all__ = [
     "AlphaModel",
     "EmaCrossAlphaModel",
     "MacdAlphaModel",
+    "MacdKdjAlphaModel",
+    "MacdKdjAction",
+    "MacdKdjMethod",
+    "analyze_ohlc",
+    "latest_state",
     "RsiAlphaModel",
     "MomentumAlphaModel",
 ]
