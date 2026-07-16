@@ -490,17 +490,42 @@ class RiskControlEngine:
         portfolio: dict,
         position_limits: dict | None,
     ) -> _RuleResult:
-        """止损检查 — 包括 ATR 止损、固定百分比止损、时间止损、移动止损。"""
+        """止损检查 — 包括持仓止损 / ATR 止损、固定百分比止损、时间止损、移动止损。
+
+        优先级：``portfolio['stop_price']``（positions.json 已确认止损）
+        > ``signal.suggested_stop``（timing/ATR 建议止损）。
+        light/持仓路径必须与 positions.json 一致，避免 ATR 临时重算覆盖用户止损。
+        """
         violations: list[str] = []
         stop_loss_pct = (position_limits or {}).get("stop_loss", -0.02)
 
-        # ATR 止损
-        if signal.suggested_stop > 0 and portfolio.get("current_price", 0) > 0:
-            current_price = D(portfolio.get("current_price", 0))
-            stop_price = D(signal.suggested_stop)
+        # 持仓止损（positions.json）优先于 timing ATR 建议止损
+        current_px_raw = portfolio.get("current_price", 0) or 0
+        pos_stop_raw = portfolio.get("stop_price", 0) or 0
+        try:
+            pos_stop_f = float(pos_stop_raw)
+        except (TypeError, ValueError):
+            pos_stop_f = 0.0
+        try:
+            sig_stop_f = float(getattr(signal, "suggested_stop", 0) or 0)
+        except (TypeError, ValueError):
+            sig_stop_f = 0.0
+
+        effective_stop = 0.0
+        stop_label = "止损"
+        if pos_stop_f > 0:
+            effective_stop = pos_stop_f
+            stop_label = "持仓止损"
+        elif sig_stop_f > 0:
+            effective_stop = sig_stop_f
+            stop_label = "ATR止损"
+
+        if effective_stop > 0 and current_px_raw > 0:
+            current_price = D(current_px_raw)
+            stop_price = D(str(effective_stop))
             if current_price <= stop_price:
                 violations.append(
-                    f"ATR止损触发: 现价{float(current_price):.2f} <= 止损价{float(stop_price):.2f}"
+                    f"{stop_label}触发: 现价{float(current_price):.2f} <= 止损价{float(stop_price):.2f}"
                 )
                 return _RuleResult(RiskVerdict.REJECT, violations)
 

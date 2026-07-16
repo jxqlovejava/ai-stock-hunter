@@ -385,6 +385,31 @@ def run_light(
                     signal.target_weight = 0.0  # type: ignore[attr-defined]
         except Exception as e:
             logger.debug("override signal action failed: %s", e)
+
+    # 持仓止损统一：positions.json 覆盖 timing ATR 建议止损
+    pos_stop = None
+    if pos_snap:
+        try:
+            pos_stop = float(pos_snap.get("stop_price") or 0) or None
+        except (TypeError, ValueError):
+            pos_stop = None
+    if held and pos_stop and pos_stop > 0:
+        timing_stop = float(getattr(signal, "suggested_stop", 0) or 0)
+        try:
+            signal.suggested_stop = pos_stop  # type: ignore[attr-defined]
+            # 保留 timing 值作参考，避免误导为「ATR 重算」
+            if hasattr(signal, "atr_stop") and timing_stop > 0:
+                signal.atr_stop = timing_stop  # type: ignore[attr-defined]
+            if hasattr(signal, "extra") and isinstance(getattr(signal, "extra", None), dict):
+                signal.extra = {
+                    **(signal.extra or {}),
+                    "stop_source": "positions.json",
+                    "timing_suggested_stop": timing_stop,
+                    "position_stop": pos_stop,
+                }
+        except Exception as e:
+            logger.debug("override suggested_stop from positions failed: %s", e)
+
     result.signal = signal
     result.sizing_detail = {
         "method": getattr(signal, "sizing_method", "light"),
@@ -393,6 +418,8 @@ def run_light(
         "size_hint": advice.size_hint,
         "timing_action": advice.action,
         "mode": "light",
+        "stop_source": "positions.json" if (held and pos_stop) else "timing",
+        "position_stop": pos_stop,
     }
 
     # 合并持仓文件到 portfolio，供风控读止损/现价
@@ -401,15 +428,19 @@ def run_light(
         enriched.update({
             "current_price": getattr(quote, "price", 0),
             "entry_price": pos_snap.get("entry_price"),
-            "stop_price": pos_snap.get("stop_price"),
+            "stop_price": pos_stop or pos_snap.get("stop_price"),
             "quantity": pos_snap.get("quantity"),
             "position_loss_pct": loss_pct,
             "held": True,
+            "peak_price": pos_snap.get("high_price"),
         })
+        timing_stop_show = float(getattr(signal, "atr_stop", 0) or 0)
         print(
             f"  📦 持仓: 成本{pos_snap.get('entry_price')} "
-            f"止损{pos_snap.get('stop_price')} "
-            f"数量{pos_snap.get('quantity')}"
+            f"止损{pos_stop or pos_snap.get('stop_price')} "
+            f"(源=positions.json"
+            f"{f', timing参考{timing_stop_show:.2f}' if timing_stop_show > 0 else ''}"
+            f") 数量{pos_snap.get('quantity')}"
         )
     else:
         enriched["held"] = False

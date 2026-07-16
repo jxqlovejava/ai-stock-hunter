@@ -55,8 +55,36 @@ def limit_pct(symbol: str, name: str = "") -> float:
     return 0.10
 
 
+def board_of(symbol: str) -> str:
+    """板块分层（代码前缀，无外部行业表时的稳健代理）。"""
+    s = symbol.split(".")[0]
+    if s.startswith(("300", "301")):
+        return "gem_创业板"
+    if s.startswith(("688", "689")):
+        return "star_科创板"
+    if s.startswith(("8", "4")):
+        return "bj_北交所"
+    if s.startswith("6"):
+        return "main_sh_主板沪"
+    if s.startswith(("0", "3")):
+        return "main_sz_主板深"
+    return "other"
+
+
 def round_price(p: float) -> float:
     return round(p + 1e-10, 2)
+
+
+def mean_dollar_volume(df: pd.DataFrame, lookback: int = 120) -> float:
+    """近 lookback 日均成交额（close×volume）— 无流通股本时的规模/活跃度代理。"""
+    if df.empty or "close" not in df.columns or "volume" not in df.columns:
+        return 0.0
+    c = df["close"].astype(float).tail(lookback)
+    v = df["volume"].astype(float).tail(lookback)
+    m = (c * v).replace([np.inf, -np.inf], np.nan).dropna()
+    if m.empty:
+        return 0.0
+    return float(m.mean())
 
 
 def is_limit_up(high: float, close: float, prev_close: float, pct: float) -> bool:
@@ -89,23 +117,52 @@ class TradeResult:
     net_ret: float
     cost_pct: float
     exit_reason: str
+    board: str = ""
+    industry: str = ""
+    size_bucket: str = ""
+    dollar_vol: float = 0.0
     skipped: bool = False
     skip_reason: str = ""
 
 
+def load_industry_map(path: Path | None = None) -> dict[str, str]:
+    """加载 sector_map.csv → {code6: industry}。"""
+    p = path or (KLINE_DIR / "sector_map.csv")
+    if not p.exists():
+        return {}
+    try:
+        df = pd.read_csv(p)
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for _, row in df.iterrows():
+        code = str(row.get("code") or "")
+        # sh.600000 / sz.000001 → 600000
+        digits = "".join(ch for ch in code if ch.isdigit())
+        if len(digits) >= 6:
+            digits = digits[-6:]
+        ind = str(row.get("industry") or "").strip()
+        if digits and ind and ind.lower() != "nan":
+            # 取门类字母后名称，过长则截到 12 字
+            out[digits] = ind[:16]
+    return out
+
+
 def _process_one(args: tuple) -> dict:
     """单标的事件研究（子进程）。"""
-    path_str, years, horizons, qty = args
+    path_str, years, horizons, qty, size_bucket, industry = args
     path = Path(path_str)
     symbol = path.name.split("_")[0]
+    board = board_of(symbol)
+    industry = industry or "unknown"
     try:
         raw = pd.read_csv(path)
         df = normalize_ohlc_df(raw)
     except Exception as e:
-        return {"symbol": symbol, "error": str(e), "trades": []}
+        return {"symbol": symbol, "error": str(e), "trades": [], "board": board}
 
     if len(df) < 80 or not all(c in df.columns for c in ("open", "high", "low", "close")):
-        return {"symbol": symbol, "error": "insufficient", "trades": []}
+        return {"symbol": symbol, "error": "insufficient", "trades": [], "board": board}
 
     # 时间窗
     df = df.copy()
@@ -114,8 +171,9 @@ def _process_one(args: tuple) -> dict:
     start = end - pd.Timedelta(days=int(365 * years + 30))
     df = df[df["date"] >= start].reset_index(drop=True)
     if len(df) < 80:
-        return {"symbol": symbol, "error": "short_window", "trades": []}
+        return {"symbol": symbol, "error": "short_window", "trades": [], "board": board}
 
+    dvol = mean_dollar_volume(df)
     series = analyze_ohlc(df)
     states = series.states
     n = len(df)
@@ -164,6 +222,10 @@ def _process_one(args: tuple) -> dict:
                         net_ret=0,
                         cost_pct=0,
                         exit_reason="",
+                        board=board,
+                        industry=industry,
+                        size_bucket=size_bucket,
+                        dollar_vol=dvol,
                         skipped=True,
                         skip_reason="limit_up_or_no_entry",
                     )
@@ -236,6 +298,10 @@ def _process_one(args: tuple) -> dict:
                         net_ret=round(net_ret, 6),
                         cost_pct=round(roundtrip["roundtrip_pct"], 6),
                         exit_reason=exit_reason,
+                        board=board,
+                        industry=industry,
+                        size_bucket=size_bucket,
+                        dollar_vol=dvol,
                     )
                 )
             )
@@ -260,6 +326,10 @@ def _process_one(args: tuple) -> dict:
         "avoid_n": avoid_n,
         "avoid_hits": avoid_hits,
         "n_bars": n,
+        "board": board,
+        "industry": industry,
+        "size_bucket": size_bucket,
+        "dollar_vol": dvol,
     }
 
 
@@ -267,16 +337,16 @@ def summarize(all_trades: list[dict], avoid_n: int, avoid_hits: int) -> dict:
     active = [t for t in all_trades if not t.get("skipped")]
     skipped = [t for t in all_trades if t.get("skipped")]
     by_h: dict[int, list] = {}
+    pure_h: dict[int, list] = {}  # 仅固定持有到期（非提前 EXIT）
     for t in active:
-        # horizon 从 exit_reason 或 hold_days 推断：按 hold 分组粗统计
         h = t.get("hold_days") or 0
-        # 更好：按 exit_reason horizon_X
         reason = t.get("exit_reason") or ""
         if reason.startswith("horizon_"):
             try:
                 h = int(reason.split("_")[1])
             except Exception:
                 pass
+            pure_h.setdefault(h, []).append(t)
         by_h.setdefault(h, []).append(t)
 
     def stats(xs: list[dict], key: str = "net_ret") -> dict:
@@ -294,6 +364,17 @@ def summarize(all_trades: list[dict], avoid_n: int, avoid_hits: int) -> dict:
             "std": float(np.std(a)),
         }
 
+    def stratum(key: str) -> dict:
+        buckets: dict[str, list] = {}
+        for t in active:
+            # 分层主看固定 10 日持有（有 horizon_10）
+            if not str(t.get("exit_reason", "")).startswith("horizon_10"):
+                # 也纳入 signal_exit 但 hold≈10 的？仅 pure horizon_10 更干净
+                continue
+            b = str(t.get(key) or "unknown")
+            buckets.setdefault(b, []).append(t)
+        return {k: stats(v) for k, v in sorted(buckets.items(), key=lambda x: -len(x[1]))}
+
     out = {
         "n_trades_active": len(active),
         "n_skipped": len(skipped),
@@ -301,11 +382,18 @@ def summarize(all_trades: list[dict], avoid_n: int, avoid_hits: int) -> dict:
         "overall_net": stats(active, "net_ret"),
         "overall_gross": stats(active, "gross_ret"),
         "by_horizon": {str(h): stats(ts) for h, ts in sorted(by_h.items())},
+        "by_horizon_pure": {str(h): stats(ts) for h, ts in sorted(pure_h.items())},
+        "by_board_h10": stratum("board"),
+        "by_size_h10": stratum("size_bucket"),
+        "by_industry_h10": {
+            k: v
+            for k, v in list(stratum("industry").items())[:25]  # top 25 by n
+        },
         "avoid_n": avoid_n,
         "avoid_hit_rate": avoid_hits / avoid_n if avoid_n else None,
         "mean_cost_pct": float(np.mean([t["cost_pct"] for t in active])) if active else None,
         "exit_signal_share": (
-            float(np.mean([t["exit_reason"].startswith("signal") for t in active]))
+            float(np.mean([str(t.get("exit_reason", "")).startswith("signal") for t in active]))
             if active
             else None
         ),
@@ -333,7 +421,56 @@ def main() -> int:
         print("无 kline_cache，退出")
         return 1
 
-    tasks = [(str(f), args.years, horizons, args.qty) for f in files]
+    # Pass-1: 成交额规模分位（全样本四分位，作市值/流动性代理）
+    print("Pass-1: 计算日均成交额分位…")
+    dvol_map: dict[str, float] = {}
+    for f in files:
+        sym = f.name.split("_")[0]
+        try:
+            raw = pd.read_csv(f, usecols=lambda c: c.lower() in ("date", "close", "volume", "收盘", "成交量"))
+            df = normalize_ohlc_df(raw)
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"])
+                end = df["date"].max()
+                start = end - pd.Timedelta(days=int(365 * args.years + 30))
+                df = df[df["date"] >= start]
+            dvol_map[sym] = mean_dollar_volume(df)
+        except Exception:
+            dvol_map[sym] = 0.0
+    vals = np.array([v for v in dvol_map.values() if v > 0])
+    if len(vals) >= 4:
+        q1, q2, q3 = np.percentile(vals, [25, 50, 75])
+    else:
+        q1 = q2 = q3 = 0.0
+
+    def size_label(v: float) -> str:
+        if v <= 0:
+            return "Q?_unknown"
+        if v <= q1:
+            return "Q1_低活跃/小微"
+        if v <= q2:
+            return "Q2_中低"
+        if v <= q3:
+            return "Q3_中高"
+        return "Q4_高活跃/大盘代理"
+
+    size_map = {s: size_label(v) for s, v in dvol_map.items()}
+    print(f"  成交额分位阈值: Q1={q1:.0f} Q2={q2:.0f} Q3={q3:.0f}")
+
+    ind_map = load_industry_map()
+    print(f"  行业映射: {len(ind_map)} 条 (sector_map.csv)")
+
+    tasks = [
+        (
+            str(f),
+            args.years,
+            horizons,
+            args.qty,
+            size_map.get(f.name.split("_")[0], "Q?_unknown"),
+            ind_map.get(f.name.split("_")[0], "unknown"),
+        )
+        for f in files
+    ]
     results = []
     # 进程池对 macOS 需在 main 内
     if args.workers <= 1:
@@ -422,19 +559,68 @@ def main() -> int:
     else:
         lines.append("_无有效交易_")
 
+    # 分层：固定 10 日持有
+    lines += [
+        "",
+        "## 板块分层（固定持有 10 日 · 扣成本）",
+        "",
+        "> 行业无全市场静态映射表时，用代码前缀板块作风格分层。",
+        "",
+        "| 板块 | N | 净均值 | 净中位 | 胜率 |",
+        "|------|---|--------|--------|------|",
+    ]
+    for k, st in (summary.get("by_board_h10") or {}).items():
+        if not st.get("n"):
+            continue
+        lines.append(
+            f"| {k} | {st['n']} | {pct(st['mean'])} | {pct(st['median'])} | {pct(st['win_rate'])} |"
+        )
+
+    lines += [
+        "",
+        "## 规模/活跃度分层（日均成交额四分位 · 市值代理 · H=10）",
+        "",
+        "> 缓存无流通股本；用近窗 `close×volume` 日均成交额作规模代理。",
+        "",
+        "| 分位 | N | 净均值 | 净中位 | 胜率 |",
+        "|------|---|--------|--------|------|",
+    ]
+    for k, st in (summary.get("by_size_h10") or {}).items():
+        if not st.get("n"):
+            continue
+        lines.append(
+            f"| {k} | {st['n']} | {pct(st['mean'])} | {pct(st['median'])} | {pct(st['win_rate'])} |"
+        )
+
+    lines += [
+        "",
+        "## 证监会行业分层（Top 行业 by N · H=10）",
+        "",
+        "> 来源: `data/kline_cache/sector_map.csv`",
+        "",
+        "| 行业 | N | 净均值 | 净中位 | 胜率 |",
+        "|------|---|--------|--------|------|",
+    ]
+    for k, st in (summary.get("by_industry_h10") or {}).items():
+        if not st.get("n") or k in ("unknown", ""):
+            continue
+        lines.append(
+            f"| {k} | {st['n']} | {pct(st['mean'])} | {pct(st['median'])} | {pct(st['win_rate'])} |"
+        )
+
     lines += [
         "",
         "## 结论边界",
         "",
         "- 教学规则 confidence 上限 0.5；本结果为历史事件统计，**非实盘期望**。",
         "- 未建模：涨停打开后的流动性冲击、停牌、财报真空、指数过滤。",
-        "- 全市场扫描存在多重检验偏差；分行业/市值分层可后续加强。",
+        "- 分层: 板块 + 成交额规模代理 + 证监会行业（sector_map）。",
         "",
         f"原始 JSON: `{json_path.name}`",
         "",
     ]
     args.out.write_text("\n".join(lines), encoding="utf-8")
-    print("\n".join(lines[:40]))
+    print("\n".join(lines[:55]))
     print(f"\n报告: {args.out}")
     print(f"JSON: {json_path}")
     return 0
