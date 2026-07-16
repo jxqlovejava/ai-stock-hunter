@@ -1,6 +1,6 @@
 # 开源项目参考清单
 
-> 最后更新：2026-07-08 | 参考项目总数：14
+> 最后更新：2026-07-16 | 参考项目总数：17
 
 ---
 
@@ -92,6 +92,36 @@
 | **解决的问题** | 多Agent系统的测试策略——如何确保每个Agent的输出符合预期 |
 | **融入位置** | 测试模式参考（pytest + conftest）、Phase 4多Agent编排设计 |
 
+### 7b. TradingAgents-Astock（A 股 fork，主参考）
+
+| 项目 | https://github.com/simonlin1212/TradingAgents-astock |
+|------|-----------------------------------------------------|
+| **借鉴内容** | 7 Analyst（+政策/游资/解禁）、Bull/Bear + 三方风险辩论、A 股 Trader 约束（T+1/涨跌停/手数）、免费数据源矩阵（mootdx/腾讯/东财/新浪/同花顺）、东财防封节流、LangGraph 拓扑、CSI 300 交易反思、双 LLM 分工、checkpoint 断点续跑 |
+| **解决的问题** | 上游面向美股；A 股需要政策市/游资/解禁角色与交易制度硬约束贯穿决策链 |
+| **融入位置** | `game_theory/`、`policy/`、`routing/` 辩论式输出、`data/aggregator` 补源与节流、`learner/` 反思校准 |
+| **影响** | 把「多 Agent 投研」从通用模板落到 A 股可执行角色与数据；详细分析见 `docs/reference/tradingagents-astock-analysis.md` |
+| **不借鉴的部分** | 用辩论结果覆盖军规/L4 硬 BLOCK；默认引入完整 LangGraph 运行时（可先借鉴拓扑思想） |
+
+### 7c. Serenity.skill（白毛股神 / 供应链瓶颈投研）
+
+| 项目 | https://github.com/muxuuu/serenity-skill |
+|------|------------------------------------------|
+| **借鉴内容** | 热点→系统变化→8 层价值链→稀缺卡点→公司宇宙→证据阶梯→优先研究排序；A 股证据路径（问询函/互动易/环评能评/招投标）；瓶颈 scorecard；失败条件与下一步核验；研究非交易边界 |
+| **解决的问题** | 热点主题「全网都在说」时缺少系统筛选：分不清蹭主题与真卡点、缺少证据与失败条件 |
+| **融入位置** | `industry/bottleneck.py`、`industry/supply_chain.py`、`sector-research` / `topic-manager` 场景四输出格式 |
+| **影响** | 与 cyberagent 物理瓶颈链互补，补全「主题扫描 workflow + 证据纪律」；详见 `docs/reference/serenity-skill-analysis.md` |
+| **不借鉴的部分** | 买卖指令与收益承诺；把社媒 KOL 当最终证据 |
+
+### 7d. GS Quant（高盛量化工具包）
+
+| 项目 | https://github.com/goldmansachs/gs-quant |
+|------|------------------------------------------|
+| **借鉴内容** | 机构级模块分层（risk / timeseries / backtests / markets / analytics / workflow）、风险度量分层（单票→组合→情景）、时序算子可组合、Session/Context 统一配置、强类型 instrument 边界 |
+| **解决的问题** | 个人项目风控/因子/回测容易「函数散落」；需要工业级抽象语言与分层参照 |
+| **融入位置** | L4 组合风险语言、`factor_pipeline` 算子化、`backtest/` 分层、配置 Session |
+| **影响** | 设计决策级参考；详见 `docs/reference/gs-quant-analysis.md` |
+| **不借鉴的部分** | 依赖 Marquee 机构 API 的定价/数据；衍生品全产品线；作为默认运行时重依赖 |
+
 ---
 
 ## 三、功能层参考
@@ -161,18 +191,20 @@
 
 | 模块 | 主要参考项目 |
 |------|------------|
-| **数据聚合层** | daily_stock_analysis、PanWatch |
-| **回测引擎** | Backtrader、open-xquant、AlphaEvo、LEAN |
-| **因子体系** | FinceptTerminal、OpenStock |
-| **L1 分析师** | ai-berkshire、cyberagent |
+| **数据聚合层** | daily_stock_analysis、PanWatch、TradingAgents-Astock（A 股数据矩阵/东财节流） |
+| **回测引擎** | Backtrader、open-xquant、AlphaEvo、LEAN、GS Quant（抽象分层）、VectorBT |
+| **因子体系** | FinceptTerminal、OpenStock、GS Quant（时序算子） |
+| **L1 分析师** | ai-berkshire、cyberagent、Serenity.skill（主题→卡点 workflow） |
 | **基本面深度分析** | ai-berkshire（四大师、7步研究、三情景估值） |
-| **物理瓶颈分析** | cyberagent（瓶颈链、SA阶梯、两轴判定） |
-| **博弈论知识库** | cyberagent（瓶颈分类、证据分级）+ 自主设计（15条A股规则） |
+| **物理瓶颈分析** | cyberagent（瓶颈链、SA阶梯、两轴判定）、Serenity.skill（稀缺层/证据阶梯/scorecard） |
+| **博弈论知识库** | cyberagent（瓶颈分类、证据分级）+ 自主设计（15条A股规则）+ TradingAgents-Astock（游资/解禁角色） |
 | **军规引擎** | ai-gold-miner（投资者约束设计）+ 自主设计（30条A股专属） |
 | **情绪/恐慌套利** | OpenStock（跨源情绪聚合） |
-| **多Agent编排** | ai-berkshire、TradingAgents、Dexter |
+| **多Agent编排** | ai-berkshire、TradingAgents / TradingAgents-Astock、Dexter、DojoAgents |
 | **策略进化** | AlphaEvo（自我进化循环+AntiFitMetrics） |
 | **测试框架** | TradingAgents（pytest + conftest） |
+| **风控/组合风险** | RiskGuard、GS Quant（组合/情景风险语言） |
+| **政策/主题研究** | TradingAgents-Astock（政策分析师）、Serenity.skill（主题扫描） |
 
 ---
 

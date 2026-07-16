@@ -224,7 +224,16 @@ feedback add       # 添加交易反馈
 
 ## 参考项目
 
-设计决策、风控机制、回测逻辑、Agent 编排时，优先查阅以下三个本地参考项目。重点借鉴其**业务逻辑设计**而非技术架构。
+设计决策、风控机制、回测逻辑、Agent 编排、产业链研究时，优先查阅以下参考项目。重点借鉴其**业务逻辑设计**而非技术架构。
+
+| # | 项目 | 类型 | 主借鉴面 |
+|---|------|------|---------|
+| 1 | RiskGuard | 本地 | 风控规则 / 仓位 / 熔断 |
+| 2 | VectorBT | 本地 | 回测仿真 / 交易视角 / 回撤 |
+| 3 | DojoAgents | 本地 | Agent Runtime / Harness / Memory |
+| 4 | Serenity.skill | GitHub | 供应链瓶颈 / 证据链 / 主题扫描 |
+| 5 | GS Quant | GitHub | 机构级风险 / 时序 / 回测抽象 |
+| 6 | TradingAgents-Astock | GitHub | A 股多 Agent 辩论 / 数据源 / 角色 |
 
 ### 🛡️ RiskGuard — 风控机制参考 (`~/Documents/workspace/riskguard`)
 
@@ -506,7 +515,124 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
 
 > ⚠️ **注意**：DojoAgents **没有真正的历史回测引擎**，只有组合诊断、模拟 watchlist 和绩效缓存。其回测逻辑不能直接复用，回测设计仍需以 VectorBT 为主参考。
 
-> 功能模块级别的可复用分析详见 [`docs/reference/dojoagents-analysis.md`](../../docs/reference/dojoagents-analysis.md)。
+> 功能模块级别的可复用分析详见 [`docs/reference/dojoagents-analysis.md`](../docs/reference/dojoagents-analysis.md)。
+
+### 🔗 Serenity.skill — 供应链瓶颈投研 Skill（白毛股神方法论）
+
+> 源码：https://github.com/muxuuu/serenity-skill（MIT）  
+> 定位：把 Serenity / @aleabitoreddit 公开投研路径做成 Agent Skill——从热点拆产业链，找扩产瓶颈，再筛公司与基金方向。
+
+#### 一、核心研究路径（可直接对齐白泽）
+
+```
+市场叙事 → 系统变化 → 必需部件 → 产业链分层 → 稀缺约束(卡点)
+  → 公开公司宇宙 → 证据分级 → 市场可能漏看什么 → 什么会证伪
+```
+
+关键纪律：
+- **先排产业链层级，再排公司**（层级判断先于 ticker 列表）
+- **稀缺层优先**：供应商少、验证周期长、扩产难、客户认证严、材料纯度高
+- **强证据优先**：公告/交易所/财报/电话会/环评能评/专利/标准；社交媒体只作线索
+- **研究优先级 ≠ 买卖指令**：输出「优先研究名单」，交易决策留用户
+
+#### 二、可直接借鉴到本项目的业务机制
+
+| # | 机制 | 来源 | 应用到本项目 |
+|---|------|------|------------|
+| 1 | **主题→系统变化翻译**（技术/经济变化 + 物理约束：功率/带宽/良率/纯度…） | `SKILL.md` Research workflow §2 | `topic-manager` + `sector-research` 启动阶段 |
+| 2 | **8 层价值链地图**（下游需求→集成→模块→芯片→工艺封测→设备→材料→基建） | `SKILL.md` §3 | `industry/supply_chain.py` 分层细化 |
+| 3 | **稀缺层判定**（供应商数/验证/扩产/认证/交期/产能预留） | `SKILL.md` §4 | `industry/bottleneck.py` 打分维度补强 |
+| 4 | **证据阶梯**（strong/medium/weak/unverified lead） | `references/evidence-ladder.md` | guardrails `tier`/`nature` 对齐与补全 |
+| 5 | **A 股证据路径**（年报季报/问询函/互动易/招投标/环评能评/关联交易） | `references/market-source-playbook.md` | `a-stock-data` + 归因信息搜集 |
+| 6 | **瓶颈打分卡**（可重复本地评分） | `scripts/serenity_scorecard.py` | L1 瓶颈维度可配置 scorecard |
+| 7 | **请求路由**（主题扫描/单票挑战/候选对比/研究伙伴/学习模式） | `SKILL.md` Request router | 场景四主题分析 + 荐股 workflow |
+| 8 | **失败条件显式化**（替代/扩产/需求/稀释/治理/地缘/客户流失） | `SKILL.md` §8 | L2 可证伪条件模板 |
+
+> ⚠️ 与现有 `cyberagent` 瓶颈链互补：cyberagent 偏物理瓶颈身份分类；Serenity 偏「热点→卡点→证据→排序」完整研究 workflow。  
+> 详见 [`docs/reference/serenity-skill-analysis.md`](../docs/reference/serenity-skill-analysis.md)。
+
+### 📈 GS Quant — 高盛量化金融工具包
+
+> 源码：https://github.com/goldmansachs/gs-quant（Apache 2.0）  
+> 文档：https://developer.gs.com/docs/gsquant/  
+> 定位：机构级 Python 量化工具包——衍生品定价、风险管理、时序分析、策略回测抽象；完整 Marquee API 需机构 client id/secret，**开源包本身的模块设计与统计/时序工具仍可本地借鉴**。
+
+#### 一、模块地图（与白泽对接）
+
+| gs-quant 模块 | 业务含义 | 白泽对应 |
+|---------------|---------|---------|
+| `risk/` | 风险度量、情景、聚合 | L4 风控、组合敞口 |
+| `timeseries/` | 时序算子、统计变换 | 因子管道、动量/波动 |
+| `backtests/` | 回测框架抽象 | `backtest/` |
+| `markets/` | 市场对象、定价上下文 | 数据聚合 / 宏观 |
+| `analytics/` | 分析与报表原语 | 分析输出标准化 |
+| `models/` | 定价/统计模型 | 估值、波动模型 |
+| `data/` | 数据请求与缓存抽象 | `data/aggregator.py` |
+| `workflow/` | 研究工作流编排 | orchestrator plan 化 |
+| `datetime/` | 交易日历/日期工具 | A 股交易日处理 |
+
+#### 二、可直接借鉴到本项目的业务机制
+
+| # | 机制 | 应用 |
+|---|------|------|
+| 1 | **风险度量分层**（单工具 → 组合 → 情景） | L4 + positioning 组合层 gross/net |
+| 2 | **时序算子可组合**（变换链而非散落指标） | `factor_pipeline` 算子化 |
+| 3 | **回测与定价对象分离** | backtest 引擎与策略逻辑解耦（对齐 VectorBT） |
+| 4 | **Session/Context 统一配置** | ConfigStore 模式（对齐 DojoAgents） |
+| 5 | **不可变金融对象 / 强类型 instrument** | DTO 优先、frozen dataclass |
+
+> ⚠️ **边界**：依赖 GS Marquee 的定价/数据接口无法直接用于 A 股个人场景；借鉴**API 设计、风险/时序抽象、工程分层**，不依赖其机构 API。  
+> 详见 [`docs/reference/gs-quant-analysis.md`](../docs/reference/gs-quant-analysis.md)。
+
+### 🗣️ TradingAgents-Astock — A 股多 Agent 投研辩论框架
+
+> 源码：https://github.com/simonlin1212/TradingAgents-astock（Apache 2.0）  
+> 上游：TauricResearch/TradingAgents（论文 arXiv:2412.20138）  
+> 定位：把 TradingAgents 多 Agent 辩论架构深度特化到 A 股——数据源、分析师角色、交易规则三维改造。
+
+#### 一、决策管道（与白泽对照）
+
+```
+7 Analyst 研报
+  Market / Social / News / Fundamentals
+  + Policy / Hot Money / Lockup          ← A 股特化
+        ↓
+Bull vs Bear 辩论（最多 N 轮）
+        ↓
+Research Manager 综合研判（deep_think_llm）
+        ↓
+Trader 交易方案（T+1 / 涨跌停 / 手数）
+        ↓
+激进 ↔ 保守 ↔ 中立 三方风险辩论
+        ↓
+Portfolio Manager 最终决策（Buy/Hold/Sell + 仓位）
+```
+
+**双 LLM 分工**：`quick_think_llm` 跑分析师/研究员/交易员；`deep_think_llm` 跑 Research Manager + Portfolio Manager。
+
+#### 二、A 股特化角色（白泽已有模块映射）
+
+| 角色 | 职责 | 白泽对应 |
+|------|------|---------|
+| 政策分析师 | 监管/产业政策/窗口指导 | `policy/` + `policy-tracker` |
+| 游资追踪师 | 龙虎榜/大单/主力 | `game_theory/` + `game-theory` skill |
+| 解禁监控师 | 限售解禁/减持/质押 | 准入/风控风险提示 + 数据层 |
+
+#### 三、可直接借鉴到本项目的业务机制
+
+| # | 机制 | 来源 | 应用到本项目 |
+|---|------|------|------------|
+| 1 | **多空辩论 + 三方风险辩论** | `agents/researchers/` `risk_mgmt/` | L2 裁决前的对立观点与风险视角 |
+| 2 | **A 股交易约束进 Trader**（T+1/涨跌停/手数/ST） | `agents/trader/` | L3 仓位调度硬约束 |
+| 3 | **免费数据源矩阵**（mootdx/腾讯/东财/新浪/同花顺/财联社/百度） | `dataflows/a_stock.py` | 与 `data/aggregator` 对齐、补缺口 |
+| 4 | **东财防封节流**（`_em_get` 串行限流+抖动） | dataflows | 东财请求统一入口 |
+| 5 | **LangGraph 拓扑 + 条件传播** | `graph/setup.py` `propagation.py` | orchestrator plan/DAG |
+| 6 | **交易反思（CSI 300 基准）** | `graph/reflection.py` | `learner/` 反馈校准 |
+| 7 | **断点续跑 checkpoint** | config `checkpoint_enabled` | 长链路分析中断恢复 |
+| 8 | **报告分阶段可展开**（12 阶段 pipeline） | Web UI progress | CLI/诊断输出分层展示 |
+
+> ⚠️ 上游 TradingAgents 已在 `docs/open-source-credits.md` 登记；**A 股 fork 才是角色/数据/交易规则的主参考**。  
+> 详见 [`docs/reference/tradingagents-astock-analysis.md`](../docs/reference/tradingagents-astock-analysis.md)。
 
 ## 开发工作流
 
