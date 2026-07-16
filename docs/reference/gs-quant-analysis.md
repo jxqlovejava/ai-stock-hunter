@@ -1,5 +1,6 @@
 # GS Quant 参考分析
 
+> 本地：`~/Documents/workspace/gs-quant`  
 > 源码：https://github.com/goldmansachs/gs-quant  
 > 文档：https://developer.gs.com/docs/gsquant/  
 > 许可证：Apache 2.0  

@@ -1,5 +1,6 @@
 # Serenity.skill 参考分析
 
+> 本地：`~/Documents/workspace/serenity-skill`  
 > 源码：https://github.com/muxuuu/serenity-skill  
 > 许可证：MIT  
 > 分析日期：2026-07-16  

@@ -231,9 +231,9 @@ feedback add       # 添加交易反馈
 | 1 | RiskGuard | 本地 | 风控规则 / 仓位 / 熔断 |
 | 2 | VectorBT | 本地 | 回测仿真 / 交易视角 / 回撤 |
 | 3 | DojoAgents | 本地 | Agent Runtime / Harness / Memory |
-| 4 | Serenity.skill | GitHub | 供应链瓶颈 / 证据链 / 主题扫描 |
-| 5 | GS Quant | GitHub | 机构级风险 / 时序 / 回测抽象 |
-| 6 | TradingAgents-Astock | GitHub | A 股多 Agent 辩论 / 数据源 / 角色 |
+| 4 | Serenity.skill | 本地+GitHub | 供应链瓶颈 / 证据链 / 主题扫描 |
+| 5 | GS Quant | 本地+GitHub | 机构级风险 / 时序 / 回测抽象 |
+| 6 | TradingAgents-Astock | 本地+GitHub | A 股多 Agent 辩论 / 数据源 / 角色 |
 
 ### 🛡️ RiskGuard — 风控机制参考 (`~/Documents/workspace/riskguard`)
 
@@ -519,6 +519,7 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
 
 ### 🔗 Serenity.skill — 供应链瓶颈投研 Skill（白毛股神方法论）
 
+> 本地：`~/Documents/workspace/serenity-skill`  
 > 源码：https://github.com/muxuuu/serenity-skill（MIT）  
 > 定位：把 Serenity / @aleabitoreddit 公开投研路径做成 Agent Skill——从热点拆产业链，找扩产瓶颈，再筛公司与基金方向。
 
@@ -553,6 +554,7 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
 
 ### 📈 GS Quant — 高盛量化金融工具包
 
+> 本地：`~/Documents/workspace/gs-quant`  
 > 源码：https://github.com/goldmansachs/gs-quant（Apache 2.0）  
 > 文档：https://developer.gs.com/docs/gsquant/  
 > 定位：机构级 Python 量化工具包——衍生品定价、风险管理、时序分析、策略回测抽象；完整 Marquee API 需机构 client id/secret，**开源包本身的模块设计与统计/时序工具仍可本地借鉴**。
@@ -586,6 +588,7 @@ DojoAgents 把"规则能不能执行"从 agent 内部拆成独立的 **Harness**
 
 ### 🗣️ TradingAgents-Astock — A 股多 Agent 投研辩论框架
 
+> 本地：`~/Documents/workspace/TradingAgents-astock`  
 > 源码：https://github.com/simonlin1212/TradingAgents-astock（Apache 2.0）  
 > 上游：TauricResearch/TradingAgents（论文 arXiv:2412.20138）  
 > 定位：把 TradingAgents 多 Agent 辩论架构深度特化到 A 股——数据源、分析师角色、交易规则三维改造。

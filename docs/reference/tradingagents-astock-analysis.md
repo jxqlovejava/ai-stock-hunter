@@ -1,5 +1,6 @@
 # TradingAgents-Astock 参考分析
 
+> 本地：`~/Documents/workspace/TradingAgents-astock`  
 > 源码：https://github.com/simonlin1212/TradingAgents-astock  
 > 上游：https://github.com/TauricResearch/TradingAgents  
 > 论文：https://arxiv.org/abs/2412.20138  
