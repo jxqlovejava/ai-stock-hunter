@@ -58,14 +58,24 @@ topic_adjustments = {
 }
 ```
 
+### 主题深扫输出（与 serenity-bottleneck 对齐）
+
+当用户要「分析某主题/赛道」而非仅生命周期阶段时，在阶段标签之外强制：
+
+1. **先排产业链层级**（≥3 层）再排代表公司  
+2. 公司表：卡住的环节 / 为什么排这里 / 证据 / 主要风险  
+3. **CONSENSUS/CROWDED 主题默认写入「降级热门」**并说明原因  
+4. 下一步核验清单（公告/订单/毛利率/认证）  
+
 ## 护栏
 
 - **不追逐 FADING 阶段主题**
 - **CROWDED 阶段降权 20% 不可豁免**
 - **单一主题相关仓位不超过 30%**
+- **研究优先级不替代管道 diagnose 评分**
 
 ## 引用
 
-- Python 实现: `src/information/topic_manager.py`, `src/information/schema.py`
+- Python 实现: `src/information/topic_manager.py`, `src/information/schema.py`, `src/industry/serenity_workflow.py`
 - 数据源: 同花顺 reason tag, 东财行业研报
-- 依赖 Skill: `verdict`, `game-theory`
+- 依赖 Skill: `verdict`, `game-theory`, `serenity-bottleneck`

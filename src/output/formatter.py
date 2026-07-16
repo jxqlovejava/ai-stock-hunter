@@ -387,7 +387,7 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         if report.bear_case:
             lines.append(f"  🔴 看空: {report.bear_case}")
 
-        # 瓶颈
+        # 瓶颈 + Serenity 卡点挑战
         ba = report.bottleneck_analysis
         if ba:
             lines.append(f"\n  🏭 供应链瓶颈: {ba.core_business}")
@@ -396,10 +396,29 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             # 翻译常见枚举值
             _enum_cn = {"MATERIAL": "原材料", "ADJACENT": "相邻行业", "COMPONENT": "零部件",
                         "MANUFACTURING": "制造", "DISTRIBUTION": "分销", "RETAIL": "零售",
-                        "CRITICAL": "关键瓶颈", "MODERATE": "中等瓶颈", "MILD": "轻度瓶颈"}
+                        "CRITICAL": "关键瓶颈", "MODERATE": "中等瓶颈", "MILD": "轻度瓶颈",
+                        "OWNER": "拥有者", "DERIVATIVE": "衍生", "NONE": "无",
+                        "EQUIPMENT": "设备", "PACKAGING": "封装", "DEVICE": "器件",
+                        "MODULE": "模组", "SYSTEM": "系统", "END_DEMAND": "终端",
+                        "SUBSTRATE": "衬底"}
             layer_cn = _enum_cn.get(layer_cn, layer_cn)
             type_cn = _enum_cn.get(type_cn, type_cn)
-            lines.append(f"  定位:{layer_cn}  类型:{type_cn}  评分:{ba.bottleneck_score}/100")
+            lines.append(f"  定位:{layer_cn}  类型:{type_cn}  身份分:{ba.bottleneck_score}/100")
+            what = getattr(ba, "what_constrains", "") or ""
+            rp = float(getattr(ba, "research_priority_score", 0) or 0)
+            role = getattr(ba, "serenity_role", "") or ""
+            if what or rp > 0:
+                lines.append(f"  卡住的环节: {what or '—'}")
+                lines.append(
+                    f"  研究优先级: {rp:.1f}/100 ({getattr(ba, 'research_verdict', '') or '—'}) "
+                    f"角色={role} — 非买卖指令"
+                )
+            fails = getattr(ba, "failure_conditions", None) or []
+            if fails:
+                lines.append(f"  什么情况说明判断错了: {'; '.join(fails[:3])}")
+            checks = getattr(ba, "next_checks", None) or []
+            if checks:
+                lines.append(f"  下一步核验: {'; '.join(checks[:3])}")
 
         # 三情景
         sv = result.scenario_valuation

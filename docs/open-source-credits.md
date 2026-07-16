@@ -108,8 +108,8 @@
 |------|------------------------------------------|
 | **借鉴内容** | 热点→系统变化→8 层价值链→稀缺卡点→公司宇宙→证据阶梯→优先研究排序；A 股证据路径（问询函/互动易/环评能评/招投标）；瓶颈 scorecard；失败条件与下一步核验；研究非交易边界 |
 | **解决的问题** | 热点主题「全网都在说」时缺少系统筛选：分不清蹭主题与真卡点、缺少证据与失败条件 |
-| **融入位置** | `industry/bottleneck.py`、`industry/supply_chain.py`、`sector-research` / `topic-manager` 场景四输出格式 |
-| **影响** | 与 cyberagent 物理瓶颈链互补，补全「主题扫描 workflow + 证据纪律」；详见 `docs/reference/serenity-skill-analysis.md` |
+| **融入位置** | `industry/serenity_scorecard.py`、`industry/serenity_workflow.py`、`industry/bottleneck.py`（Serenity 字段）、`routing/diagnosis.py`、formatter/step_output、`.claude/skills/serenity-bottleneck/`、场景四强制格式 |
+| **影响** | 与 cyberagent 物理瓶颈链互补：身份分 + 研究优先级双轴；主题扫强制先层后票；详见 `docs/reference/serenity-skill-analysis.md` |
 | **不借鉴的部分** | 买卖指令与收益承诺；把社媒 KOL 当最终证据 |
 
 ### 7d. GS Quant（高盛量化工具包）

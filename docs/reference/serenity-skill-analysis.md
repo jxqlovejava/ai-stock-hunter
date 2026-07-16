@@ -145,9 +145,25 @@ A 股证据路径（`market-source-playbook`）：
 
 ---
 
-## 八、建议落地优先级
+## 八、落地状态（2026-07-16 已全部采纳）
 
-1. **P0**：主题分析输出改为「先层后票」+ 失败条件 + 下一步核验（文档/CLI 格式）  
-2. **P1**：`bottleneck.py` 增加稀缺层信号字段与 scorecard 对齐  
-3. **P2**：证据阶梯与现有 T0–T3 做映射表，统一 citation  
-4. **P3**：可选安装 serenity-skill 为 Claude Code 用户级 skill，供交互式深度主题研究  
+| 项 | 状态 | 位置 |
+|----|:---:|------|
+| 研究优先级 scorecard | ✅ | `src/industry/serenity_scorecard.py` |
+| 先层后票 DTO / 证据映射 / 输出契约 | ✅ | `src/industry/serenity_workflow.py` |
+| BottleneckAnalysis Serenity 字段 | ✅ | `what_constrains` / `research_priority_score` / `failure_conditions` / `next_checks` |
+| diagnose 自动填充 | ✅ | `DiagnosisEngine._analyze_bottleneck` → `apply_serenity_defaults()` |
+| formatter / step_output 卡点块 | ✅ | `src/output/formatter.py`, `step_output.py` |
+| 项目 skill | ✅ | `.claude/skills/serenity-bottleneck/SKILL.md` |
+| 场景四 / sector / topic / idea / diagnosis 文档 | ✅ | CLAUDE.md + 各 skill |
+| 测试 | ✅ | `tests/test_serenity_scorecard.py` |
+
+**用法速查**:
+
+```python
+from src.industry import (
+    score_from_ratings, estimate_from_bottleneck_type,
+    ThemeScanResult, LayerRanking, CompanyResearchRank,
+    format_theme_scan_report, validate_theme_scan_completeness,
+)
+```

@@ -245,17 +245,36 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
     for r in exec_risks[:2]:
         print(f"  ⚠️ 高管风险: {r}")
 
-    # 瓶颈
+    # 瓶颈 + Serenity 卡点挑战
     ba = getattr(report, "bottleneck_analysis", None)
     if ba:
         _enum_cn = {"MATERIAL": "原材料", "ADJACENT": "相邻行业", "COMPONENT": "零部件",
                     "MANUFACTURING": "制造", "DISTRIBUTION": "分销", "RETAIL": "零售",
-                    "CRITICAL": "关键瓶颈", "MODERATE": "中等瓶颈", "MILD": "轻度瓶颈"}
+                    "CRITICAL": "关键瓶颈", "MODERATE": "中等瓶颈", "MILD": "轻度瓶颈",
+                    "OWNER": "拥有者", "DERIVATIVE": "衍生", "NONE": "无",
+                    "EQUIPMENT": "设备", "PACKAGING": "封装", "DEVICE": "器件",
+                    "MODULE": "模组", "SYSTEM": "系统", "END_DEMAND": "终端",
+                    "SUBSTRATE": "衬底"}
         layer = str(getattr(ba, "supply_chain_layer", "?")).replace("SupplyChainLayer.", "")
         btype = str(getattr(ba, "bottleneck_type", "?")).replace("BottleneckType.", "")
         layer = _enum_cn.get(layer, layer)
         btype = _enum_cn.get(btype, btype)
-        print(f"  🏭 供应链: {ba.core_business} | 定位:{layer} 类型:{btype} 评分:{ba.bottleneck_score}/100")
+        print(f"  🏭 供应链: {ba.core_business} | 定位:{layer} 类型:{btype} 身份分:{ba.bottleneck_score}/100")
+        what = getattr(ba, "what_constrains", "") or ""
+        rp = float(getattr(ba, "research_priority_score", 0) or 0)
+        if what or rp > 0:
+            print(f"  🔍 卡住的环节: {what or '—'}")
+            print(
+                f"  📊 研究优先级: {rp:.1f}/100 "
+                f"({getattr(ba, 'research_verdict', '') or '—'}) "
+                f"角色={getattr(ba, 'serenity_role', '')} — 非买卖"
+            )
+        fails = getattr(ba, "failure_conditions", None) or []
+        if fails:
+            print(f"  ⚠️ 失败条件: {'; '.join(fails[:3])}")
+        checks = getattr(ba, "next_checks", None) or []
+        if checks:
+            print(f"  ✅ 下一步核验: {'; '.join(checks[:3])}")
 
 
 # ── Step 4: 四大师辩论 ───────────────────────────────────────────────

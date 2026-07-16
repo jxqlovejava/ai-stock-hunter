@@ -10,12 +10,17 @@
 锚定 Aschenbrenner《Situational Awareness》:
   AI 扩张是工业进程，被物理输入卡住——电力/变压器/燃气轮机 >
   CoWoS 先进封装/HBM > 裸逻辑产能。
+
+叠加 Serenity.skill (https://github.com/muxuuu/serenity-skill):
+  - research_priority_score: 研究优先级（与 bottleneck_score 身份分正交）
+  - serenity_role / what_constrains / failure_conditions / next_checks
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import List
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +112,16 @@ class BottleneckAnalysis:
     load_bearing_weak: bool = False                # 承重声明是否有弱证据
     confidence_cap: float = 1.0                    # 因证据质量封顶的置信度
 
+    # ── Serenity 研究轴（与 bottleneck_score 正交）──
+    # serenity_role: controls | supplies | benefits | weak_control | story_only
+    serenity_role: str = "story_only"
+    what_constrains: str = ""                      # 卡住的环节（口语）
+    research_priority_score: float = 0.0           # 0-100 研究优先级，非买卖
+    research_verdict: str = ""                     # Top/High/Track/Early lead
+    evidence_strength: str = "needs_checking"      # strong/medium/weak/needs_checking
+    failure_conditions: List[str] = field(default_factory=list)
+    next_checks: List[str] = field(default_factory=list)
+
     @property
     def is_bottleneck_play(self) -> bool:
         """是否是瓶颈相关标的。"""
@@ -123,6 +138,62 @@ class BottleneckAnalysis:
             or (self.bottleneck_type == BottleneckType.NONE
                 and self.pricing_position == PricingPosition.EXPENSIVE)
         )
+
+    def apply_serenity_defaults(self) -> "BottleneckAnalysis":
+        """从 bottleneck_type / constraint 填充 Serenity 字段（就地 + 返回 self）。
+
+        不覆盖已显式填写的非空字段。
+        """
+        from .serenity_scorecard import estimate_from_bottleneck_type
+        from .serenity_workflow import (
+            BAIZE_TO_SERENITY,
+            ROLE_CN,
+            SERENITY_LAYER_CN,
+            bottleneck_type_to_serenity_role,
+        )
+
+        role = bottleneck_type_to_serenity_role(self.bottleneck_type)
+        # 默认 story_only 时按瓶颈类型映射
+        if self.serenity_role in ("", "story_only"):
+            self.serenity_role = role.value
+
+        if not self.what_constrains:
+            layer_key = BAIZE_TO_SERENITY.get(self.supply_chain_layer, "")
+            layer_cn = SERENITY_LAYER_CN.get(
+                layer_key, str(self.supply_chain_layer.value)
+            )
+            role_cn = ROLE_CN.get(role, role.value)
+            base = self.constraint_description or self.core_business or layer_cn
+            self.what_constrains = f"{base}（{role_cn}）"
+
+        if self.research_priority_score <= 0:
+            sc = estimate_from_bottleneck_type(self.bottleneck_type.value)
+            self.research_priority_score = sc.final_score
+            self.research_verdict = sc.verdict
+
+        if self.evidence_strength == "needs_checking":
+            if self.evidence_summary.get("Confirmed", 0) > 0:
+                self.evidence_strength = "strong"
+            elif self.evidence_summary.get("Inferred", 0) > 0:
+                self.evidence_strength = "medium"
+            elif self.evidence_summary.get("Weak", 0) > 0:
+                self.evidence_strength = "weak"
+
+        if not self.failure_conditions:
+            self.failure_conditions = [
+                "替代供应商认证/扩产速度超预期",
+                "客户需求或 capex 低于预期",
+                "收入结构/毛利率未验证卡点叙事",
+            ]
+
+        if not self.next_checks:
+            self.next_checks = [
+                "最新年报/季报中相关业务收入占比与毛利率",
+                "客户认证、订单或扩产公告",
+                "应收/存货/合同负债与经营现金流",
+            ]
+
+        return self
 
 
 # ---------------------------------------------------------------------------

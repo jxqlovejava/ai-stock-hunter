@@ -598,6 +598,8 @@ class DiagnosisEngine:
             BottleneckType.DERIVATIVE: 35, BottleneckType.NONE: 10,
         }
         analysis.bottleneck_score = score_map.get(node.bottleneck_type, 0)
+        # Serenity 研究轴：研究优先级 / 卡住的环节 / 失败条件 / 下一步核验
+        analysis.apply_serenity_defaults()
         return analysis
 
     def _score_macro(
