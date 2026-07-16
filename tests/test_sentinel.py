@@ -38,6 +38,7 @@ def tmp_env(tmp_path: Path):
         cool_p0=0,
         cool_p1=0,
         cool_p2=0,
+        enable_macd_kdj=False,  # 默认单测不依赖 kline_cache
     )
     return cfg
 
@@ -92,6 +93,75 @@ def test_stop_near(tmp_env, monkeypatch):
     monkeypatch.setattr("src.sentinel.engine.fetch_quotes", fake_quotes)
     result = eng.run()
     assert any(a.rule_id == "stop_near" for a in result.alerts)
+
+
+def test_macd_kdj_exit_alert(tmp_path, monkeypatch):
+    """有 EXIT 五法状态时发出 P1 预警。"""
+    import numpy as np
+    import pandas as pd
+
+    # 构造会触发 M2 的序列很难稳定；改为 mock evaluate
+    pos = {
+        "002460": {
+            "symbol": "002460",
+            "name": "赣锋锂业",
+            "direction": "LONG",
+            "entry_price": 54.0,
+            "quantity": 200,
+            "stop_price": 49.78,
+        }
+    }
+    positions_path = tmp_path / "positions.json"
+    positions_path.write_text(json.dumps(pos), encoding="utf-8")
+    cache = tmp_path / "kline"
+    cache.mkdir()
+    # 写假缓存文件（引擎只检查存在后调用 load/evaluate）
+    pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=50, freq="B"),
+            "open": np.linspace(60, 50, 50),
+            "high": np.linspace(61, 51, 50),
+            "low": np.linspace(59, 49, 50),
+            "close": np.linspace(60, 50, 50),
+            "volume": [1e6] * 50,
+        }
+    ).to_csv(cache / "002460_test_daily.csv", index=False)
+
+    cfg = SentinelConfig(
+        positions_path=positions_path,
+        state_path=tmp_path / "state.json",
+        force_trading_hours=True,
+        cool_p0=0,
+        cool_p1=0,
+        cool_p2=0,
+        enable_macd_kdj=True,
+        kline_cache_dir=cache,
+    )
+    eng = SentinelEngine(cfg)
+
+    def fake_quotes(symbols, names=None, prefer_huatai=False):
+        return {
+            "002460": QuoteSnapshot(
+                symbol="002460", name="赣锋锂业", price=50.5, change_pct=-1.0
+            )
+        }, []
+
+    def fake_eval(df, **kwargs):
+        return {
+            "action": "EXIT",
+            "methods": ["M2_resonance_death"],
+            "confidence": 0.48,
+            "notes": ["共振死叉"],
+            "dif": -0.5,
+            "dea": -0.3,
+            "k": 40.0,
+            "d": 45.0,
+        }
+
+    monkeypatch.setattr("src.sentinel.engine.fetch_quotes", fake_quotes)
+    monkeypatch.setattr("src.alphas.macd_kdj.evaluate_ohlc_latest", fake_eval)
+    result = eng.run()
+    assert any(a.rule_id == "macd_kdj_exit" for a in result.alerts)
 
 
 def test_cost_break(tmp_env, monkeypatch):

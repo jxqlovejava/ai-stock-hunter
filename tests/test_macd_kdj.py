@@ -190,6 +190,24 @@ class TestAnalyzeOhlc:
         assert latest_state(pd.DataFrame()) is None
 
 
+class TestHelpers:
+    def test_state_to_dict_and_evaluate(self):
+        from src.alphas.macd_kdj import evaluate_ohlc_latest, state_to_dict
+
+        down = list(np.linspace(30, 15, 50))
+        up = list(np.linspace(15, 22, 30))
+        df = _ohlc_from_close(down + up)
+        d = evaluate_ohlc_latest(df)
+        assert d is not None
+        assert "action" in d
+        assert d["confidence"] <= 0.5
+
+    def test_load_kline_cache_missing(self, tmp_path):
+        from src.alphas.macd_kdj import load_kline_cache
+
+        assert load_kline_cache("999999", tmp_path) is None
+
+
 class TestMacdKdjAlphaModel:
     def test_update_empty(self):
         model = MacdKdjAlphaModel(symbol="000001")

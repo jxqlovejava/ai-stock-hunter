@@ -17,7 +17,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -376,6 +377,101 @@ def latest_state(df: pd.DataFrame, **kwargs) -> Optional[MacdKdjBarState]:
     if not series.states:
         return None
     return series.states[-1]
+
+
+def state_to_dict(state: Optional[MacdKdjBarState]) -> Optional[dict]:
+    """序列化状态供 light/sentinel 输出。"""
+    if state is None:
+        return None
+    return {
+        "date": state.date,
+        "action": state.action.value,
+        "methods": [m.value for m in state.methods],
+        "confidence": state.confidence,
+        "notes": list(state.notes),
+        "dif": round(state.dif, 4),
+        "dea": round(state.dea, 4),
+        "hist": round(state.hist, 4),
+        "k": round(state.k, 2),
+        "d": round(state.d, 2),
+        "j": round(state.j, 2),
+        "macd_golden": state.macd_golden,
+        "macd_death": state.macd_death,
+        "kdj_golden": state.kdj_golden,
+        "kdj_death": state.kdj_death,
+        "macd_above_zero": state.macd_above_zero,
+        "macd_below_zero": state.macd_below_zero,
+        "nature": "interpretation",
+        "tier": "tertiary",
+        "max_confidence_cap": _MAX_CONFIDENCE,
+        "disclaimer": "教学五法辅助，不构成交易信号",
+    }
+
+
+def normalize_ohlc_df(df: pd.DataFrame) -> pd.DataFrame:
+    """统一 OHLC 列名（兼容中英/缓存 CSV）。"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    rename: dict[str, str] = {}
+    mapping = {
+        "date": ("date", "日期", "datetime", "time"),
+        "open": ("open", "开盘", "Open"),
+        "high": ("high", "最高", "High"),
+        "low": ("low", "最低", "Low"),
+        "close": ("close", "收盘", "Close"),
+        "volume": ("volume", "成交量", "vol", "Volume"),
+    }
+    cols_lower = {str(c).lower(): c for c in work.columns}
+    for std, aliases in mapping.items():
+        if std in work.columns:
+            continue
+        for a in aliases:
+            if a in work.columns:
+                rename[a] = std
+                break
+            if a.lower() in cols_lower:
+                rename[cols_lower[a.lower()]] = std
+                break
+    if rename:
+        work = work.rename(columns=rename)
+    if "date" in work.columns:
+        work["date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = work.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    return work
+
+
+def evaluate_ohlc_latest(df: pd.DataFrame, **kwargs) -> Optional[dict]:
+    """从 OHLC DataFrame 得到最新五法 dict；数据不足返回 None。"""
+    work = normalize_ohlc_df(df)
+    if work.empty or len(work) < _MIN_BARS:
+        return None
+    if not all(c in work.columns for c in ("high", "low", "close")):
+        return None
+    st = latest_state(work, **kwargs)
+    return state_to_dict(st)
+
+
+def load_kline_cache(
+    symbol: str,
+    cache_dir: Union[str, Path] = "data/kline_cache",
+) -> Optional[pd.DataFrame]:
+    """从本地日线缓存加载 OHLC。"""
+    d = Path(cache_dir)
+    if not d.exists():
+        return None
+    matches = sorted(d.glob(f"{symbol}_*_daily.csv"))
+    if not matches:
+        # 兼容 002460.SZ 形式
+        bare = symbol.split(".")[0]
+        matches = sorted(d.glob(f"{bare}_*_daily.csv"))
+    if not matches:
+        return None
+    try:
+        df = pd.read_csv(matches[-1])
+        return normalize_ohlc_df(df)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

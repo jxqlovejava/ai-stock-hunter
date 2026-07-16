@@ -296,6 +296,43 @@ def run_light(
     except Exception:
         pass
 
+    # ── 5b. MACD+KDJ 五法（教学规则，辅助）──
+    mk = _eval_macd_kdj(orch, symbol, quote_dict)
+    result.macd_kdj_signal = mk
+    if mk:
+        act = mk.get("action", "NONE")
+        methods = ",".join(mk.get("methods") or []) or "-"
+        print(
+            f"  📐 MACD+KDJ五法: {act} conf={mk.get('confidence', 0):.2f} "
+            f"[{methods}] DIF={mk.get('dif')} DEA={mk.get('dea')} "
+            f"K={mk.get('k')} D={mk.get('d')}"
+        )
+        for n in (mk.get("notes") or [])[:3]:
+            print(f"     · {n}")
+        # 与 timing 交叉提示
+        if act == "EXIT" and held:
+            result.warnings.append("MACD+KDJ五法: 离场候选 — 对照止损/卖点纪律")
+            if advice.action in ("ENTER", "HOLD", "WAIT"):
+                result.warnings.append(
+                    f"五法EXIT 与 timing({advice.action}) 分歧 — 持仓优先风控"
+                )
+        elif act == "AVOID_ENTRY" and not held:
+            result.warnings.append("MACD+KDJ五法: 0轴下假反弹，勿轻易进场")
+            if advice.entry_allowed:
+                advice.entry_allowed = False
+                if advice.action == "ENTER":
+                    advice.action = "WAIT"
+                result.timing_advice = advice.to_dict()
+                result.warnings.append("五法AVOID 压过技术买点 → 改为 WAIT")
+        elif act == "ENTER" and not held:
+            result.warnings.append(
+                f"MACD+KDJ五法进场候选 conf≤{mk.get('confidence', 0):.2f} — 仍须过裁决/风控"
+            )
+        elif act == "HOLD" and held:
+            result.warnings.append("MACD+KDJ五法: 洗盘后持股候选 — 勿因短线死叉恐慌")
+    else:
+        result.data_gaps.append("[DATA_GAP] MACD+KDJ五法（日线不足或不可用）")
+
     # ── 6. 轻裁决（含博弈乘数）──
     step_start(6, "综合裁决 (light)")
     from src.routing.verdict import VerdictEngine
@@ -412,6 +449,12 @@ def run_light(
     print(f"  信号: {getattr(signal, 'action', '-')}  建议仓位 {getattr(signal, 'weight', 0):.1%}")
     print(f"  买点: {advice.buy_point}")
     print(f"  卖点: {advice.sell_point}")
+    if result.macd_kdj_signal:
+        mk = result.macd_kdj_signal
+        print(
+            f"  五法: {mk.get('action')} conf={mk.get('confidence', 0):.2f} "
+            f"methods={','.join(mk.get('methods') or []) or '-'}"
+        )
     if result.warnings:
         print(f"  警告: {', '.join(result.warnings[:5])}")
     if result.data_gaps:
@@ -522,3 +565,61 @@ def _pos_loss_pct(price: float, entry) -> float:
     if e <= 0 or price <= 0:
         return 0.0
     return (float(price) - e) / e
+
+
+def _eval_macd_kdj(orch, symbol: str, quote_dict: dict) -> Optional[dict]:
+    """计算 MACD+KDJ 五法最新状态。优先 get_history，回退 kline_cache / close_series。"""
+    try:
+        import pandas as pd
+        from datetime import datetime, timedelta
+        from src.alphas.macd_kdj import (
+            evaluate_ohlc_latest,
+            load_kline_cache,
+            normalize_ohlc_df,
+        )
+
+        df = None
+        try:
+            end = datetime.now()
+            start = (end - timedelta(days=400)).strftime("%Y-%m-%d")
+            hist = orch.data.get_history(
+                symbol,
+                start_date=start,
+                end_date=end.strftime("%Y-%m-%d"),
+                period="daily",
+            )
+            if hist is not None and not getattr(hist, "empty", True):
+                df = normalize_ohlc_df(hist)
+        except Exception as e:
+            logger.debug("light macd_kdj history: %s", e)
+
+        if df is None or len(df) < 40:
+            df = load_kline_cache(symbol)
+
+        if df is None or len(df) < 40:
+            series = quote_dict.get("close_series") or []
+            if len(series) >= 40:
+                c = pd.Series(series, dtype=float)
+                df = pd.DataFrame(
+                    {
+                        "close": c,
+                        "high": c * 1.01,
+                        "low": c * 0.99,
+                        "open": c,
+                    }
+                )
+
+        # 合并当日 quote 收盘价（若历史最后一根早于今日）
+        if df is not None and not df.empty:
+            px = float(quote_dict.get("price") or quote_dict.get("close") or 0)
+            if px > 0 and "close" in df.columns:
+                last = float(df["close"].iloc[-1])
+                if abs(last - px) / max(px, 1e-9) > 0.001:
+                    # 仅更新最后一根 close，避免伪造整根 K
+                    df = df.copy()
+                    df.loc[df.index[-1], "close"] = px
+
+        return evaluate_ohlc_latest(df) if df is not None else None
+    except Exception as e:
+        logger.debug("light macd_kdj failed: %s", e)
+        return None

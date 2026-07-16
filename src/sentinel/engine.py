@@ -63,11 +63,14 @@ class SentinelConfig:
     history_window: int = 5
     force_trading_hours: bool = False  # True=忽略交易时段（测试用）
     prefer_huatai: bool = False
+    # MACD+KDJ 五法（读本地 kline_cache，不拉网，保 sentinel 秒级）
+    enable_macd_kdj: bool = True
+    kline_cache_dir: Path = Path("data/kline_cache")
 
     @classmethod
     def from_dict(cls, d: dict) -> "SentinelConfig":
         cfg = cls()
-        path_keys = ("positions_path", "state_path", "portfolio_path")
+        path_keys = ("positions_path", "state_path", "portfolio_path", "kline_cache_dir")
         for k, v in d.items():
             if k in path_keys and v is not None:
                 setattr(cfg, k, Path(v))
@@ -475,7 +478,131 @@ class SentinelEngine:
                     )
                 )
 
+        # ── MACD+KDJ 五法（缓存日线，interpretation）──
+        if cfg.enable_macd_kdj:
+            candidates.extend(
+                self._eval_macd_kdj(pos, q, name, price, day)
+            )
+
         return self._apply_cooling(candidates, now_ts)
+
+    def _eval_macd_kdj(
+        self,
+        pos: PositionSnapshot,
+        q: QuoteSnapshot,
+        name: str,
+        price: float,
+        day: str,
+    ) -> list[SentinelAlert]:
+        """持仓五法日检。只读 kline_cache，失败静默。"""
+        cfg = self.config
+        try:
+            from src.alphas.macd_kdj import evaluate_ohlc_latest, load_kline_cache
+
+            df = load_kline_cache(pos.symbol, cfg.kline_cache_dir)
+            # 也试 Hermes 部署路径
+            if df is None or len(df) < 40:
+                alt = Path.home() / "ai-stock-hunter" / "data" / "kline_cache"
+                if alt.exists():
+                    df = load_kline_cache(pos.symbol, alt)
+            if df is None or len(df) < 40:
+                return []
+            mk = evaluate_ohlc_latest(df)
+            if not mk or mk.get("action") in (None, "NONE"):
+                return []
+
+            act = str(mk.get("action"))
+            conf = float(mk.get("confidence") or 0)
+            notes = "；".join(mk.get("notes") or [])[:120]
+            methods = ",".join(mk.get("methods") or []) or "-"
+            detail = (
+                f"DIF {mk.get('dif')} / DEA {mk.get('dea')} | "
+                f"K {mk.get('k')} D {mk.get('d')} | conf≤{conf:.2f}\n"
+                f"方法 {methods}\n"
+                f"{notes}\n"
+                f"性质: interpretation · 非下单指令"
+            )
+
+            out: list[SentinelAlert] = []
+            if act == "EXIT" and pos.direction == "LONG":
+                out.append(
+                    SentinelAlert(
+                        level=AlertLevel.P1,
+                        rule_id="macd_kdj_exit",
+                        symbol=pos.symbol,
+                        name=name,
+                        title="五法离场候选",
+                        body=(
+                            f"MACD+KDJ 共振死叉/弱势死叉\n"
+                            f"现价 {price:.2f} | 成本 {pos.entry_price:.2f} | "
+                            f"止损 {pos.stop_price or '—'}\n"
+                            f"{detail}\n"
+                            f"动作：对照止损与卖点纪律，勿盲目补仓"
+                        ),
+                        price=price,
+                        cooling_key=f"{pos.symbol}:mk_exit:{day}",
+                        cooling_minutes=cfg.cool_p1,
+                    )
+                )
+            elif act == "AVOID_ENTRY":
+                out.append(
+                    SentinelAlert(
+                        level=AlertLevel.P2,
+                        rule_id="macd_kdj_avoid",
+                        symbol=pos.symbol,
+                        name=name,
+                        title="五法勿追假反弹",
+                        body=(
+                            f"0轴下未拐头 + KDJ金叉 → 假反弹风险\n"
+                            f"现价 {price:.2f}\n{detail}\n"
+                            f"动作：持仓勿加仓摊薄；空仓勿抄底"
+                        ),
+                        price=price,
+                        cooling_key=f"{pos.symbol}:mk_avoid:{day}",
+                        cooling_minutes=cfg.cool_p2,
+                    )
+                )
+            elif act == "ENTER" and pos.direction == "LONG":
+                # 持仓语境：仅提示「共振」勿当加仓令
+                out.append(
+                    SentinelAlert(
+                        level=AlertLevel.P2,
+                        rule_id="macd_kdj_enter",
+                        symbol=pos.symbol,
+                        name=name,
+                        title="五法共振提示",
+                        body=(
+                            f"MACD+KDJ 进场形态（教学规则）\n"
+                            f"现价 {price:.2f} | 成本 {pos.entry_price:.2f}\n"
+                            f"{detail}\n"
+                            f"动作：已持仓则评估是否补仓纪律；禁止仅凭此加仓"
+                        ),
+                        price=price,
+                        cooling_key=f"{pos.symbol}:mk_enter:{day}",
+                        cooling_minutes=cfg.cool_p2,
+                    )
+                )
+            elif act == "HOLD" and pos.direction == "LONG":
+                out.append(
+                    SentinelAlert(
+                        level=AlertLevel.P2,
+                        rule_id="macd_kdj_hold",
+                        symbol=pos.symbol,
+                        name=name,
+                        title="五法洗盘持股",
+                        body=(
+                            f"双死叉后小幅回调再双金叉 → 洗盘持股候选\n"
+                            f"现价 {price:.2f}\n{detail}\n"
+                            f"动作：勿因短线死叉恐慌割肉；仍守止损"
+                        ),
+                        price=price,
+                        cooling_key=f"{pos.symbol}:mk_hold:{day}",
+                        cooling_minutes=cfg.cool_p2,
+                    )
+                )
+            return out
+        except Exception:
+            return []
 
     def _eval_portfolio(
         self,
