@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "d2a2eb3f16544a8fa24f90a41883604f",
+    "symbol": "002460",
+    "name": "赣锋锂业",
+    "date": "2026-07-14",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 52.47,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-07-14T14:56:51.685285"
+  }
+]
