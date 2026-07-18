@@ -16,6 +16,8 @@ from typing import Optional
 
 import pandas as pd
 
+from src.data.akshare import _em_no_proxy
+
 logger = logging.getLogger(__name__)
 
 # 同花顺北向 API headers
@@ -117,7 +119,10 @@ class NorthboundAnalyzer:
             profile.is_inflow_sustained = profile.consecutive_days >= 3 and profile.total_net_flow > 0
 
         # Style & size preferences
-        profile.style_preference = self._compute_style_preference()
+        sector_flows = self._fetch_sector_flow_rank()
+        if sector_flows is not None:
+            profile.sector_flows = sector_flows
+        profile.style_preference = self._compute_style_preference(profile.sector_flows)
         size_data = self._fetch_size_preference()
         if size_data:
             profile.large_cap_ratio = size_data.get("large_cap", 0.0)
@@ -350,38 +355,66 @@ class NorthboundAnalyzer:
     def _fetch_size_preference(self) -> Optional[dict]:
         return {"large_cap": 0.6, "small_cap": 0.4}  # Neutral estimate
 
-    def _compute_style_preference(self) -> str:
+    def _fetch_sector_flow_rank(self) -> Optional[dict[str, float]]:
+        """获取行业板块资金流向排名，返回 {板块名: 主力净流入净额(万元)}。"""
+        cache_key = "sector_flow_rank"
+        cached = self._mem_get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             import akshare as ak
-            df = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流向")
-            if df is None or len(df) == 0:
-                return "balanced"
-            value_sectors = {"银行", "保险", "消费", "食品饮料", "家用电器", "公用事业"}
-            growth_sectors = {"电子", "计算机", "通信", "新能源", "医药生物", "传媒"}
-            v_score, g_score = 0.0, 0.0
+            with _em_no_proxy():
+                df = ak.stock_sector_fund_flow_rank(
+                    indicator="今日", sector_type="行业资金流"
+                )
+
+            if df is None or df.empty:
+                return None
+
+            name_col = "名称" if "名称" in df.columns else df.columns[0]
+            net_col = None
+            for col in df.columns:
+                if "净流入" in str(col) and "净额" in str(col):
+                    net_col = col
+                    break
+            if net_col is None:
+                return None
+
+            result = {}
             for _, row in df.iterrows():
-                sector = str(row.iloc[0]) if len(row) > 0 else ""
-                flow_val = 0.0
-                for col in df.columns:
-                    if "净流入" in str(col) or "净额" in str(col):
-                        try:
-                            flow_val = float(row[col])
-                            break
-                        except (ValueError, TypeError):
-                            continue
-                if any(vs in sector for vs in value_sectors):
-                    v_score += flow_val
-                if any(gs in sector for gs in growth_sectors):
-                    g_score += flow_val
-            total = abs(v_score) + abs(g_score)
-            if total == 0:
-                return "balanced"
-            if v_score > g_score * 1.5:
-                return "value"
-            elif g_score > v_score * 1.5:
-                return "growth"
-        except Exception:
-            pass
+                name = str(row.get(name_col, "")).strip()
+                try:
+                    val = float(row.get(net_col, 0))
+                except (ValueError, TypeError):
+                    val = 0.0
+                if name:
+                    result[name] = val
+
+            self._mem_set(cache_key, result)
+            return result
+        except Exception as e:
+            logger.debug("Sector flow rank fetch failed: %s", e)
+        return None
+
+    def _compute_style_preference(self, sector_flows: dict[str, float]) -> str:
+        if not sector_flows:
+            return "balanced"
+        value_sectors = {"银行", "保险", "消费", "食品饮料", "家用电器", "公用事业"}
+        growth_sectors = {"电子", "计算机", "通信", "新能源", "医药生物", "传媒"}
+        v_score, g_score = 0.0, 0.0
+        for sector, flow_val in sector_flows.items():
+            if any(vs in sector for vs in value_sectors):
+                v_score += flow_val
+            if any(gs in sector for gs in growth_sectors):
+                g_score += flow_val
+        total = abs(v_score) + abs(g_score)
+        if total == 0:
+            return "balanced"
+        if v_score > g_score * 1.5:
+            return "value"
+        elif g_score > v_score * 1.5:
+            return "growth"
         return "balanced"
 
     # ------------------------------------------------------------------

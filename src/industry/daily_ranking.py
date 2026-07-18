@@ -23,6 +23,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 # 申万一级行业（28 个）供排行使用
@@ -312,3 +314,54 @@ def fetch_sector_quotes_from_mootdx() -> dict[str, float]:
         logger.warning("mootdx 板块数据获取失败: %s", e)
 
     return {}
+
+
+def format_sector_flow_table(df: pd.DataFrame, top_n: int = 3) -> str:
+    """把 AKShare 板块资金流向 DataFrame 格式化为紧凑 Top/Bottom 字符串。
+
+    Args:
+        df: AKShare `stock_sector_fund_flow_rank` 返回的 DataFrame。
+        top_n: 取净流入/净流出各 N 个。
+
+    Returns:
+        多行字符串，适合终端直接打印；空数据时返回 DATA_GAP 提示。
+    """
+    if df is None or df.empty:
+        return "  [DATA_GAP] 板块资金流向数据不可用"
+
+    # 自动识别净流入净额列（今日/5日/10日前缀均可）
+    net_col = None
+    for col in df.columns:
+        if "净流入" in str(col) and "净额" in str(col):
+            net_col = col
+            break
+    if net_col is None:
+        return "  [DATA_GAP] 板块资金流向列识别失败"
+
+    name_col = "名称" if "名称" in df.columns else df.columns[0]
+
+    def _to_yi(val) -> float:
+        try:
+            return float(val) / 10000  # 万元 -> 亿元
+        except (ValueError, TypeError):
+            return 0.0
+
+    df = df.copy()
+    df["_net_yi"] = df[net_col].apply(_to_yi)
+    df_sorted = df.sort_values("_net_yi", ascending=False)
+
+    top = df_sorted.head(top_n)
+    # 排除已出现在净流入 Top N 中的板块，避免重叠
+    remaining = df_sorted.iloc[top_n:] if len(df_sorted) > top_n else df_sorted.iloc[:0]
+    bottom = remaining.tail(top_n).iloc[::-1]
+
+    def _fmt(row) -> str:
+        name = str(row.get(name_col, "")).strip()
+        val = float(row.get("_net_yi", 0))
+        return f"{name}({val:+.1f}亿)"
+
+    lines = [
+        f"  净流入 Top {top_n}: {', '.join(_fmt(r) for _, r in top.iterrows())}",
+        f"  净流出 Top {top_n}: {', '.join(_fmt(r) for _, r in bottom.iterrows())}",
+    ]
+    return "\n".join(lines)

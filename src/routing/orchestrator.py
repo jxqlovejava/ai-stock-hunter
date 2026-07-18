@@ -502,6 +502,7 @@ class Orchestrator:
         # ---- Phase 3: 增强上下文 ----
         macro_regime = self._get_macro_regime()
         nb_profile = self._get_northbound_profile()
+        sector_flow = self.data.get_sector_capital_flow()
         bt_profile = self._get_block_trade_profile(symbol)
         earnings_factor = self._get_earnings_revision(symbol)
         topic_adj = self._get_topic_adjustments()
@@ -591,6 +592,22 @@ class Orchestrator:
                 "quadrant": macro_regime.quadrant.value,
                 "confidence": macro_regime.confidence,
             }
+
+        # ---- 注入板块资金流向 ----
+        if sector_flow is not None and not sector_flow.empty:
+            enriched_macro["sector_flow"] = {
+                "indicator": sector_flow.indicator,
+                "top_inflow": [
+                    {"sector": s.sector_name, "main_net": s.main_net}
+                    for s in sorted(sector_flow.sectors, key=lambda x: x.main_net, reverse=True)[:5]
+                ],
+                "top_outflow": [
+                    {"sector": s.sector_name, "main_net": s.main_net}
+                    for s in sorted(sector_flow.sectors, key=lambda x: x.main_net)[:5]
+                ],
+            }
+        elif sector_flow is not None:
+            result.data_gaps.append(sector_flow.data_gap_reason or "[DATA_GAP] 板块资金流向不可用")
 
         # ---- 注入市场状态 + 政策传导 ----
         if market_regime_profile is not None:
@@ -991,6 +1008,7 @@ class Orchestrator:
             cycle_analysis=cycle_analysis,      # Phase 5: 周期分析
             regime_adjustments=regime_adjustments,     # Phase 11: 宏观象限权重
             manipulation_scan=manipulation_scan,        # Phase 11: 反操纵扫描
+            sector_flow=sector_flow,
         )
         result.report = report
         result.market_sentiment = sentiment_dict

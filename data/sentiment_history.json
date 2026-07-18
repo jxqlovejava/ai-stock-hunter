@@ -1168,5 +1168,55 @@
     "panic_count": 0,
     "greed_count": 0,
     "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-18T23:25:38.515485",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.93,
+    "percentile": 20.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-18T23:25:50.053744",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 75.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-18T23:28:39.534400",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.93,
+    "percentile": 20.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-18T23:28:49.163214",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 73.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-18T23:29:04.325649",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.75,
+    "percentile": 71.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
   }
 ]

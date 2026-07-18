@@ -37,6 +37,8 @@ from .schema import (
     Quote,
     RelatedParty,
     ScreeningResult,
+    SectorCapitalFlowItem,
+    SectorCapitalFlowSnapshot,
 )
 from .source_citation import make_citation, make_data_gap_citation
 from .us_overnight import USOvernightSnapshot, fetch_us_overnight
@@ -1057,6 +1059,98 @@ class DataAggregator:
             )
             self._cache_set(cache_key, snapshot)
             return snapshot
+
+    def get_sector_capital_flow(
+        self, indicator: str = "今日"
+    ) -> Optional[SectorCapitalFlowSnapshot]:
+        """获取行业板块资金流向快照。
+
+        当前仅 AKShare 提供该数据，带 5 分钟内存缓存。
+        数据源不可用时返回带 DATA_GAP 标记的 snapshot，不抛异常。
+
+        Args:
+            indicator: 统计周期，支持 "今日" / "5日" / "10日"。
+        """
+        cache_key = f"sector_capital_flow:{indicator}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            df = self.akshare.get_sector_capital_flow(indicator=indicator)
+            if df is None or df.empty:
+                snapshot = SectorCapitalFlowSnapshot(
+                    indicator=indicator,
+                    data_gap_reason="[DATA_GAP] AKShare 行业资金流向返回为空",
+                )
+            else:
+                snapshot = self._build_sector_flow_snapshot(df, indicator)
+                snapshot.citation = make_citation(
+                    provider="akshare",
+                    field="sector_capital_flow",
+                    data_type="sector_capital_flow",
+                )
+        except Exception as e:
+            logger.warning("行业资金流向获取失败: %s", e)
+            snapshot = SectorCapitalFlowSnapshot(
+                indicator=indicator,
+                data_gap_reason=f"[DATA_GAP] 获取失败: {e}",
+            )
+
+        self._cache_set(cache_key, snapshot)
+        return snapshot
+
+    @staticmethod
+    def _build_sector_flow_snapshot(
+        df: pd.DataFrame, indicator: str
+    ) -> SectorCapitalFlowSnapshot:
+        """把 AKShare 行业资金流向 DataFrame 转为 snapshot。"""
+        prefix = indicator  # "今日" / "5日" / "10日"
+
+        def _col(*parts: str) -> str:
+            return f"{prefix}{''.join(parts)}"
+
+        def _float(val) -> float:
+            if val is None:
+                return 0.0
+            s = str(val).replace(",", "").replace("%", "").strip()
+            if not s or s in ("-", "--", "nan", "None"):
+                return 0.0
+            try:
+                return float(s)
+            except (ValueError, TypeError):
+                return 0.0
+
+        sectors = []
+        for _, row in df.iterrows():
+            try:
+                name = str(row.get("名称", "")).strip()
+                if not name:
+                    continue
+                item = SectorCapitalFlowItem(
+                    sector_name=name,
+                    change_pct=_float(row.get(f"{prefix}涨跌幅", 0)),
+                    main_net=_float(row.get(_col("主力净流入-净额"), 0)),
+                    main_net_pct=_float(row.get(_col("主力净流入-净占比"), 0)),
+                    super_large_net=_float(row.get(_col("超大单净流入-净额"), 0)),
+                    super_large_net_pct=_float(row.get(_col("超大单净流入-净占比"), 0)),
+                    large_net=_float(row.get(_col("大单净流入-净额"), 0)),
+                    large_net_pct=_float(row.get(_col("大单净流入-净占比"), 0)),
+                    medium_net=_float(row.get(_col("中单净流入-净额"), 0)),
+                    medium_net_pct=_float(row.get(_col("中单净流入-净占比"), 0)),
+                    small_net=_float(row.get(_col("小单净流入-净额"), 0)),
+                    small_net_pct=_float(row.get(_col("小单净流入-净占比"), 0)),
+                    top_stock_name=str(row.get(_col("主力净流入最大股"), "")).strip(),
+                    rank=int(_float(row.get("序号", 0))),
+                )
+                sectors.append(item)
+            except Exception:
+                continue
+
+        return SectorCapitalFlowSnapshot(
+            indicator=indicator,
+            sectors=sectors,
+        )
 
     def get_industry_pe_pb(
         self, symbol: str, market: str = "SH"

@@ -165,6 +165,7 @@ FRESHNESS_LIMITS: dict[str, timedelta] = {
     "dividend_yield": timedelta(hours=24),
     "macro_indicator": timedelta(hours=4),
     "us_overnight": timedelta(hours=4),
+    "sector_capital_flow": timedelta(minutes=15),
 }
 
 

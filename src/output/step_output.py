@@ -182,14 +182,18 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
         ("估值综合", getattr(report, "valuation_score", 0)),
         ("周期适配", getattr(report, "cycle_score", 0)),
         ("高管因子", getattr(report, "executive_score", 0)),
+        ("板块资金", getattr(report, "sector_flow_score", 50)),
         ("大宗交易", getattr(report, "block_trade_score", 50)),
     ]
     for label, score in rows:
         bar = "▓" * int(score / 5) + "░" * (20 - int(score / 5))
-        nature = "[🧠解释]" if label not in ("宏观环境", "动量因子") else "[📊事实]"
+        nature = "[🧠解释]" if label not in ("宏观环境", "动量因子", "板块资金") else "[📊事实]"
         print(f"  {label:6s} {score:5.0f} {bar} {nature}")
     sentiment = getattr(report, "sentiment_signal", "NORMAL")
     print(f"  情绪     {CN.get(str(sentiment), str(sentiment))} [📊事实]")
+    sector_flow_rank = getattr(report, "sector_flow_rank", None)
+    if sector_flow_rank is not None:
+        print(f"  板块资金排名 {sector_flow_rank}% (净流入越靠前排名越高) [📊事实]")
 
     print(f"  置信度 {getattr(report, 'confidence', 0):.0%}  数据 {getattr(report, 'data_freshness', '?')}")
 

@@ -606,6 +606,17 @@ def cmd_market():
     except Exception as e:
         print(f"   ⚠️ 板块排行失败: {e}")
 
+    # ── 5. 板块资金流向 ──
+    print("\n💰 板块资金流向")
+    print("-" * 40)
+    try:
+        from src.data.akshare import AKShareProvider
+        from src.industry.daily_ranking import format_sector_flow_table
+        flow_df = AKShareProvider().get_sector_capital_flow()
+        print(format_sector_flow_table(flow_df, top_n=3))
+    except Exception as e:
+        print(f"   [DATA_GAP] 板块资金流向获取失败: {e}")
+
     # ── 数据基础说明 ──
     print("\n" + "=" * 60)
     print("💡 Phase 1-2 数据基础已完备。")
@@ -626,6 +637,17 @@ def cmd_sentiment():
     sentiment = detector.detect_market()
     report = format_sentiment_plain(sentiment)
     print(report)
+
+    # 追加板块资金流向
+    print("\n💰 板块资金流向")
+    print("-" * 40)
+    try:
+        from src.data.akshare import AKShareProvider
+        from src.industry.daily_ranking import format_sector_flow_table
+        flow_df = AKShareProvider().get_sector_capital_flow()
+        print(format_sector_flow_table(flow_df, top_n=3))
+    except Exception as e:
+        print(f"   [DATA_GAP] 板块资金流向获取失败: {e}")
 
 
 def cmd_backtest():

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -409,3 +409,43 @@ class MoneyFlowSnapshot:
     def empty(self) -> bool:
         """是否无任何有效资金流数据。"""
         return self.total_turnover == 0 and self.main_net == 0 and not self.data_gap_reason
+
+
+# ---------------------------------------------------------------------------
+# 板块资金流向快照
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SectorCapitalFlowItem:
+    """单个板块的资金流向条目（单位：万元）。"""
+
+    sector_name: str
+    change_pct: float = 0.0
+    main_net: float = 0.0          # 主力净流入净额（万元）
+    main_net_pct: float = 0.0      # 主力净流入净占比（%）
+    super_large_net: float = 0.0
+    super_large_net_pct: float = 0.0
+    large_net: float = 0.0
+    large_net_pct: float = 0.0
+    medium_net: float = 0.0
+    medium_net_pct: float = 0.0
+    small_net: float = 0.0
+    small_net_pct: float = 0.0
+    top_stock_name: str = ""       # 主力净流入最大股
+    rank: int = 0
+
+
+@dataclass
+class SectorCapitalFlowSnapshot:
+    """行业板块资金流向快照。"""
+
+    indicator: str = "今日"        # "今日" | "5日" | "10日"
+    sectors: list[SectorCapitalFlowItem] = field(default_factory=list)
+    data_gap_reason: str = ""
+    citation: Optional[SourceCitation] = None
+
+    @property
+    def empty(self) -> bool:
+        """是否无任何有效板块资金流数据。"""
+        return not self.sectors and not self.data_gap_reason

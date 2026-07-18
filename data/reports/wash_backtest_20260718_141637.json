@@ -1,0 +1,233 @@
+{
+  "n_stocks_scanned": 10,
+  "n_stocks_with_data": 10,
+  "n_entry_events": 509,
+  "n_fail_events": 129,
+  "entry_stats": {
+    "phase": "entry_combined",
+    "n_events": 509,
+    "n_with_fwd": 509,
+    "win_rate_5d": 0.44793713163064836,
+    "avg_ret_3d": 0.0032267480587156896,
+    "avg_ret_5d": 0.00034228892707811187,
+    "avg_ret_10d": -0.004310209230251941,
+    "median_ret_5d": -0.007398273736128114,
+    "p_value_5d": 0.465066903503895
+  },
+  "fail_stats": {
+    "phase": "failed_washout",
+    "n_events": 129,
+    "n_with_fwd": 129,
+    "win_rate_5d": 0.4728682170542636,
+    "avg_ret_3d": 0.0014459529554553135,
+    "avg_ret_5d": 0.0007637600028211805,
+    "avg_ret_10d": 0.019364040254938767,
+    "median_ret_5d": -0.0026533479007334604,
+    "p_value_5d": 0.4669490960486343
+  },
+  "by_phase": {
+    "failed_washout": {
+      "phase": "failed_washout",
+      "n_events": 129,
+      "n_with_fwd": 129,
+      "win_rate_5d": 0.4728682170542636,
+      "avg_ret_3d": 0.0014459529554553135,
+      "avg_ret_5d": 0.0007637600028211805,
+      "avg_ret_10d": 0.019364040254938767,
+      "median_ret_5d": -0.0026533479007334604,
+      "p_value_5d": 0.4669490960486343
+    },
+    "markup_candidate": {
+      "phase": "markup_candidate",
+      "n_events": 446,
+      "n_with_fwd": 446,
+      "win_rate_5d": 0.4484304932735426,
+      "avg_ret_3d": 0.0032552145931828967,
+      "avg_ret_5d": 0.0007376748004517874,
+      "avg_ret_10d": -0.004819584436804367,
+      "median_ret_5d": -0.007289801140954566,
+      "p_value_5d": 0.4315724517140912
+    },
+    "wash_exhaustion": {
+      "phase": "wash_exhaustion",
+      "n_events": 63,
+      "n_with_fwd": 63,
+      "win_rate_5d": 0.4444444444444444,
+      "avg_ret_3d": 0.0030252230686780026,
+      "avg_ret_5d": -0.00245679201775775,
+      "avg_ret_10d": -0.0007041561806903268,
+      "median_ret_5d": -0.007535795026375358,
+      "p_value_5d": 0.6094152461714251
+    }
+  },
+  "evidence_grade": "PRELIMINARY",
+  "verdict": "🟡 初步支持：509 样本，5 日胜率 44.8%，均收益 0.03% (p=0.4651)；样本或显著性未达 CONFIRMED",
+  "details": [
+    "扫描股票 10，有效数据 10",
+    "入场事件(洗尽/拉升候选) 509，有 5 日前瞻 509",
+    "入场 5 日胜率 44.8% | 均值 0.03% | 中位 -0.74% | p=0.4651",
+    "入场 3 日均值 0.32% | 10 日均值 -0.43%",
+    "FAILED_WASHOUT 事件 129，5 日均值 0.08% | 胜率 47.3%",
+    "  phase=failed_washout: n=129 wr5=47.3% avg5=0.08% p=0.467",
+    "  phase=markup_candidate: n=446 wr5=44.8% avg5=0.07% p=0.432",
+    "  phase=wash_exhaustion: n=63 wr5=44.4% avg5=-0.25% p=0.609"
+  ],
+  "sample_events": [
+    {
+      "symbol": "600756",
+      "date": "2015-08-20",
+      "phase": "markup_candidate",
+      "confidence": 0.55,
+      "cumulative_drop_pct": 0.1357216672407853,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": -0.2607638888888889,
+      "fwd_ret_5d": -0.30555555555555547,
+      "fwd_ret_10d": -0.4340277777777778
+    },
+    {
+      "symbol": "600756",
+      "date": "2015-09-28",
+      "phase": "markup_candidate",
+      "confidence": 0.62,
+      "cumulative_drop_pct": 0.13031293787949544,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": -0.003938946331856208,
+      "fwd_ret_5d": 0.07533234859675031,
+      "fwd_ret_10d": 0.07976366322008865
+    },
+    {
+      "symbol": "600756",
+      "date": "2015-10-26",
+      "phase": "markup_candidate",
+      "confidence": 0.55,
+      "cumulative_drop_pct": 0.09995615957913195,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.0062318238471126275,
+      "fwd_ret_5d": 0.03739094308267554,
+      "fwd_ret_10d": 0.129206481096801
+    },
+    {
+      "symbol": "600756",
+      "date": "2015-11-30",
+      "phase": "markup_candidate",
+      "confidence": 0.55,
+      "cumulative_drop_pct": 0.10836976889444105,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": -0.05911482513153821,
+      "fwd_ret_5d": 0.0464252553389044,
+      "fwd_ret_10d": 0.28288455586505723
+    },
+    {
+      "symbol": "600756",
+      "date": "2016-01-05",
+      "phase": "wash_exhaustion",
+      "confidence": 0.88,
+      "cumulative_drop_pct": 0.2013,
+      "wave_count": 2,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": -0.08981895132847384,
+      "fwd_ret_5d": -0.11356689395720654,
+      "fwd_ret_10d": 0.03620973430519636
+    },
+    {
+      "symbol": "600756",
+      "date": "2016-05-19",
+      "phase": "markup_candidate",
+      "confidence": 0.55,
+      "cumulative_drop_pct": 0.14188311688311686,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.015413533834586657,
+      "fwd_ret_5d": 0.013909774436090316,
+      "fwd_ret_10d": 0.1139097744360904
+    },
+    {
+      "symbol": "600756",
+      "date": "2016-06-27",
+      "phase": "markup_candidate",
+      "confidence": 0.55,
+      "cumulative_drop_pct": 0.09465855307640295,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.008037508372404467,
+      "fwd_ret_5d": 0.030475552578700604,
+      "fwd_ret_10d": 0.03516409912926988
+    },
+    {
+      "symbol": "600756",
+      "date": "2016-07-11",
+      "phase": "markup_candidate",
+      "confidence": 0.62,
+      "cumulative_drop_pct": 0.09879753006174845,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.04885150436751862,
+      "fwd_ret_5d": 0.016499514720155428,
+      "fwd_ret_10d": 0.01229375606599814
+    },
+    {
+      "symbol": "600756",
+      "date": "2015-07-09",
+      "phase": "failed_washout",
+      "confidence": 0.7,
+      "cumulative_drop_pct": 0.3246906305244549,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.20986038394415352,
+      "fwd_ret_5d": 0.07809773123909247,
+      "fwd_ret_10d": 0.3294066317626527
+    },
+    {
+      "symbol": "600756",
+      "date": "2016-01-26",
+      "phase": "failed_washout",
+      "confidence": 0.7,
+      "cumulative_drop_pct": 0.33671361502347424,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": -0.10815402038505095,
+      "fwd_ret_5d": -0.10645526613816525,
+      "fwd_ret_10d": -0.06398640996602489
+    },
+    {
+      "symbol": "600756",
+      "date": "2018-02-09",
+      "phase": "failed_washout",
+      "confidence": 0.7,
+      "cumulative_drop_pct": 0.3069569835369092,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.06896551724137923,
+      "fwd_ret_5d": 0.09118773946360159,
+      "fwd_ret_10d": 0.23065134099616857
+    },
+    {
+      "symbol": "600756",
+      "date": "2018-10-15",
+      "phase": "failed_washout",
+      "confidence": 0.7,
+      "cumulative_drop_pct": 0.26650366748166254,
+      "wave_count": 1,
+      "short_pressure_flag": false,
+      "fwd_ret_3d": 0.053333333333333455,
+      "fwd_ret_5d": 0.13733333333333353,
+      "fwd_ret_10d": 0.05466666666666664
+    }
+  ],
+  "generated_at": "2026-07-18T14:16:36",
+  "cache_dir": "/Users/jiangxiaoqiang/Documents/workspace/ai-stock-hunter/data/kline_cache",
+  "params": {
+    "lookback": 30,
+    "step": 5,
+    "cooldown": 10,
+    "min_confidence": 0.5,
+    "max_stocks": 10,
+    "start_date": null,
+    "end_date": null,
+    "seed": 42
+  }
+}

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -55,6 +56,27 @@ def _bypass_system_proxy() -> None:
     # macOS 的 urllib 也读取小写版本
     os.environ["no_proxy"] = os.environ["NO_PROXY"]
     logger.debug("NO_PROXY set for eastmoney domains: %s", em_pattern)
+
+
+@contextmanager
+def _em_no_proxy():
+    """临时禁用 requests 代理，用于东财域名请求。
+
+    部分环境系统代理（如本地 Clash）未运行时会导致 requests 直接连接失败。
+    此上下文管理器把 requests.get 替换为 trust_env=False 的 Session.get，
+    请求结束后自动恢复。
+    """
+    import requests
+
+    original_get = requests.get
+    session = requests.Session()
+    session.trust_env = False
+    session.proxies = {"http": None, "https": None}
+    requests.get = session.get
+    try:
+        yield
+    finally:
+        requests.get = original_get
 
 
 def _check_push2_connectivity(timeout: float = 8.0) -> bool:
@@ -442,10 +464,17 @@ class AKShareProvider(DataProvider):
         except Exception:
             return pd.DataFrame()
 
-    def get_sector_capital_flow(self) -> pd.DataFrame:
-        """获取行业板块资金流向。"""
+    def get_sector_capital_flow(self, indicator: str = "今日") -> pd.DataFrame:
+        """获取行业板块资金流向。
+
+        Args:
+            indicator: 统计周期，支持 "今日" / "5日" / "10日"。
+        """
         try:
-            return ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流向")
+            with _em_no_proxy():
+                return ak.stock_sector_fund_flow_rank(
+                    indicator=indicator, sector_type="行业资金流"
+                )
         except Exception:
             return pd.DataFrame()
 

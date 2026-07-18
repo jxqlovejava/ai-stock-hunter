@@ -88,6 +88,9 @@ class DiagnosisReport:
     block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
     block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
     dimension_synthesis: str = ""            # 多维诊断综述
+    # 板块资金流向
+    sector_flow_score: float = 50.0          # 行业资金流向排名分 0-100
+    sector_flow_rank: int = 50               # 行业净流入排名百分位 0-100
     # 主题驱动检测
     sector_warnings: list[str] = field(default_factory=list)  # 行业级风险提示
     is_theme_driven: bool = False            # 是否处于主题驱动阶段
@@ -104,6 +107,38 @@ class DiagnosisEngine:
         weight < 1.0 降权，weight > 1.0 加权。
         """
         return max(0.0, min(100.0, score * weight))
+
+    @staticmethod
+    def _compute_sector_flow_score(sector_flow, stock_name: str) -> tuple[float, int]:
+        """计算个股所在行业的板块资金流向排名分。
+
+        Args:
+            sector_flow: SectorCapitalFlowSnapshot
+            stock_name: 股票名称，用于模糊匹配所属行业
+
+        Returns:
+            (score, rank_percentile): score 0-100，rank_percentile 0-100
+                （数值越大表示行业净流入排名越靠前）
+        """
+        sectors = getattr(sector_flow, "sectors", None)
+        if not sectors:
+            return 50.0, 50
+
+        total = len(sectors)
+        # 按主力净流入排序，rank=1 为净流入最大
+        sorted_sectors = sorted(sectors, key=lambda s: getattr(s, "main_net", 0.0), reverse=True)
+
+        # 用股票名称中的行业关键词匹配板块名
+        for idx, s in enumerate(sorted_sectors, start=1):
+            sector_name = getattr(s, "sector_name", "").strip()
+            if sector_name and sector_name in stock_name:
+                # idx=1（净流入最大）→ 100；idx=total（净流入最小）→ 0
+                denom = max(1, total - 1)
+                rank_pct = max(0, min(100, int((1 - (idx - 1) / denom) * 100)))
+                return float(rank_pct), rank_pct
+
+        # 未匹配到具体行业：返回中位数
+        return 50.0, 50
 
     def analyze(
         self,
@@ -124,6 +159,7 @@ class DiagnosisEngine:
         regime_adjustments: Optional[object] = None,   # Phase 11: RegimeAdjustments
         manipulation_scan: Optional[object] = None,    # Phase 11: ManipulationScan
         block_trade_profile: Optional[object] = None,  # Phase 12: BlockTradeProfile
+        sector_flow: Optional[object] = None,          # 行业板块资金流向
     ) -> DiagnosisReport:
         report = DiagnosisReport(symbol=symbol, name=name)
 
@@ -159,6 +195,20 @@ class DiagnosisEngine:
                 report.price_ma_zone = mom["zone"]
                 report.momentum_direction_discount = mom["discount"]
                 report.ma_deviation_pct = mom["deviation"]
+
+        # 板块资金流向微调动量评分
+        if sector_flow is not None and hasattr(sector_flow, "sectors"):
+            flow_score, flow_rank = self._compute_sector_flow_score(
+                sector_flow, quote.get("name", name) if quote else name
+            )
+            report.sector_flow_score = flow_score
+            report.sector_flow_rank = flow_rank
+            if report.momentum_score is not None:
+                # 行业净流入前 20% → 动量 +5%；净流出前 20% → 动量 -5%
+                if flow_rank <= 20:
+                    report.momentum_score = self._apply_weight(report.momentum_score, 1.05)
+                elif flow_rank >= 80:
+                    report.momentum_score = self._apply_weight(report.momentum_score, 0.95)
 
         # Phase 5: 估值评分（独立于 value_score）
         report.valuation_score = self._score_valuation(valuation_result)
