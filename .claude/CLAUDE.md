@@ -246,6 +246,7 @@ feedback add       # 添加交易反馈
 | 4 | Serenity.skill | 本地+GitHub | 供应链瓶颈 / 证据链 / 主题扫描 |
 | 5 | GS Quant | 本地+GitHub | 机构级风险 / 时序 / 回测抽象 |
 | 6 | TradingAgents-Astock | 本地+GitHub | A 股多 Agent 辩论 / 数据源 / 角色 |
+| 7 | Investment-News | 本地+GitHub | 全球产业链资讯看板 / RSS 多源聚合 / AI 摘要管道 / 赛道-A 股映射 |
 
 ### 🛡️ RiskGuard — 风控机制参考 (`~/Documents/workspace/riskguard`)
 
@@ -648,6 +649,70 @@ Portfolio Manager 最终决策（Buy/Hold/Sell + 仓位）
 
 > ⚠️ 上游 TradingAgents 已在 `docs/open-source-credits.md` 登记；**A 股 fork 才是角色/数据/交易规则的主参考**。  
 > 详见 [`docs/reference/tradingagents-astock-analysis.md`](../docs/reference/tradingagents-astock-analysis.md)。
+
+### 📰 Investment-News — 全球产业链资讯看板（A 股赛道映射）
+
+> 本地：`~/Documents/workspace/investment-news`  
+> 源码：https://github.com/simonlin1212/investment-news（MIT）  
+> 定位：为 A 股投资者打造的本地「投资资讯看板」——从 100+ 全球权威源抓取 12 大赛道新闻，调用用户自己的大模型（Claude 订阅或 API）提炼中文「今日要点」+ 翻译，浏览器看板呈现。纯 Python 标准库，零 API key，数据不出本机。
+
+#### 一、管道架构（与白泽对齐）
+
+```
+sources.json (108 源 / 12 赛道)
+       │
+       ▼  scripts/fetch.py    并发抓取 + 合规过滤(红线词) + 最近 N 天 + 北京时间归一
+  data.js  (原始条目, window.DATA)
+       │
+       ▼  scripts/digest.py   调用大模型 → 各赛道「今日要点」(3-5条) + 中文翻译 + 溯源链接
+  data.js  (含 AI 要点 + has_ai 标记)
+       │
+       ▼  index.html          浏览器看板(单文件、零构建、零依赖)
+  server.py：本地 HTTP 服务(仅绑定 127.0.0.1) + POST /api/refresh 刷新接口
+```
+
+关键设计：
+- **fetch.py**：`ThreadPoolExecutor(max_workers=40)` 并发抓全部 RSS/Atom 源，`PER=5` 每源取最新 5 条，自动解析 `<item>`/`<entry>`，按 `recent_days`（默认 7 天）过滤旧文，红线关键词过滤（赌博/加密/预测市场/色情），时间统一转北京时间 `MM-DD HH:MM`。
+- **digest.py**：`ThreadPoolExecutor(max_workers=3)` 并发调 LLM，每赛道取最新 16 条，系统 prompt 要求输出结构化 JSON（要点 + refs 溯源序号 + 逐条中文翻译），`ATTEMPTS=3` 失败重试，已有要点的赛道自动跳过（支持增量补跑）。
+- **llm.py**：双 provider 统一入口 — `claude-cli`（spawn 本机 `claude -p`，`--disallowedTools` 禁全部工具，$0）或 `api`（OpenAI 兼容 `/chat/completions`）。
+- **server.py**：`ThreadingHTTPServer` 仅绑 `127.0.0.1`，`/api/refresh` 仅走 POST（防 CSRF），子进程跑 fetch → digest，返回 JSON。
+- **index.html**：单文件看板，左侧 12 赛道导航，每栏顶部 AI 今日要点（附原文链接），下方新闻列表（双语：中文翻译 + 英文原标题），左上角 ⟳ 一键刷新。
+
+#### 二、12 赛道 ↔ A 股板块映射
+
+| 赛道 key | 赛道名称 | A 股对应板块 | 代表信息源 |
+|------|------|------|------|
+| `ai` | AI / 大模型 | AI 算力、大模型、智能体 | OpenAI · Google Research · Hugging Face · 量子位 · 机器之心 · MIT Tech Review |
+| `semi` | 半导体 / 芯片 | 芯片设计/制造/封测/设备 | DIGITIMES · SemiAnalysis · IEEE Spectrum · EE Times · Semiconductor Engineering |
+| `robot` | 机器人 / 自动化 | 机器人、工业自动化 | The Robot Report · Robohub · IEEE Spectrum Robotics · Robotics Business Review |
+| `auto` | 汽车 / 新能源车 | 新能源车、智能驾驶 | Electrek · InsideEVs · CnEVPost · TechCrunch Transport |
+| `energy` | 能源 / 新能源 | 光伏、储能、电力 | CleanTechnica · PV Tech · Energy Storage News · OilPrice · 国际能源网 |
+| `bio` | 生物医药 / 健康 | 创新药、CXO、器械 | STAT News · Endpoints · FierceBiotech · Nature Biotech · GEN |
+| `space` | 航天 / 太空 | 卫星互联网、航天 | SpaceNews · NASA · Space.com · Payload · NASASpaceflight |
+| `security` | 网络安全 | 网安、信创 | Krebs on Security · The Hacker News · BleepingComputer · Dark Reading |
+| `tech` | 科技 / 互联网 | 互联网、SaaS | TechCrunch · The Verge · Ars Technica · 虎嗅 · 36氪 · 钛媒体 · IT之家 |
+| `consumer` | 消费电子 / 数码 | 消费电子 | 9to5Mac · GSMArena · Android Authority · 少数派 |
+| `macro` | 财经 / 宏观 | 宏观策略 | CNBC · FT · WSJ · Yahoo Finance · 华尔街见闻 · 东方财富 · SEC · Federal Reserve |
+| `science` | 科学 / 前沿 | 前沿科技 | Nature · ScienceDaily · Quanta Magazine · MIT News · Science News |
+
+#### 三、可直接借鉴到本项目的业务机制
+
+| # | 机制 | 来源文件 | 应用到本项目 |
+|---|------|---------|------------|
+| 1 | **12 赛道 ↔ A 股板块映射**（全球领先信号→A 股主题联动） | `sources.json` industries 数组 | `topic-manager` + `sector-research` 的全球信号输入层 |
+| 2 | **多源并发抓取管道**（40 线程 RSS + 超时 + 红线过滤 + 北京时间归一） | `scripts/fetch.py` | `data/aggregator.py` 新增 RSS 源抓取能力，替代人工刷新闻 |
+| 3 | **AI 摘要 + 翻译管道**（LLM 跨源聚合去重 → 3-5 条今日要点 + 逐条中译） | `scripts/digest.py` | L1 多维诊断前的「行业要闻摘要」预处理层；`last30days-cn` 的输出可加 AI 摘要 |
+| 4 | **双 LLM provider 架构**（claude-cli 订阅 $0 / OpenAI 兼容 API 按量） | `scripts/llm.py` | 白泽各分析阶段调 LLM 时统一入口，降低 API 成本 |
+| 5 | **合规红线过滤**（redline_keywords：赌博/加密/预测市场/色情自动剔除） | `sources.json` redline_keywords | 31 条军规 / 准入检查的资讯质量过滤 |
+| 6 | **单文件看板 + 本地 server**（零构建、纯 HTML/CSS/JS、仅绑回环） | `index.html` + `server.py` | `src/cli.py` 可增加 `dashboard` 命令启动本地看板 |
+| 7 | **增量重跑机制**（已有 `points` 的赛道自动跳过，失败栏可单独补跑） | `scripts/digest.py:process()` 首行 `if ind.get("points"): return ind` | 长链路分析中断恢复（对齐 TradingAgents checkpoint） |
+| 8 | **CSRF 防护**（刷新接口仅 POST，GET 不触发副作用） | `server.py:do_GET()` | 任何本地 HTTP 服务的刷新/写操作接口 |
+| 9 | **信息源可配置化**（增删源仅编辑 JSON，无需改代码） | `sources.json` sources 数组 | `data/aggregator.py` 数据源注册改为声明式配置 |
+| 10 | **时间窗口 + 时效性归一**（`recent_days` 过滤 + 统一北京时间 `MM-DD HH:MM`） | `scripts/fetch.py` CUTOFF + BEIJING tz | guardrails 时效性校验的自动化预处理 |
+| 11 | **优雅降级**（LLM 调用失败/被安全策略拒答 → 该赛道只显示新闻列表，无要点） | `scripts/digest.py:process()` except 分支 | L1/L2 分析中 LLM 调用失败的 fallback 策略 |
+
+> ⚠️ **注意**：Investment-News 是资讯聚合工具，不是交易系统。其核心价值在于 **(1) 全球产业链领先信号的自动化中文摘要管道** 和 **(2) 12 赛道→A 股板块的映射框架**。白泽可直接复用其 `sources.json` 赛道-源映射、fetch→digest 管道模式、双 LLM provider 架构。  
+> 详见 [`docs/reference/investment-news-analysis.md`](../docs/reference/investment-news-analysis.md)。
 
 ## 开发工作流
 
