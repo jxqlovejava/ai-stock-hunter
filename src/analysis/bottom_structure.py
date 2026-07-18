@@ -155,12 +155,18 @@ class BottomStructureAnalyzer:
         low: ArrayLike,
         close: ArrayLike,
         open_: Optional[ArrayLike] = None,
+        volume: Optional[ArrayLike] = None,
     ) -> BottomStructureResult:
-        """对单票 OHLCV 序列做底部结构分析（至少 40 根日线）。"""
+        """对单票 OHLCV 序列做底部结构分析（至少 40 根日线）。
+
+        Args:
+            volume: 成交量序列（可选）。传入后启用 A/B 段量能+速度对比。
+        """
         h = np.asarray(high, dtype=float)
         l = np.asarray(low, dtype=float)
         c = np.asarray(close, dtype=float)
         o = np.asarray(open_, dtype=float) if open_ is not None else c.copy()
+        v = np.asarray(volume, dtype=float) if volume is not None else None
 
         n = len(c)
         if n < MIN_BARS or len(h) != n or len(l) != n:
@@ -174,6 +180,8 @@ class BottomStructureAnalyzer:
         # 截取 lookback
         start = max(0, n - self.lookback)
         h, l, c, o = h[start:], l[start:], c[start:], o[start:]
+        if v is not None and len(v) >= n:
+            v = v[start:]
         n = len(c)
 
         # 1) 下跌环境
@@ -209,8 +217,8 @@ class BottomStructureAnalyzer:
         # 取「级别最大」中枢：优先宽度，其次振幅
         pivot = max(pivots, key=lambda p: (p.width, p.range_pct))
 
-        # 3) A/B 段
-        a_pct, b_pct, a_ok, b_ok = self._measure_ab(h, l, c, pivot)
+        # 3) A/B 段（含量能+速度对比，v 为 None 时仅比跌幅）
+        a_pct, b_pct, a_ok, b_ok = self._measure_ab(h, l, c, pivot, v)
         if not a_ok or a_pct <= 0:
             return BottomStructureResult(
                 phase=BottomPhase.NO_PIVOT,
@@ -222,14 +230,45 @@ class BottomStructureAnalyzer:
             )
 
         ab_ratio = (b_pct / a_pct) if a_pct > 1e-9 else 0.0
-        trend_exhausted = b_ok and ab_ratio < self.ab_exhaust_ratio
-        catching_knife = (not b_ok) or ab_ratio >= self.ab_exhaust_ratio
+
+        # ---- 量能+速度多维衰竭因子（Phase 12b 增强） ----
+        # 若提供成交量数据，计算量能衰竭和跌速衰减，合成 effective_ab_ratio
+        vol_signal = ""
+        speed_signal = ""
+        effective_ab_ratio = ab_ratio
+        if v is not None and len(v) == len(h):
+            # 量能对比：B段均量 / A段均量
+            pre_start = max(0, pivot.start_idx - 40)
+            a_vol = float(np.mean(v[pre_start:pivot.start_idx + 1])) if pivot.start_idx + 1 > pre_start else 0.0
+            b_vol = float(np.mean(v[pivot.end_idx + 1:])) if len(v) > pivot.end_idx + 1 else 0.0
+            if a_vol > 1e-9:
+                b_vol_ratio = b_vol / a_vol
+                if b_vol_ratio < 0.7:
+                    vol_signal = f"B段量能萎缩至A段的{b_vol_ratio:.0%}，空头后继乏力"
+                    effective_ab_ratio *= 0.85  # 量缩=更衰竭
+
+            # 跌速对比：B段日跌幅 vs A段日跌幅
+            a_days = max(1, pivot.start_idx - pre_start)
+            b_days = max(1, len(h) - pivot.end_idx - 1)
+            a_speed = a_pct / a_days
+            b_speed = b_pct / b_days
+            if a_speed > 1e-9 and b_speed < a_speed * 0.8:
+                speed_signal = f"B段跌速放缓（{b_speed:.2f}%/日 vs A段{a_speed:.2f}%/日），空头动能衰减"
+                effective_ab_ratio *= 0.90  # 降速=更衰竭
+
+        # 使用 effective_ab_ratio 做最终判断
+        trend_exhausted = b_ok and effective_ab_ratio < self.ab_exhaust_ratio
+        catching_knife = (not b_ok) or effective_ab_ratio >= self.ab_exhaust_ratio
 
         signals: list[str] = [
             f"最大中枢 [{pivot.start_idx}:{pivot.end_idx}] "
             f"宽{pivot.width}日 振幅{pivot.range_pct * 100:.1f}%",
             f"A段跌幅 {a_pct:.1f}% / B段跌幅 {b_pct:.1f}% → B/A={ab_ratio:.2f}",
         ]
+        if vol_signal:
+            signals.append(vol_signal)
+        if speed_signal:
+            signals.append(speed_signal)
 
         if catching_knife:
             phase = BottomPhase.CATCHING_KNIFE
@@ -383,8 +422,17 @@ class BottomStructureAnalyzer:
         l: np.ndarray,
         c: np.ndarray,
         pivot: PivotZone,
+        v: Optional[np.ndarray] = None,
     ) -> tuple[float, float, bool, bool]:
-        """计算 A/B 段跌幅 %。返回 (a_pct, b_pct, a_ok, b_ok)。"""
+        """计算 A/B 段跌幅 %。
+
+        Args:
+            v: 成交量数组（可选，暂未在 _measure_ab 内部使用；
+               量能对比在 analyze() 调用侧计算以保持向后兼容）
+
+        Returns:
+            (a_pct, b_pct, a_ok, b_ok)
+        """
         # A：中枢之前的高点 → 进入中枢时的相对低点
         pre_start = max(0, pivot.start_idx - 40)
         pre_slice = h[pre_start : pivot.start_idx + 1]
@@ -530,7 +578,8 @@ def analyze_bottom_structure(
     low: ArrayLike,
     close: ArrayLike,
     open_: Optional[ArrayLike] = None,
+    volume: Optional[ArrayLike] = None,
     **kwargs,
 ) -> BottomStructureResult:
     """模块级便捷入口。"""
-    return BottomStructureAnalyzer(**kwargs).analyze(high, low, close, open_)
+    return BottomStructureAnalyzer(**kwargs).analyze(high, low, close, open_, volume)

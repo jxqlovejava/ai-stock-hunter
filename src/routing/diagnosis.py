@@ -79,6 +79,11 @@ class DiagnosisReport:
     bottom_structure_score: float = 50.0       # 0-100
     bottom_phase: str = ""                     # BottomPhase value
     bottom_entry_allowed: bool = False         # 仅 LIGHT_LONG_SETUP
+
+    # Phase 13: 分歧/一致状态
+    divergence_consensus_score: float = 50.0        # 0-100
+    divergence_consensus_state: str = ""             # DIVERGENCE / FORMING_CONSENSUS / CONSENSUS / CONSENSUS_BREAKING
+    divergence_consensus: Optional[object] = None    # DivergenceConsensusResult
     # Phase 12: 大宗交易机构资金
     block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
     block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
@@ -318,6 +323,37 @@ class DiagnosisEngine:
                 0.85 + 0.15 * (report.bottom_structure_score / 100.0),
             )
 
+        # Phase 13: 分歧/一致状态检测
+        dc = self._detect_divergence_consensus(quote)
+        report.divergence_consensus = dc
+        if dc is not None:
+            report.divergence_consensus_score = float(getattr(dc, "score", 50.0))
+            report.divergence_consensus_state = str(
+                getattr(dc, "state", "")
+                or getattr(getattr(dc, "phase", None), "value", "")
+            )
+
+            dc_phase = report.divergence_consensus_state
+            if dc_phase == "CONSENSUS":
+                report.momentum_score = self._apply_weight(report.momentum_score, 1.05)
+                report.data_gaps.append(
+                    "[一致] 缩量上涨卖盘枯竭，趋势健康，动量+5%"
+                )
+            elif dc_phase == "CONSENSUS_BREAKING":
+                report.momentum_score = self._apply_weight(report.momentum_score, 0.60)
+                report.data_gaps.append(
+                    "[WARN 一致转分歧] 量增价滞/冲高回落，短线风险加大，动量-40%"
+                )
+            elif dc_phase == "FORMING_CONSENSUS":
+                report.momentum_score = self._apply_weight(report.momentum_score, 1.10)
+                report.data_gaps.append(
+                    "[分歧转一致] 放量突破后缩量续涨，多头确立，动量+10%"
+                )
+            elif dc_phase == "DIVERGENCE":
+                report.data_gaps.append(
+                    "[分歧] 放量横盘方向不明，建议观望等胜负分出"
+                )
+
         # Phase 12: 大宗交易机构资金信号
         report.block_trade_score, report.block_trade_signal = (
             self._score_block_trade(block_trade_profile)
@@ -426,6 +462,56 @@ class DiagnosisEngine:
             import logging
             logging.getLogger(__name__).debug(
                 "底部结构分析跳过: 数据不足或计算异常", exc_info=True
+            )
+            return None
+
+    @staticmethod
+    def _detect_divergence_consensus(quote: dict | None) -> object | None:
+        """Phase 13: 分歧/一致状态检测。
+
+        检测 DIVERGENCE / CONSENSUS / FORMING_CONSENSUS / CONSENSUS_BREAKING 四种状态。
+        数据要求：至少 20 根日线（含 OHLCV）。
+        """
+        if not quote:
+            return None
+        try:
+            from src.analysis.divergence_consensus import analyze_divergence_consensus
+
+            daily_bars = quote.get("daily_bars") or []
+            closes: list[float] = []
+            volumes: list[float] = []
+            highs: list[float] = []
+            lows: list[float] = []
+
+            if daily_bars and len(daily_bars) >= 20:
+                for b in daily_bars:
+                    if hasattr(b, "close"):
+                        closes.append(float(b.close))
+                        volumes.append(float(getattr(b, "volume", 0) or 0))
+                        highs.append(float(b.high))
+                        lows.append(float(b.low))
+                    elif isinstance(b, dict):
+                        closes.append(float(b.get("close", 0) or 0))
+                        volumes.append(float(b.get("volume", 0) or 0))
+                        highs.append(float(b.get("high", closes[-1]) or closes[-1]))
+                        lows.append(float(b.get("low", closes[-1]) or closes[-1]))
+            else:
+                closes = list(quote.get("close_series") or [])
+                volumes = list(quote.get("volume_series") or [1.0] * len(closes))
+                highs = list(quote.get("high_series") or closes)
+                lows = list(quote.get("low_series") or closes)
+
+            if len(closes) < 20 or len(volumes) < 20:
+                return None
+
+            n = min(len(closes), len(volumes), len(highs), len(lows))
+            return analyze_divergence_consensus(
+                closes[-n:], volumes[-n:], highs[-n:], lows[-n:],
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "分歧/一致检测跳过: 数据不足或计算异常", exc_info=True
             )
             return None
 

@@ -186,6 +186,7 @@ class MonitorSignalGenerator:
                 MonitorType.TECHNICAL: "📊",
                 MonitorType.SENTIMENT: "😱",
                 MonitorType.PRICE_LEVEL: "🎯",
+                MonitorType.DIVERGENCE_CONSENSUS: "🔄",
             }.get(monitor.monitor_type, "📌")
 
             signals.append(MonitorSignal(

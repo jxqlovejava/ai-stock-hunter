@@ -71,6 +71,16 @@ class OpportunityDetector:
             if leader:
                 alerts.append(leader)
 
+            # 5. 分歧/一致 多头机会
+            consensus_forming = self._check_consensus_forming(symbol, name, q)
+            if consensus_forming:
+                alerts.append(consensus_forming)
+
+            # 6. 分歧/一致 空头风险
+            consensus_breaking = self._check_consensus_breaking(symbol, name, q)
+            if consensus_breaking:
+                alerts.append(consensus_breaking)
+
         return alerts
 
     def _check_breakout(
@@ -171,6 +181,53 @@ class OpportunityDetector:
                     f"板块龙头领涨: {name} +{change_pct:.2f}% "
                     f"vs {sector}板块 +{sector_avg:.2f}%，领先 {change_pct - sector_avg:.1f}pp"
                 ),
+                triggered_at=datetime.now(),
+            )
+        return None
+
+    def _check_consensus_forming(
+        self, symbol: str, name: str, q: dict
+    ) -> Optional[Alert]:
+        """检测一致/分歧转一致状态 → 多头机会。"""
+        dc_state = q.get("divergence_consensus_state", "")
+        dc_score = q.get("divergence_consensus_score", 50.0)
+
+        if dc_state == "CONSENSUS" and dc_score >= 65:
+            return Alert(
+                symbol=symbol, name=name,
+                alert_type=AlertType.DIVERGENCE_CONSENSUS,
+                severity="INFO",
+                message=(
+                    f"缩量上涨一致状态: 卖盘枯竭，"
+                    f"评分{dc_score:.0f}，趋势有望延续"
+                ),
+                triggered_at=datetime.now(),
+            )
+        elif dc_state == "FORMING_CONSENSUS" and dc_score >= 60:
+            return Alert(
+                symbol=symbol, name=name,
+                alert_type=AlertType.DIVERGENCE_CONSENSUS,
+                severity="WARNING",
+                message=(
+                    f"分歧转一致: 放量突破+缩量承接，"
+                    f"评分{dc_score:.0f}，短线入场窗口"
+                ),
+                triggered_at=datetime.now(),
+            )
+        return None
+
+    def _check_consensus_breaking(
+        self, symbol: str, name: str, q: dict
+    ) -> Optional[Alert]:
+        """检测一致转分歧 → 空头警告。"""
+        dc_state = q.get("divergence_consensus_state", "")
+
+        if dc_state == "CONSENSUS_BREAKING":
+            return Alert(
+                symbol=symbol, name=name,
+                alert_type=AlertType.DIVERGENCE_CONSENSUS,
+                severity="WARNING",
+                message=f"放量分歧/一致转分歧: 冲高回落，短线注意回调风险",
                 triggered_at=datetime.now(),
             )
         return None

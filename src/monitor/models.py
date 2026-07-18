@@ -26,6 +26,7 @@ class MonitorType(str, Enum):
     TECHNICAL = "technical"               # 技术面关键位
     SENTIMENT = "sentiment"               # 情绪极端
     PRICE_LEVEL = "price_level"           # 价格关键位
+    DIVERGENCE_CONSENSUS = "divergence_consensus"  # 分歧/一致状态
     CUSTOM = "custom"                     # 自定义
 
 

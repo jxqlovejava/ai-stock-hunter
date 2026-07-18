@@ -29,6 +29,7 @@ class AlertType(str, Enum):
     NORTHBOUND_SURGE = "NORTHBOUND_SURGE"  # 北向资金突变
     RISK_FLASH = "RISK_FLASH"            # 风险速报（黑天鹅/急跌）
     SENTIMENT = "SENTIMENT"              # 情绪异动
+    DIVERGENCE_CONSENSUS = "DIVERGENCE_CONSENSUS"  # 分歧/一致状态转换
 
 
 @dataclass
@@ -162,8 +163,24 @@ class AlertManager:
             if change_pct < -5.0:
                 alerts.append(Alert(
                     symbol=symbol, name=ctx.get("name", symbol),
-                    alert_type="PRICE", severity="WARNING",
+                    alert_type=AlertType.PRICE, severity="WARNING",
                     message=f"单日跌幅 {change_pct:.1f}%",
+                ))
+
+            # 分歧/一致状态转换
+            dc_state = ctx.get("divergence_consensus_state", "")
+            dc_score = ctx.get("divergence_consensus_score", 50.0)
+            if dc_state == "CONSENSUS_BREAKING":
+                alerts.append(Alert(
+                    symbol=symbol, name=ctx.get("name", symbol),
+                    alert_type=AlertType.DIVERGENCE_CONSENSUS, severity="WARNING",
+                    message=f"一致转分歧: 放量冲高回落，短线回调风险增大",
+                ))
+            elif dc_state == "CONSENSUS" and dc_score >= 70:
+                alerts.append(Alert(
+                    symbol=symbol, name=ctx.get("name", symbol),
+                    alert_type=AlertType.DIVERGENCE_CONSENSUS, severity="INFO",
+                    message=f"一致状态: 缩量上涨趋势健康，持仓可继续跟踪",
                 ))
 
         return alerts
