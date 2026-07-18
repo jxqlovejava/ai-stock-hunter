@@ -167,11 +167,12 @@ class PlaybookValidator:
                             if r.evidence_grade_after == EvidenceGrade.REFUTED),
         )
 
-    def validate_playbook(self, playbook) -> PlaybookValidation:
+    def validate_playbook(self, playbook, **kwargs) -> PlaybookValidation:
         """验证单个 playbook 假设。
 
         Args:
             playbook: Playbook dataclass from playbooks.py
+            **kwargs: 透传给具体验证器（如 wash_then_markup 的 live_backtest）
 
         Returns:
             PlaybookValidation with statistical evidence
@@ -183,7 +184,7 @@ class PlaybookValidator:
         elif playbook.id == "national_team_bailout":
             return self._validate_national_team_bailout(playbook)
         elif playbook.id == "wash_then_markup":
-            return self._validate_wash_then_markup(playbook)
+            return self._validate_wash_then_markup(playbook, **kwargs)
         else:
             return PlaybookValidation(
                 playbook_id=playbook.id,
@@ -824,17 +825,21 @@ class PlaybookValidator:
                 f"保持 HYPOTHESIS 状态。"
             )
 
-    def _validate_wash_then_markup(self, playbook) -> PlaybookValidation:
-        """验证多波洗盘后拉升 playbook（状态机一致性 + 标注夹具）。
+    def _validate_wash_then_markup(
+        self,
+        playbook,
+        *,
+        live_backtest: bool = False,
+        max_stocks: int = 200,
+    ) -> PlaybookValidation:
+        """验证多波洗盘后拉升 playbook。
 
-        不依赖实时龙虎榜；用标注日线夹具检验:
-          1. 连弱序列 → 非 QUIET
-          2. 弱反弹再杀 → second_wave 或 WAVE2
-          3. 跌幅过大 → FAILED_WASHOUT
-          4. 融券 5 日上升 → short_pressure_flag 且 conf 上调
-          5. 长下影形态可被 WashoutDetector 命中
+        两层验证:
+          A. 标注夹具（状态机一致性，离线、确定）
+          B. 本地 kline_cache 实盘事件研究（WashCycleBacktester）
 
-        样本足够且通过率高 → PRELIMINARY；否则保持 HYPOTHESIS。
+        B 层有足够样本且统计显著 → CONFIRMED / CALIBRATED；
+        否则退回 A 层 PRELIMINARY / HYPOTHESIS。
         """
         from src.game_theory.manipulation.wash_cycle import (
             WashCycleAnalyzer,
@@ -950,29 +955,78 @@ class PlaybookValidator:
         cases.append(("long_lower_shadow_detect", ok5, str(ids)))
 
         supporting = sum(1 for _, ok, _ in cases if ok)
+        result.details = [
+            f"[fixture] {name}: {'PASS' if ok else 'FAIL'} ({detail})"
+            for name, ok, detail in cases
+        ]
+        # 默认先按夹具定级
         result.total_samples = len(cases)
         result.supporting_samples = supporting
         result.refuting_samples = len(cases) - supporting
         result.pattern_match_rate = supporting / max(len(cases), 1) * 100
-        result.details = [f"{name}: {'PASS' if ok else 'FAIL'} ({detail})" for name, ok, detail in cases]
         result.significance_level = 1.0 - (supporting / max(len(cases), 1))
 
         if supporting == len(cases):
             result.evidence_grade_after = EvidenceGrade.PRELIMINARY
             result.verdict = (
-                f"✅ wash_then_markup 夹具全通过 ({supporting}/{len(cases)})，"
-                f"证据级 PRELIMINARY（待实盘回测升级 CONFIRMED）"
+                f"✅ 夹具全通过 ({supporting}/{len(cases)})，证据级 PRELIMINARY"
             )
         elif supporting >= 3:
             result.evidence_grade_after = EvidenceGrade.PRELIMINARY
             result.verdict = (
-                f"🟡 部分通过 ({supporting}/{len(cases)})，保持/升为 PRELIMINARY"
+                f"🟡 夹具部分通过 ({supporting}/{len(cases)})，PRELIMINARY"
             )
         else:
             result.evidence_grade_after = EvidenceGrade.HYPOTHESIS
             result.verdict = (
-                f"🔬 夹具通过不足 ({supporting}/{len(cases)})，保持 HYPOTHESIS"
+                f"🔬 夹具通过不足 ({supporting}/{len(cases)})，HYPOTHESIS"
             )
+
+        # ── B. 实盘事件研究（kline_cache）──
+        if live_backtest:
+            try:
+                from src.game_theory.manipulation.wash_backtest import WashCycleBacktester
+
+                bt = WashCycleBacktester()
+                report = bt.run(max_stocks=max_stocks)
+                fields = report.to_playbook_validation_fields()
+                result.details.extend([f"[live] {d}" for d in report.details])
+                # 仅当实盘样本足够时覆盖夹具统计
+                if fields["total_samples"] >= 10:
+                    result.total_samples = fields["total_samples"]
+                    result.supporting_samples = fields["supporting_samples"]
+                    result.refuting_samples = fields["refuting_samples"]
+                    result.pattern_match_rate = fields["pattern_match_rate"]
+                    result.avg_return_after_match = fields["avg_return_after_match"]
+                    result.significance_level = fields["significance_level"]
+                    live_grade = EvidenceGrade(fields["evidence_grade"])
+                    # 实盘等级不低于夹具时采用实盘（CONFIRMED > PRELIMINARY）
+                    order = {
+                        EvidenceGrade.HYPOTHESIS: 0,
+                        EvidenceGrade.PRELIMINARY: 1,
+                        EvidenceGrade.CONFIRMED: 2,
+                        EvidenceGrade.CALIBRATED: 3,
+                        EvidenceGrade.REFUTED: -1,
+                    }
+                    if live_grade == EvidenceGrade.REFUTED:
+                        result.evidence_grade_after = EvidenceGrade.REFUTED
+                    elif order.get(live_grade, 0) >= order.get(result.evidence_grade_after, 0):
+                        result.evidence_grade_after = live_grade
+                    result.verdict = fields["verdict"]
+                    # 回写 playbook 证据级
+                    if order.get(result.evidence_grade_after, 0) >= 1:
+                        try:
+                            bt.apply_evidence_upgrade(report)
+                        except Exception:
+                            pass
+                else:
+                    result.details.append(
+                        f"[live] 样本不足 ({fields['total_samples']})，保留夹具结论"
+                    )
+            except Exception as e:
+                logger.warning("wash_then_markup live backtest failed: %s", e)
+                result.details.append(f"[live] 回测失败: {e}")
+
         return result
 
     # ------------------------------------------------------------------

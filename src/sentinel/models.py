@@ -98,11 +98,10 @@ class SentinelAlert:
     cooling_minutes: int = 15
 
     def format_card(self, ts: str = "") -> str:
-        head = f"【{self.level.value}·{self.title}】{self.name} {self.symbol}"
-        lines = [head, self.body]
-        if self.price > 0:
-            lines.append(f"现价 {self.price:.2f}" + (f" · {ts}" if ts else ""))
-        return "\n".join(lines)
+        """单条卡（调试/兼容）。正式推送走 finalize 聚合人话。"""
+        from .formatter import format_group_card
+
+        return format_group_card([self], ts=ts)
 
 
 @dataclass
@@ -120,13 +119,23 @@ class SentinelResult:
             self.silent = True
             self.message = ""
             return self
-        # P0 优先，其次 P1、P2
+        # 保留原始 alerts 供测试/调试；message 做人话聚合
         order = {AlertLevel.P0: 0, AlertLevel.P1: 1, AlertLevel.P2: 2}
         self.alerts.sort(key=lambda a: (order.get(a.level, 9), a.symbol, a.rule_id))
-        cards = [a.format_card(ts) for a in self.alerts]
-        self.message = "\n\n".join(cards)
-        if self.errors:
-            self.message += "\n\n⚠️ " + "; ".join(self.errors[:3])
+
+        from .formatter import format_sentinel_message
+
+        self.message = format_sentinel_message(
+            self.alerts,
+            ts=ts,
+            scanned=self.scanned,
+            errors=self.errors,
+        )
+        # 去重后可能无文案（极端：仅 portfolio_loss 且单票）
+        if not self.message.strip():
+            self.silent = True
+            self.message = ""
+            return self
         self.silent = False
         return self
 

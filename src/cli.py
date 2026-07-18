@@ -1295,6 +1295,99 @@ def cmd_manipulation(args: list[str]):
         print("   ⚠️ 无可用日线，跳过 washout / wash_cycle")
 
 
+@_safe_cmd
+def cmd_wash_backtest(args: list[str]):
+    """多波洗盘 playbook 实盘事件研究 — kline_cache 日线扫描。
+
+    用法:
+      python -m src wash-backtest
+      python -m src wash-backtest --max-stocks 500
+      python -m src wash-backtest --all
+      python -m src wash-backtest --no-upgrade
+    """
+    import argparse
+    from src.game_theory.manipulation.wash_backtest import WashCycleBacktester
+    from src.game_theory.playbooks import TOP_PLAYBOOKS
+
+    parser = argparse.ArgumentParser(description="wash_then_markup 实盘事件研究")
+    parser.add_argument(
+        "--max-stocks", type=int, default=300,
+        help="最多扫描股票数（默认 300；--all 时忽略）",
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="扫描 kline_cache 全部股票（较慢）",
+    )
+    parser.add_argument(
+        "--no-upgrade", action="store_true",
+        help="不回写 playbook evidence_level",
+    )
+    parser.add_argument(
+        "--no-save", action="store_true",
+        help="不写 JSON 报告",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help="抽样随机种子",
+    )
+    parsed = parser.parse_args(args)
+
+    max_stocks = 0 if parsed.all else parsed.max_stocks
+    print("🌊 wash_then_markup 实盘事件研究")
+    print("=" * 60)
+    print(f"   宇宙: {'全量 kline_cache' if max_stocks <= 0 else f'抽样 ≤{max_stocks}'} | seed={parsed.seed}")
+    print()
+
+    bt = WashCycleBacktester()
+    report = bt.run(max_stocks=max_stocks, seed=parsed.seed)
+
+    es = report.entry_stats
+    fs = report.fail_stats
+    print(f"   扫描: {report.n_stocks_scanned} 只 | 有效数据: {report.n_stocks_with_data}")
+    print(f"   入场事件 (洗尽/拉升候选): {report.n_entry_events} | 有5日前瞻: {es.n_with_fwd}")
+    print(
+        f"   入场 5日: 胜率 {es.win_rate_5d:.1%} | 均值 {es.avg_ret_5d:+.2%} | "
+        f"中位 {es.median_ret_5d:+.2%} | p={es.p_value_5d:.4f}"
+    )
+    print(f"   入场 3日均值 {es.avg_ret_3d:+.2%} | 10日均值 {es.avg_ret_10d:+.2%}")
+    print(
+        f"   FAILED_WASHOUT: n={fs.n_with_fwd} | 5日胜率 {fs.win_rate_5d:.1%} | "
+        f"均值 {fs.avg_ret_5d:+.2%}"
+    )
+    if report.by_phase:
+        print("   分相位:")
+        for phase, st in report.by_phase.items():
+            print(
+                f"     • {phase}: n={st.n_with_fwd} wr5={st.win_rate_5d:.1%} "
+                f"avg5={st.avg_ret_5d:+.2%}"
+            )
+    print()
+    print(f"   证据级: {report.evidence_grade}")
+    print(f"   结论: {report.verdict}")
+
+    if not parsed.no_upgrade:
+        grade = bt.apply_evidence_upgrade(report)
+        pb = next((p for p in TOP_PLAYBOOKS if p.id == "wash_then_markup"), None)
+        print(f"   回写 playbook: wash_then_markup → {grade}"
+              + (f" (当前 {pb.evidence_level})" if pb else ""))
+
+    # 同步走 validator 实盘路径，保证接口一致
+    try:
+        from src.game_theory.playbook_validator import PlaybookValidator
+        pb = next(p for p in TOP_PLAYBOOKS if p.id == "wash_then_markup")
+        v = PlaybookValidator().validate_playbook(
+            pb, live_backtest=True, max_stocks=max_stocks if max_stocks > 0 else 300,
+        )
+        print(f"   Validator: {v.evidence_grade_after.value} | {v.verdict[:100]}")
+    except Exception as e:
+        print(f"   Validator 跳过: {e}")
+
+    if not parsed.no_save:
+        path = bt.save_report(report)
+        print(f"   报告: {path}")
+    print()
+
+
 def cmd_calibrate():
     """置信度校准报告 — 基于交易追踪数据验证系统预测准确度。"""
     from src.learner.calibrator import Calibrator
@@ -5660,6 +5753,7 @@ def main():
         print("  backtest                运行回测")
         print("  backtest-optimize       参数优化")
         print("  backtest-compare        多策略对比")
+        print("  wash-backtest           多波洗盘实盘事件研究 (wash_then_markup)")
         print("  paper-trade <action>    模拟交易引擎 (start/run/status/report/history)")
         print("  trade-track <add|list|kelly>  交易追踪")
         print()
@@ -5757,6 +5851,7 @@ def main():
         "verdict-backtest": cmd_verdict_backtest,
         "backtest-optimize": cmd_backtest_optimize,
         "backtest-compare": cmd_backtest_compare,
+        "wash-backtest": lambda: cmd_wash_backtest(args),
         "diagnose": lambda: cmd_diagnose(args) if args else print(
             "用法: diagnose <code> [--deep] [--no-t0] [--batch CODES] [--as-of DATE]"),
         "game-theory": cmd_game_theory,

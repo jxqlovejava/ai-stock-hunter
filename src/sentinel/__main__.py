@@ -3,70 +3,71 @@
 
 Hermes 约定:
   - 无异动：stdout 为空，exit 0
-  - 有异动：stdout 打印卡片，exit 0
-  - 致命错误：stderr 打印，exit 1（可选 --quiet-errors 改为静默）
+  - 有异动：stdout 打印人话卡片，exit 0
+  - 致命错误：stderr 打印，exit 1
+
+频道 (--mode):
+  alert      持仓告警 + 大盘/板块/两融旁注（默认，包1）
+  funds      两融 + 自选扫雷（包2）
+  margin     仅两融
+  watchlist  仅自选扫雷
+  open       开盘前简报（包3）
+  close      收盘简报（包3）
+  sentiment  情绪/北向极端（包4）
+  auto       按北京时间粗选
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from .engine import SentinelConfig, SentinelEngine
+from .channels import ChannelConfig, run_channel
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="白泽持仓哨兵")
+    parser = argparse.ArgumentParser(description="白泽持仓哨兵 / 微信推送频道")
     parser.add_argument(
-        "--positions",
-        type=Path,
-        default=None,
-        help="positions.json 路径（默认 data/positions.json）",
+        "--mode",
+        default=os.environ.get("BAIZE_SENTINEL_MODE", "alert"),
+        help="alert|funds|margin|watchlist|open|close|sentiment|auto",
     )
-    parser.add_argument(
-        "--state",
-        type=Path,
-        default=None,
-        help="状态文件路径（默认 data/sentinel_state.json）",
-    )
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        help="可选 JSON 配置覆盖阈值",
-    )
+    parser.add_argument("--positions", type=Path, default=None)
+    parser.add_argument("--state", type=Path, default=None)
+    parser.add_argument("--watchlist", type=Path, default=None)
+    parser.add_argument("--config", type=Path, default=None)
     parser.add_argument(
         "--force",
         action="store_true",
-        help="忽略交易时段（测试/补跑）",
+        help="忽略交易时段/部分冷却（测试）",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         dest="as_json",
-        help="输出 JSON（调试用；Hermes 推送请用默认文本）",
+        help="调试 JSON（仅 alert 模式完整；其他模式输出 message）",
     )
     parser.add_argument(
         "--quiet-errors",
         action="store_true",
-        help="报价失败也不打印，保持静默",
+        help="失败也静默",
     )
     args = parser.parse_args(argv)
 
-    import os
-
-    # 配置文件：--config > 环境变量 > 无
     config_path = args.config
     if config_path is None and os.environ.get("BAIZE_SENTINEL_CONFIG"):
         config_path = Path(os.environ["BAIZE_SENTINEL_CONFIG"])
 
     cfg_dict: dict = {}
     if config_path and config_path.exists():
-        cfg_dict = json.loads(config_path.read_text(encoding="utf-8"))
+        try:
+            cfg_dict = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cfg_dict = {}
 
-    # 路径默认：优先仓库 data/，Hermes 上可用环境变量覆盖
     default_pos = Path(
         os.environ.get(
             "BAIZE_POSITIONS",
@@ -79,51 +80,57 @@ def main(argv: list[str] | None = None) -> int:
             cfg_dict.get("state_path", "data/sentinel_state.json"),
         )
     )
+    default_wl = Path(
+        os.environ.get(
+            "BAIZE_WATCHLIST",
+            cfg_dict.get("watchlist_path", "data/watchlist.json"),
+        )
+    )
+    default_pf = Path(
+        cfg_dict.get("portfolio_path", "data/portfolio.yaml")
+    )
 
-    cfg = SentinelConfig.from_dict(cfg_dict)
-    cfg.positions_path = args.positions or default_pos
-    cfg.state_path = args.state or default_state
-    if args.force:
-        cfg.force_trading_hours = True
+    ch = ChannelConfig(
+        positions_path=args.positions or default_pos,
+        state_path=args.state or default_state,
+        portfolio_path=default_pf,
+        watchlist_path=args.watchlist or default_wl,
+        force=bool(args.force),
+        cool_margin=int(cfg_dict.get("cool_margin", 180)),
+        cool_watchlist=int(cfg_dict.get("cool_watchlist", 60)),
+        cool_sentiment=int(cfg_dict.get("cool_sentiment", 120)),
+        enable_margin=cfg_dict.get("enable_margin", True),
+        enable_watchlist=cfg_dict.get("enable_watchlist", True),
+        enable_context=cfg_dict.get("enable_context", True),
+    )
 
-    engine = SentinelEngine(cfg)
+    mode = (args.mode or "alert").lower()
+
     try:
-        result = engine.run()
+        message = run_channel(mode, ch)
     except Exception as e:
         if not args.quiet_errors:
             print(f"❌ 哨兵异常: {e}", file=sys.stderr)
         return 1
 
     if args.as_json:
-        payload = {
-            "silent": result.silent,
-            "scanned": result.scanned,
-            "errors": result.errors,
-            "alerts": [
+        print(
+            json.dumps(
                 {
-                    "level": a.level.value,
-                    "rule_id": a.rule_id,
-                    "symbol": a.symbol,
-                    "name": a.name,
-                    "title": a.title,
-                    "body": a.body,
-                    "price": a.price,
-                }
-                for a in result.alerts
-            ],
-            "message": result.message,
-        }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    "mode": mode,
+                    "silent": not bool((message or "").strip()),
+                    "message": message or "",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
-    # Hermes: 无输出 = 不通知
-    if result.silent or not result.message.strip():
-        # 仅错误且非 quiet 时写 stderr，避免误推送
-        if result.errors and not args.quiet_errors:
-            print("⚠️ " + "; ".join(result.errors[:3]), file=sys.stderr)
+    if not (message or "").strip():
         return 0
 
-    print(result.message, flush=True)
+    print(message, flush=True)
     return 0
 
 

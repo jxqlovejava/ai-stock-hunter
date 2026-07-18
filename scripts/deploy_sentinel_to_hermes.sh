@@ -33,15 +33,19 @@ echo "==> 同步 sentinel 代码与入口"
   "$ROOT/scripts/hermes_sentinel_config.json" \
   "$HOST:$REMOTE_ROOT/scripts/"
 
-echo "==> 同步 positions.json + portfolio.yaml"
+echo "==> 同步 positions.json + portfolio.yaml + watchlist.json"
 if [[ -f "$ROOT/data/positions.json" ]]; then
   "${SCP[@]}" "$ROOT/data/positions.json" "$HOST:$REMOTE_POS"
 else
   echo "本地无 data/positions.json，跳过持仓同步"
 fi
 REMOTE_PORTFOLIO="$(dirname "$REMOTE_POS")/portfolio.yaml"
+REMOTE_WATCHLIST="$(dirname "$REMOTE_POS")/watchlist.json"
 if [[ -f "$ROOT/data/portfolio.yaml" ]]; then
   "${SCP[@]}" "$ROOT/data/portfolio.yaml" "$HOST:$REMOTE_PORTFOLIO"
+fi
+if [[ -f "$ROOT/data/watchlist.json" ]]; then
+  "${SCP[@]}" "$ROOT/data/watchlist.json" "$HOST:$REMOTE_WATCHLIST"
 fi
 
 echo "==> 写入默认配置（若不存在）"
@@ -58,6 +62,7 @@ os.environ.setdefault('BAIZE_ROOT', '${REMOTE_ROOT}')
 os.environ.setdefault('BAIZE_POSITIONS', '${REMOTE_POS}')
 os.environ.setdefault('BAIZE_SENTINEL_STATE', '${REMOTE_STATE}')
 os.environ.setdefault('BAIZE_SENTINEL_CONFIG', '${REMOTE_CFG}')
+os.environ.setdefault('BAIZE_WATCHLIST', '$(dirname "$REMOTE_POS")/watchlist.json')
 cfg_path = Path(os.environ['BAIZE_SENTINEL_CONFIG'])
 try:
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
@@ -66,6 +71,7 @@ except Exception:
 cfg['portfolio_path'] = '${REMOTE_PORTFOLIO}'
 cfg['positions_path'] = os.environ['BAIZE_POSITIONS']
 cfg['state_path'] = os.environ['BAIZE_SENTINEL_STATE']
+cfg['watchlist_path'] = os.environ.get('BAIZE_WATCHLIST', '$(dirname "$REMOTE_POS")/watchlist.json')
 cfg_path.parent.mkdir(parents=True, exist_ok=True)
 cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
 args = sys.argv[1:]
@@ -78,15 +84,39 @@ raise SystemExit(main())
 EOF
 chmod +x /home/ubuntu/.hermes/scripts/baize_sentinel.py"
 
-echo "==> 试跑（--force 忽略交易时段）"
-"${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --force --json 2>&1 | head -80"
+# 分频道薄入口（Hermes 只配 script 名、不便带参数时用）
+for mode in alert funds open close sentiment watchlist; do
+  "${SSH[@]}" "$HOST" "cat > /home/ubuntu/.hermes/scripts/baize_${mode}.py <<EOFMODE
+#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+# 固定 mode，其余环境与主入口一致
+sys.argv = [sys.argv[0], '--mode', '${mode}'] + [a for a in sys.argv[1:] if a != '--mode']
+# 链式调用主包装
+main_py = Path('/home/ubuntu/.hermes/scripts/baize_sentinel.py')
+code = main_py.read_text(encoding='utf-8')
+# 主包装会再读 sys.argv[1:]，已含 --mode
+exec(compile(code, str(main_py), 'exec'), {'__name__': '__main__'})
+EOFMODE
+chmod +x /home/ubuntu/.hermes/scripts/baize_${mode}.py"
+done
+
+echo "==> 试跑 alert / open / funds（--force）"
+"${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --mode alert --force 2>&1 | head -40"
+echo "--- open ---"
+"${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --mode open --force 2>&1 | head -40"
+echo "--- funds ---"
+"${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --mode funds --force 2>&1 | head -40"
 
 echo ""
 echo "✅ 部署完成"
 echo "持仓: $REMOTE_POS"
-echo "入口: /home/ubuntu/.hermes/scripts/baize_sentinel.py"
+echo "入口: baize_sentinel.py --mode <alert|funds|open|close|sentiment>"
+echo "或:   baize_alert.py / baize_funds.py / baize_open.py / baize_close.py / baize_sentiment.py"
 echo ""
-echo "接下来在 Hermes 添加 cron（示例，按你的微信 origin 改 deliver）:"
-echo "  hermes cron 相关命令或编辑 ~/.hermes/cron/jobs.json"
-echo "  script: baize_sentinel.py"
-echo "  schedule: */2 9-11,13-14 * * 1-5"
+echo "建议 Hermes cron（人话推送，分频道）:"
+echo "  1) 盘中持仓  */2 9-11,13-14 * * 1-5   → baize_alert.py"
+echo "  2) 两融+自选  0 10,14 * * 1-5          → baize_funds.py"
+echo "  3) 开盘前     15 9 * * 1-5             → baize_open.py"
+echo "  4) 收盘后     10 15 * * 1-5            → baize_close.py"
+echo "  5) 情绪极端   */15 9-14 * * 1-5        → baize_sentiment.py"

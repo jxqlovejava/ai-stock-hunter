@@ -12,5 +12,12 @@
   "cool_p0": 5,
   "cool_p1": 20,
   "cool_p2": 45,
-  "prefer_huatai": false
+  "prefer_huatai": false,
+  "enable_context": true,
+  "enable_margin": true,
+  "enable_watchlist": true,
+  "cool_margin": 180,
+  "cool_watchlist": 60,
+  "cool_sentiment": 120,
+  "watchlist_path": "/home/ubuntu/.hermes/baize/watchlist.json"
 }

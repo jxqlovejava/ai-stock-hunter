@@ -34,6 +34,12 @@ from .sizing import (
     quick_sizing,
 )
 from .wash_cycle import WashCycleAnalyzer, WashCyclePhase, WashCycleResult
+from .wash_backtest import (
+    WashBacktestReport,
+    WashCycleBacktester,
+    WashEvent,
+    run_wash_backtest,
+)
 from .washout_detector import WashoutDetector, WashoutResult
 
 __all__ = [
@@ -48,12 +54,16 @@ __all__ = [
     "SentimentManipulationContext",
     "SentimentManipulationNexus",
     "StockManipulationProfile",
+    "WashBacktestReport",
     "WashCycleAnalyzer",
+    "WashCycleBacktester",
     "WashCyclePhase",
     "WashCycleResult",
+    "WashEvent",
     "WashoutDetector",
     "WashoutResult",
     "get_manipulation_risk_rating",
     "log_manipulation_event",
     "quick_sizing",
+    "run_wash_backtest",
 ]
