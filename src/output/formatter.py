@@ -605,6 +605,42 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append(f"  🎲 博弈论 {gt.get('score',0)}/100  主导{gt.get('dominant_player','?')}  "
                      f"拥挤{gt.get('crowding_score',0)}  杠杆{gt.get('margin_score',0)}")
 
+    # 反操纵 / 多波洗盘生命周期（diagnose 强制展示）
+    manip = getattr(result, "manipulation_info", None) or {}
+    if manip:
+        overall = manip.get("overall_risk", 0) or 0
+        lines.append(
+            f"  🕵️ 反操纵风险 {overall:.0f}/100  "
+            f"筹码{manip.get('chip_risk', 0):.0f}  "
+            f"洗盘形态{manip.get('washout_risk', 0):.0f}  "
+            f"资金背离{manip.get('capital_divergence', 0):.0f}"
+        )
+        if manip.get("daily_pattern"):
+            lines.append(
+                f"     日级模式: {manip.get('daily_pattern')} "
+                f"(conf={float(manip.get('pattern_confidence') or 0):.0%})"
+            )
+        wc = manip.get("wash_cycle") or {}
+        if wc and wc.get("phase") and wc.get("phase") != "quiet":
+            lines.append(
+                f"  🌊 洗盘生命周期: {wc.get('phase')} | 波次≈{wc.get('wave_count', 0)} | "
+                f"连弱{wc.get('decline_days', 0)}日 | 累计{float(wc.get('cumulative_drop_pct') or 0):.1%} | "
+                f"conf={float(wc.get('confidence') or 0):.0%}"
+            )
+            flags = []
+            if wc.get("latter_half_cut_risk"):
+                flags.append("后半段割肉风险")
+            if wc.get("second_wave_active"):
+                flags.append("第二波再洗")
+            if wc.get("short_pressure_flag"):
+                flags.append("融券砸盘压力")
+            if flags:
+                lines.append(f"     标志: {' / '.join(flags)}")
+            if wc.get("retail_action_hint"):
+                lines.append(f"     → {wc['retail_action_hint'][:120]}")
+            if wc.get("dual_hard_hint"):
+                lines.append(f"     双硬: {wc['dual_hard_hint'][:100]}")
+
     # ── Step 7 综合裁决 ──────────────────────────────────────────────
     _section(lines, 7)
 

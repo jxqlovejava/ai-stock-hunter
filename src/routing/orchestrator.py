@@ -673,12 +673,14 @@ class Orchestrator:
                 "position_cap": getattr(regime_adjustments, "position_cap", 0.20),
             }
 
-        # Phase 11: 反操纵扫描 — 筹码集中度 + 日级操纵 + 资金背离
+        # Phase 11: 反操纵扫描 — 筹码 + 日级操纵 + 资金背离 + 多波洗盘生命周期
         manipulation_scan = None
+        _wash_daily_bars: list | None = None
         try:
             from src.game_theory.chip_concentration import ChipConcentrationAnalyzer
             from src.game_theory.daily_manipulation import DailyManipulationDetector
             from src.game_theory.capital_flow import CapitalFlowAnalyzer
+            from src.game_theory.manipulation import WashoutDetector
 
             # 筹码集中度
             chip_analyzer = ChipConcentrationAnalyzer()
@@ -705,12 +707,20 @@ class Orchestrator:
 
             # 日级操纵检测
             daily_detector = DailyManipulationDetector()
-            daily_bars = self.data.get_daily_bars(symbol, market, count=30) if hasattr(self.data, 'get_daily_bars') else None
+            daily_bars = self.data.get_daily_bars(symbol, market, count=40) if hasattr(self.data, 'get_daily_bars') else None
+            _wash_daily_bars = daily_bars
             daily_result = daily_detector.detect(
                 symbol=symbol,
                 daily_bars=daily_bars,
                 shareholder_change_pct=getattr(chip_result, "shareholder_change_pct", 0.0),
             )
+
+            # 多波洗盘生命周期（强制；融券压力稍后注入）
+            washout_result = None
+            if daily_bars and len(daily_bars) >= 8:
+                washout_result = WashoutDetector().detect_daily(
+                    symbol, daily_bars, name=name, include_wash_cycle=True,
+                )
 
             # 综合操纵扫描结果
             from dataclasses import dataclass
@@ -724,18 +734,25 @@ class Orchestrator:
                 recommendations: list = field(default_factory=list)
                 is_repeat_offender: bool = False
                 sentiment_nexus: list = field(default_factory=list)
+                washout_risk: float = 0.0
+                wash_cycle: object = None
 
-            # 综合风险 = max(筹码风险, 日级操纵风险, 资金背离风险)
+            # 综合风险 = max(筹码, 日级操纵, 资金背离, 洗盘形态)
+            washout_risk = float(getattr(washout_result, "washout_risk_score", 0) or 0)
             overall = max(
                 chip_result.manipulation_risk_score,
                 daily_result.risk_score,
                 flow_result.manipulation_risk_score,
+                washout_risk,
             )
             all_recs = (
                 chip_result.recommendations
                 + daily_result.recommendations
                 + flow_result.recommendations
             )
+            wc = getattr(washout_result, "wash_cycle", None) if washout_result else None
+            if wc is not None and getattr(wc, "retail_action_hint", ""):
+                all_recs = list(all_recs) + [wc.retail_action_hint]
             manipulation_scan = _ManipulationScan(
                 chip_risk=chip_result.manipulation_risk_score,
                 daily_pattern=daily_result.pattern_label,
@@ -743,6 +760,8 @@ class Orchestrator:
                 capital_divergence=flow_result.divergence_score,
                 overall_risk=overall,
                 recommendations=all_recs,
+                washout_risk=washout_risk,
+                wash_cycle=wc,
             )
         except Exception as e:
             logger.debug("Anti-manipulation scan failed: %s", e)
@@ -796,7 +815,7 @@ class Orchestrator:
             manipulation_scan.is_repeat_offender = is_repeat
             manipulation_scan.sentiment_nexus = (sentiment_adjusted.nexus_patterns if sentiment_adjusted else [])
 
-        # 存储操纵扫描结果
+        # 存储操纵扫描结果（wash_cycle 将在融资数据就绪后二次注入融券压力）
         if manipulation_scan is not None:
             result.manipulation_info = {
                 "overall_risk": manipulation_scan.overall_risk,
@@ -805,12 +824,21 @@ class Orchestrator:
                 "pattern_confidence": manipulation_scan.pattern_confidence,
                 "capital_divergence": manipulation_scan.capital_divergence,
                 "recommendations": manipulation_scan.recommendations,
+                "washout_risk": getattr(manipulation_scan, "washout_risk", 0.0),
             }
+            wc0 = getattr(manipulation_scan, "wash_cycle", None)
+            if wc0 is not None and hasattr(wc0, "to_info_dict"):
+                result.manipulation_info["wash_cycle"] = wc0.to_info_dict()
         ctx_detail = f"宏观{macro_regime.quadrant.value if macro_regime else '?'}  "
         if manipulation_scan and manipulation_scan.overall_risk > 20:
             ctx_detail += f"操纵⚠️{manipulation_scan.overall_risk:.0f}"
         else:
             ctx_detail += "操纵✅"
+        wc0 = getattr(manipulation_scan, "wash_cycle", None) if manipulation_scan else None
+        if wc0 is not None and getattr(wc0, "phase", None) is not None:
+            from src.game_theory.manipulation.wash_cycle import WashCyclePhase
+            if wc0.phase != WashCyclePhase.QUIET:
+                ctx_detail += f" 洗盘:{wc0.phase.value}"
         step_done("✅", ctx_detail.strip())
         _wf[2] = "🌐增强上下文✅"
 
@@ -841,6 +869,12 @@ class Orchestrator:
                      f"趋势: {margin_profile.margin_balance_trend} | "
                      f"5日: {margin_profile.margin_balance_5d_change_pct:+.1f}% | "
                      f"连续流出: {margin_profile.consecutive_outflow_days}天")
+                short_chg = getattr(margin_profile, "short_balance_5d_change_pct", None)
+                if short_chg is not None:
+                    info(
+                        f"📉 融券余额: {margin_profile.short_balance or 0:.3f}亿 | "
+                        f"5日: {short_chg:+.1f}%"
+                    )
                 for a in margin_alerts:
                     icon = "🔴" if a.severity == "high" else "🟡"
                     warn(f"{icon} {a.alert_type}: {a.message[:80]}")
@@ -854,6 +888,50 @@ class Orchestrator:
                 info("📡 Monitor Events: 无活跃监控")
         except Exception as e:
             logger.debug("Margin/Monitor check skipped: %s", e)
+
+        # 融券→洗盘生命周期二次注入（视频：借券砸盘提升置信度）
+        if _wash_daily_bars and len(_wash_daily_bars) >= 8:
+            try:
+                from src.game_theory.manipulation import WashoutDetector
+                short_chg = (
+                    getattr(margin_profile, "short_balance_5d_change_pct", None)
+                    if margin_profile is not None else None
+                )
+                short_bal = (
+                    getattr(margin_profile, "short_balance", None)
+                    if margin_profile is not None else None
+                )
+                wo = WashoutDetector().detect_daily(
+                    symbol,
+                    _wash_daily_bars,
+                    name=name,
+                    include_wash_cycle=True,
+                    short_balance_5d_change_pct=short_chg,
+                    short_balance=short_bal,
+                )
+                if result.manipulation_info is None:
+                    result.manipulation_info = {}
+                result.manipulation_info["washout_risk"] = wo.washout_risk_score
+                if wo.wash_cycle is not None and hasattr(wo.wash_cycle, "to_info_dict"):
+                    result.manipulation_info["wash_cycle"] = wo.wash_cycle.to_info_dict()
+                    # 抬升 overall_risk：活跃多波洗盘
+                    from src.game_theory.manipulation.wash_cycle import WashCyclePhase
+                    if wo.wash_cycle.phase != WashCyclePhase.QUIET:
+                        prev = float(result.manipulation_info.get("overall_risk", 0) or 0)
+                        cycle_score = wo.wash_cycle.confidence * 100
+                        result.manipulation_info["overall_risk"] = max(prev, cycle_score * 0.85)
+                        if wo.wash_cycle.short_pressure_flag:
+                            info(
+                                f"🌊 洗盘生命周期: {wo.wash_cycle.phase.value} | "
+                                f"融券砸盘压力 | conf={wo.wash_cycle.confidence:.0%}"
+                            )
+                        else:
+                            info(
+                                f"🌊 洗盘生命周期: {wo.wash_cycle.phase.value} | "
+                                f"波次≈{wo.wash_cycle.wave_count} | conf={wo.wash_cycle.confidence:.0%}"
+                            )
+            except Exception as e:
+                logger.debug("Wash cycle short-pressure inject failed: %s", e)
 
         # Step 3: 多维诊断
         step_start(5, "多维诊断 (宏观/价值/质量/动量/盈利修正/瓶颈/情绪)")
@@ -871,6 +949,10 @@ class Orchestrator:
                 "change_5d_pct": margin_profile.margin_balance_5d_change_pct,
                 "change_20d_pct": margin_profile.margin_balance_20d_change_pct,
                 "net_buy": margin_profile.margin_net_buy,
+                "short_balance": margin_profile.short_balance,
+                "short_balance_5d_change_pct": getattr(
+                    margin_profile, "short_balance_5d_change_pct", None
+                ),
                 "consecutive_outflow_days": margin_profile.consecutive_outflow_days,
                 "consecutive_inflow_days": margin_profile.consecutive_inflow_days,
                 "signal": margin_profile.margin_signal,

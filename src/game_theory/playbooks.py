@@ -471,29 +471,57 @@ TOP_PLAYBOOKS: list[Playbook] = [
             "下跌中出现弱反弹（约 1.5%-6%）后继续下探 → 第二波再洗",
             "连跌后半段（约过半/第 6 日以后）散户割肉最集中",
             "近 3 日均量较下跌前显著萎缩 → 「砸不走」/洗尽候选",
+            "可选: 融券余额 5 日上升 ≥10% → 借券砸盘工具活跃（置信度上调）",
             "可选: 财报/中报窗口叙事掩护（由调用方注入 earnings_window）",
             "可选: 止跌后缩量企稳 + 放量阳线 → 拉升候选",
+            "可选: 再砸后长下影收针（washout_long_lower_shadow）交叉确认",
         ],
         execution_pattern=[
-            "波1: 连续下杀制造恐慌，前半段多数散户仍硬扛",
+            "波1: 连续下杀制造恐慌（可配合融券砸盘），前半段多数散户仍硬扛",
             "后半段: 割肉盘最猛 — 主力常等到此处才考虑结束洗盘",
             "假反弹: 弱反弹诱回补/抄底 → 再杀第二波洗掉回补盘",
+            "收针: 二次砸后长下影，洗掉最后一批恐慌盘",
             "掩护: 可能借中报/业绩叙事强化空头氛围（需公告核验）",
             "洗尽: 量能枯竭、砸不动 → 进入主升；未持仓勿裸追",
+            "出货: 利好/小作文诱多后换一批接盘人",
         ],
         exit_conditions=[
             "累计跌幅 >22% 或持续放量长跌 → FAILED_WASHOUT，执行止损纪律",
-            "出现 washout_consecutive_yin / small_rise 形态信号可交叉确认，但不重复计分逻辑",
+            "出现 washout_consecutive_yin / small_rise / long_lower_shadow 可交叉确认",
             "拉升候选出现后管道评分仍 REDUCE/破硬止损 → 不因「叙事」扛单",
         ],
         price_impact_profile=(
-            "多日连弱 5-15%→弱反弹再杀→缩量→止跌放量阳→数日回补洗盘段"
+            "多日连弱 5-15%→弱反弹再杀→长下影收针→缩量→止跌放量阳→数日回补洗盘段"
             "（单日急跌 V 反仍归 shakeout；单形态仍归 washout_*）"
         ),
         risk_to_follower=(
             "后半段恐慌清仓 / 弱反弹满仓回补再被洗 / 洗尽时已下车踏空主升；"
-            "或把真出货误判为洗盘硬扛"
+            "或把真出货误判为洗盘硬扛。"
+            "双硬条件: ①砸不走 ②拉起就走"
         ),
+        # 夹具验证全通过 → PRELIMINARY；实盘回测后再升 CONFIRMED
+        evidence_level="PRELIMINARY",
+    ),
+    Playbook(
+        id="washout_long_lower_shadow",
+        name="洗盘-长下影收针 (再砸后下影洗掉最后一批)",
+        player_type=PlayerType.MANIPULATOR,
+        trigger_conditions=[
+            "前 3 日累计下跌 ≥3%",
+            "当日振幅 ≥2%，下影线占振幅 ≥55%",
+            "实体占振幅 ≤35%（收盘收回大部分杀跌）",
+        ],
+        execution_pattern=[
+            "T-3→T-1: 连续下杀或二次再洗，制造恐慌",
+            "T 日: 盘中再砸出长下影 → 尾盘收回，洗掉最后割肉盘",
+            "T+1→: 对照 wash_then_markup 是否进入砸不动/拉升候选",
+        ],
+        exit_conditions=[
+            "长下影后继续破新低且放量 → 真出货，勿硬扛",
+            "缩量企稳后放量阳线 → 升级对照 wash_then_markup 拉升候选",
+        ],
+        price_impact_profile="二次砸 + 长下影 → 数日内缩量企稳或反抽",
+        risk_to_follower="在下影最低点恐慌割肉 → 踏空收回段；或误判反转满仓再被洗",
         evidence_level="HYPOTHESIS",
     ),
 ]

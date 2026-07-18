@@ -78,6 +78,8 @@ class MarginProfile:
     margin_repay_amount: Optional[float] = None   # 当日融资偿还额 (亿元)
     margin_net_buy: Optional[float] = None        # 融资净买入 (亿元)
     short_balance: Optional[float] = None         # 融券余额 (亿元)
+    short_balance_5d_ago: Optional[float] = None  # 5日前融券余额
+    short_balance_5d_change_pct: Optional[float] = None  # 融券余额5日变化率(%)
 
     # 衍生指标
     margin_balance_5d_change_pct: Optional[float] = None   # 5日变化率
@@ -191,6 +193,17 @@ class MarginAnalyzer:
                 profile.margin_balance_5d_change_pct = round(
                     (latest.margin_balance - d5.margin_balance) / d5.margin_balance * 100, 2
                 )
+            # 融券余额 5 日变化（洗盘：融券↑ + 急跌 = 借券砸盘压力）
+            profile.short_balance_5d_ago = d5.short_balance
+            if d5.short_balance and d5.short_balance > 0:
+                profile.short_balance_5d_change_pct = round(
+                    (latest.short_balance - d5.short_balance) / d5.short_balance * 100, 2
+                )
+            elif latest.short_balance and latest.short_balance > 0 and (
+                not d5.short_balance or d5.short_balance <= 0
+            ):
+                # 从 0 跃升：记为大幅上升（封顶 100%）
+                profile.short_balance_5d_change_pct = 100.0
 
         if len(history) >= 20:
             d20 = history[-20]

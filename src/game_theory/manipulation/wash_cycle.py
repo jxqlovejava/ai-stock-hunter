@@ -2,11 +2,12 @@
 """多波洗盘→拉升 生命周期分析 (WashCycleAnalyzer)。
 
 来源提炼（短视频「主力洗盘/等散户割完再拉」）:
-  1. 连续下杀制造恐慌
+  1. 连续下杀制造恐慌（可配合融券砸盘）
   2. **后半段** 散户割肉最猛
   3. 第一次反弹后可能 **再洗第二遍**
   4. 可能借 **中报/业绩叙事** 做空头掩护
   5. 洗到「砸不走」筹码后才进入 **主升**
+  6. 散户双硬应对：洗盘期砸不走 + 拉升期不贪（拉起就走）
 
 与现有模式关系（去重策略）:
   - **不重复** 检测单日急跌/高开低走等形态（仍由 WashoutDetector 负责）
@@ -52,7 +53,9 @@ class WashCycleResult:
     latter_half_cut_risk: bool = False      # 是否处于「后半段割肉」高风险
     second_wave_active: bool = False
     earnings_cover_flag: bool = False       # 调用方注入：是否在财报窗口
+    short_pressure_flag: bool = False       # 融券余额上升配合下杀（砸盘工具）
     retail_action_hint: str = ""            # 对持仓者的操作提示
+    dual_hard_hint: str = ""                # 双硬条件：砸不走 + 拉起就走
     evidence: list[str] = field(default_factory=list)
     related_playbook_ids: list[str] = field(default_factory=list)
     summary: str = ""
@@ -72,6 +75,27 @@ class WashCycleResult:
             "phase": self.phase.value,
             "wave_count": self.wave_count,
             "latter_half_cut_risk": self.latter_half_cut_risk,
+            "short_pressure_flag": self.short_pressure_flag,
+            "dual_hard_hint": self.dual_hard_hint,
+        }
+
+    def to_info_dict(self) -> dict:
+        """供 orchestrator / diagnose 输出的紧凑 dict。"""
+        return {
+            "phase": self.phase.value,
+            "confidence": self.confidence,
+            "wave_count": self.wave_count,
+            "decline_days": self.decline_days,
+            "cumulative_drop_pct": self.cumulative_drop_pct,
+            "latter_half_cut_risk": self.latter_half_cut_risk,
+            "second_wave_active": self.second_wave_active,
+            "short_pressure_flag": self.short_pressure_flag,
+            "earnings_cover_flag": self.earnings_cover_flag,
+            "retail_action_hint": self.retail_action_hint,
+            "dual_hard_hint": self.dual_hard_hint,
+            "summary": self.summary,
+            "evidence": list(self.evidence[:8]),
+            "related_playbook_ids": list(self.related_playbook_ids),
         }
 
 
@@ -83,7 +107,16 @@ _WAVE_BOUNCE_MIN = 0.015              # 弱反弹至少 1.5%
 _WAVE_BOUNCE_MAX = 0.06              # 反弹 >6% 可能不是假反弹
 _VOLUME_DRY_RATIO = 0.65             # 近 3 日均量 / 下跌前 5 日均量
 _MARKUP_DAY_MIN_RISE = 0.02          # 止跌后放量阳线 ≥2%
+# 融券砸盘：5 日融券余额上升超过该比例 → 砸盘工具活跃
+_SHORT_PRESSURE_5D_PCT = 10.0        # %
+_SHORT_PRESSURE_CONF_BOOST = 0.10
 # 后半段: decline_days>=6 或 (第二波 and days>=5)
+
+_DUAL_HARD_HINT = (
+    "双硬条件（短线参与唯一活路）: "
+    "① 洗盘期比先割的人更坚强——砸不走你；"
+    "② 拉升期比后冲的人更清醒——拉起来就走，勿一口吃成胖子。"
+)
 
 
 class WashCycleAnalyzer:
@@ -96,12 +129,16 @@ class WashCycleAnalyzer:
         *,
         name: str = "",
         earnings_window: bool = False,
+        short_balance_5d_change_pct: Optional[float] = None,
+        short_balance: Optional[float] = None,
     ) -> WashCycleResult:
         """分析日线序列上的多波洗盘生命周期。
 
         Args:
             daily_bars: 按时间升序 [{open,high,low,close,volume,date}, ...]，建议 ≥15 根
             earnings_window: 是否处于财报/中报披露前后（调用方注入，本模块不做公告解析）
+            short_balance_5d_change_pct: 融券余额 5 日变化率（%）；上升=砸盘工具活跃
+            short_balance: 当前融券余额（亿元，可选，仅作证据展示）
         """
         if not daily_bars or len(daily_bars) < 8:
             return WashCycleResult(
@@ -111,7 +148,6 @@ class WashCycleAnalyzer:
             )
 
         closes = np.array([float(b.get("close") or 0) for b in daily_bars], dtype=float)
-        opens = np.array([float(b.get("open") or b.get("close") or 0) for b in daily_bars], dtype=float)
         volumes = np.array([float(b.get("volume") or 0) for b in daily_bars], dtype=float)
         if np.any(closes <= 0):
             return WashCycleResult(symbol=symbol, name=name, summary="价格数据异常")
@@ -120,27 +156,38 @@ class WashCycleAnalyzer:
         decline_start, decline_days, cum_drop = self._find_recent_decline(closes)
         evidence: list[str] = []
         related = ["washout_consecutive_yin", "shakeout", "washout_small_rise_big_drop"]
+        short_pressure = self._is_short_pressure(short_balance_5d_change_pct)
 
         if decline_days < _MIN_DECLINE_DAYS or cum_drop < _MIN_CUM_DROP:
             # 检查是否刚出现止跌放量阳线（前一段有下跌）
             markup = self._detect_markup_after_wash(closes, volumes)
             if markup:
+                conf = markup["confidence"]
+                mk_ev = list(markup["evidence"])
+                if short_pressure:
+                    conf = min(0.88, conf + _SHORT_PRESSURE_CONF_BOOST)
+                    mk_ev.append(self._short_pressure_evidence(
+                        short_balance_5d_change_pct, short_balance
+                    ))
                 return WashCycleResult(
                     symbol=symbol,
                     name=name,
                     phase=WashCyclePhase.MARKUP_CANDIDATE,
-                    confidence=markup["confidence"],
+                    confidence=round(conf, 2),
                     wave_count=markup.get("waves", 1),
                     decline_days=markup.get("decline_days", 0),
                     cumulative_drop_pct=markup.get("cum_drop", 0.0),
                     latter_half_cut_risk=False,
                     earnings_cover_flag=earnings_window,
-                    evidence=markup["evidence"],
+                    short_pressure_flag=short_pressure,
+                    evidence=mk_ev,
                     related_playbook_ids=related + ["wash_then_markup"],
                     retail_action_hint=(
                         "🟢 疑似洗盘结束后的拉升候选：连跌后出现缩量企稳/放量阳线。"
                         "若持仓未被洗出，可观察跟风确认；未持仓勿盲目追高。"
+                        " 拉升段执行双硬②：拉起来就走。"
                     ),
+                    dual_hard_hint=_DUAL_HARD_HINT,
                     summary=markup["summary"],
                 )
             return WashCycleResult(
@@ -168,9 +215,11 @@ class WashCycleAnalyzer:
                 cumulative_drop_pct=cum_drop,
                 latter_half_cut_risk=True,
                 earnings_cover_flag=earnings_window,
+                short_pressure_flag=short_pressure,
                 evidence=evidence + [f"累计跌幅 {cum_drop:.1%} > 22%，更像真出货/趋势破位"],
                 related_playbook_ids=["washout_consecutive_yin"],
                 retail_action_hint="🔴 跌幅过大，不宜按「洗盘别割」处理；优先风控/止损纪律。",
+                dual_hard_hint=_DUAL_HARD_HINT,
                 summary="多日长跌且跌幅过大，排除经典「洗完再拉」假设",
             )
 
@@ -206,6 +255,13 @@ class WashCycleAnalyzer:
             evidence.append("处于财报/中报窗口：可能用业绩叙事掩护洗盘（需结合公告核验）")
             related = list(dict.fromkeys(related + ["wash_then_markup"]))
 
+        # 6b) 融券砸盘压力（视频：借券砸盘制造恐慌）
+        if short_pressure:
+            evidence.append(self._short_pressure_evidence(
+                short_balance_5d_change_pct, short_balance
+            ))
+            related = list(dict.fromkeys(related + ["wash_then_markup", "shakeout"]))
+
         # 7) 置信度
         conf = 0.45
         conf += min(0.15, (decline_days - 3) * 0.03)
@@ -216,6 +272,8 @@ class WashCycleAnalyzer:
             conf += 0.12
         if earnings_window:
             conf += 0.05
+        if short_pressure:
+            conf += _SHORT_PRESSURE_CONF_BOOST
         conf = min(0.88, conf)
 
         # 8) 操作提示（持仓 overlay 可引用）
@@ -223,28 +281,34 @@ class WashCycleAnalyzer:
             hint = (
                 "🟡 量能枯竭、疑似「砸不走」：洗盘或近尾声。"
                 "持仓者避免在最后一跌恐慌清仓；新仓仍须管道评分+风控，禁止裸追。"
+                " 双硬①已满足时可观察；出现拉升执行双硬②拉起就走。"
             )
         elif phase == WashCyclePhase.LATTER_HALF_CAPITULATION:
             hint = (
                 "🟠 连续下跌后半段=割肉高峰：主力叙事常在此处逼出最后筹码。"
                 "若管道仍 HOLD 且止损未破系统硬线，避免「后半段割肉」；"
                 "若破止损/真出货特征，仍执行纪律。"
+                " 双硬①：砸不走你。"
             )
         elif phase == WashCyclePhase.WAVE2_DECLINE:
             hint = (
                 "🟠 第二波再洗：第一次反弹后的再杀最易洗掉回补盘。"
                 "勿把弱反弹当反转满仓回补；滚动仓遵守 overlay 禁越跌越加。"
+                " 双硬①：砸不走；勿在弱反弹满仓回补。"
             )
         else:
             hint = (
                 "🟡 第一波下杀进行中：区分洗盘与出货——看量能是否递减、跌幅是否失控。"
-                "单票纪律优先于「扛洗盘」口号。"
+                "单票纪律优先于「扛洗盘」口号。双硬①：若确认洗盘则砸不走你。"
             )
+        if short_pressure:
+            hint += " ⚠️ 融券余额上升配合下杀，砸盘工具活跃，洗盘置信度上调。"
 
         summary = (
             f"多波洗盘生命周期: {phase.value} | 波次≈{waves} | "
             f"连弱{decline_days}日 | 累计{cum_drop:.1%} | "
             f"后半段割肉风险={'是' if latter_half else '否'}"
+            f"{' | 融券砸盘压力' if short_pressure else ''}"
         )
 
         return WashCycleResult(
@@ -258,10 +322,33 @@ class WashCycleAnalyzer:
             latter_half_cut_risk=latter_half and phase != WashCyclePhase.WASH_EXHAUSTION,
             second_wave_active=second_wave,
             earnings_cover_flag=earnings_window,
+            short_pressure_flag=short_pressure,
             retail_action_hint=hint,
+            dual_hard_hint=_DUAL_HARD_HINT,
             evidence=evidence,
             related_playbook_ids=list(dict.fromkeys(related + ["wash_then_markup"])),
             summary=summary,
+        )
+
+    @staticmethod
+    def _is_short_pressure(short_balance_5d_change_pct: Optional[float]) -> bool:
+        if short_balance_5d_change_pct is None:
+            return False
+        try:
+            return float(short_balance_5d_change_pct) >= _SHORT_PRESSURE_5D_PCT
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _short_pressure_evidence(
+        short_balance_5d_change_pct: Optional[float],
+        short_balance: Optional[float],
+    ) -> str:
+        chg = short_balance_5d_change_pct if short_balance_5d_change_pct is not None else 0.0
+        bal = f"，余额 {short_balance:.3f} 亿" if short_balance else ""
+        return (
+            f"融券余额 5 日上升 {chg:+.1f}%{bal} — 疑似借券砸盘工具活跃"
+            "（对照视频「融券砸盘制造恐慌」）"
         )
 
     # ------------------------------------------------------------------

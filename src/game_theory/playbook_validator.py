@@ -182,6 +182,8 @@ class PlaybookValidator:
             return self._validate_institutional_clustering(playbook)
         elif playbook.id == "national_team_bailout":
             return self._validate_national_team_bailout(playbook)
+        elif playbook.id == "wash_then_markup":
+            return self._validate_wash_then_markup(playbook)
         else:
             return PlaybookValidation(
                 playbook_id=playbook.id,
@@ -821,6 +823,157 @@ class PlaybookValidator:
                 f"🔬 未验证: '{result.playbook_name}' 样本不足（{result.total_samples}），"
                 f"保持 HYPOTHESIS 状态。"
             )
+
+    def _validate_wash_then_markup(self, playbook) -> PlaybookValidation:
+        """验证多波洗盘后拉升 playbook（状态机一致性 + 标注夹具）。
+
+        不依赖实时龙虎榜；用标注日线夹具检验:
+          1. 连弱序列 → 非 QUIET
+          2. 弱反弹再杀 → second_wave 或 WAVE2
+          3. 跌幅过大 → FAILED_WASHOUT
+          4. 融券 5 日上升 → short_pressure_flag 且 conf 上调
+          5. 长下影形态可被 WashoutDetector 命中
+
+        样本足够且通过率高 → PRELIMINARY；否则保持 HYPOTHESIS。
+        """
+        from src.game_theory.manipulation.wash_cycle import (
+            WashCycleAnalyzer,
+            WashCyclePhase,
+        )
+        from src.game_theory.manipulation.washout_detector import WashoutDetector
+
+        result = PlaybookValidation(
+            playbook_id=playbook.id,
+            playbook_name=playbook.name,
+            evidence_grade_before=EvidenceGrade(
+                getattr(playbook, "evidence_level", "HYPOTHESIS") or "HYPOTHESIS"
+            ),
+        )
+
+        def _bars(
+            n: int = 12,
+            start: float = 100.0,
+            daily_drop: float = 0.012,
+            bounce_at: int | None = None,
+            bounce_pct: float = 0.025,
+            end_hammer: bool = False,
+        ) -> list[dict]:
+            bars: list[dict] = []
+            price = start
+            vol = 1_000_000.0
+            for i in range(n):
+                if bounce_at is not None and i == bounce_at:
+                    o, c = price, price * (1 + bounce_pct)
+                    h, l = c * 1.002, o * 0.998
+                    price = c
+                else:
+                    o, c = price, price * (1 - daily_drop)
+                    h, l = o * 1.001, c * 0.999
+                    price = c
+                bars.append({
+                    "open": o, "high": h, "low": l, "close": c,
+                    "volume": vol, "date": f"2026-06-{i + 1:02d}",
+                })
+                vol *= 0.92
+            if end_hammer and bars:
+                prev = bars[-2]["close"] if len(bars) >= 2 else bars[-1]["close"]
+                # 前几日已跌；末日长下影
+                low = prev * 0.94
+                close = prev * 0.995
+                high = prev * 1.005
+                open_ = prev * 0.99
+                bars[-1] = {
+                    "open": open_, "high": high, "low": low, "close": close,
+                    "volume": vol, "date": bars[-1]["date"],
+                }
+            return bars
+
+        cases: list[tuple[str, bool, str]] = []
+        # 1 连弱
+        r1 = WashCycleAnalyzer().analyze("000001", _bars(n=10, daily_drop=0.012))
+        ok1 = r1.phase != WashCyclePhase.QUIET and r1.decline_days >= 4
+        cases.append(("steady_decline_active", ok1, r1.phase.value))
+
+        # 2 第二波
+        r2 = WashCycleAnalyzer().analyze(
+            "000001", _bars(n=14, daily_drop=0.012, bounce_at=6, bounce_pct=0.025)
+        )
+        ok2 = r2.phase != WashCyclePhase.QUIET and (
+            r2.wave_count >= 2 or r2.second_wave_active
+            or r2.phase in (
+                WashCyclePhase.WAVE2_DECLINE,
+                WashCyclePhase.LATTER_HALF_CAPITULATION,
+                WashCyclePhase.WASH_EXHAUSTION,
+            )
+        )
+        cases.append(("second_wave_or_latter", ok2, f"waves={r2.wave_count}/{r2.phase.value}"))
+
+        # 3 真出货
+        r3 = WashCycleAnalyzer().analyze("000001", _bars(n=12, daily_drop=0.03))
+        ok3 = r3.phase == WashCyclePhase.FAILED_WASHOUT
+        cases.append(("failed_washout_large_drop", ok3, r3.phase.value))
+
+        # 4 融券压力
+        base = _bars(n=10, daily_drop=0.012)
+        r4a = WashCycleAnalyzer().analyze("000001", base)
+        r4b = WashCycleAnalyzer().analyze(
+            "000001", base, short_balance_5d_change_pct=25.0, short_balance=0.5
+        )
+        ok4 = (
+            r4b.short_pressure_flag
+            and r4b.confidence >= r4a.confidence
+            and r4b.dual_hard_hint
+        )
+        cases.append((
+            "short_pressure_boost",
+            ok4,
+            f"conf {r4a.confidence:.2f}→{r4b.confidence:.2f}",
+        ))
+
+        # 5 长下影形态
+        hammer_bars = _bars(n=8, daily_drop=0.015, end_hammer=True)
+        # 确保前 3 日有足够跌幅：手工压低 close 序列
+        for i in range(max(0, len(hammer_bars) - 4), len(hammer_bars) - 1):
+            hammer_bars[i]["close"] = 100.0 * (1 - 0.02 * (i + 1))
+            hammer_bars[i]["open"] = hammer_bars[i]["close"] * 1.005
+            hammer_bars[i]["high"] = hammer_bars[i]["open"]
+            hammer_bars[i]["low"] = hammer_bars[i]["close"] * 0.998
+        last = hammer_bars[-1]
+        last["open"] = last["close"] * 0.99
+        last["high"] = last["close"] * 1.01
+        last["low"] = last["close"] * 0.93  # 长下影
+        wo = WashoutDetector().detect_daily(
+            "000001", hammer_bars, include_wash_cycle=False
+        )
+        ids = [s.playbook_id for s in wo.signals]
+        ok5 = "washout_long_lower_shadow" in ids
+        cases.append(("long_lower_shadow_detect", ok5, str(ids)))
+
+        supporting = sum(1 for _, ok, _ in cases if ok)
+        result.total_samples = len(cases)
+        result.supporting_samples = supporting
+        result.refuting_samples = len(cases) - supporting
+        result.pattern_match_rate = supporting / max(len(cases), 1) * 100
+        result.details = [f"{name}: {'PASS' if ok else 'FAIL'} ({detail})" for name, ok, detail in cases]
+        result.significance_level = 1.0 - (supporting / max(len(cases), 1))
+
+        if supporting == len(cases):
+            result.evidence_grade_after = EvidenceGrade.PRELIMINARY
+            result.verdict = (
+                f"✅ wash_then_markup 夹具全通过 ({supporting}/{len(cases)})，"
+                f"证据级 PRELIMINARY（待实盘回测升级 CONFIRMED）"
+            )
+        elif supporting >= 3:
+            result.evidence_grade_after = EvidenceGrade.PRELIMINARY
+            result.verdict = (
+                f"🟡 部分通过 ({supporting}/{len(cases)})，保持/升为 PRELIMINARY"
+            )
+        else:
+            result.evidence_grade_after = EvidenceGrade.HYPOTHESIS
+            result.verdict = (
+                f"🔬 夹具通过不足 ({supporting}/{len(cases)})，保持 HYPOTHESIS"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Cache management

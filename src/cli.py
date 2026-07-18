@@ -1242,11 +1242,27 @@ def cmd_manipulation(args: list[str]):
         daily_bars = []
 
     if daily_bars:
+        short_chg = None
+        short_bal = None
+        try:
+            from src.game_theory.margin import get_margin_analyzer
+            mp = get_margin_analyzer().analyze(symbol, name)
+            short_chg = getattr(mp, "short_balance_5d_change_pct", None)
+            short_bal = getattr(mp, "short_balance", None)
+            if short_chg is not None:
+                print(
+                    f"   融券: 余额 {short_bal or 0:.3f}亿 | 5日 {short_chg:+.1f}%"
+                )
+        except Exception:
+            pass
+
         wo = WashoutDetector().detect_daily(
             symbol,
             daily_bars,
             name=name,
             earnings_window=bool(parsed.earnings),
+            short_balance_5d_change_pct=short_chg,
+            short_balance=short_bal,
         )
         print(f"   洗盘风险评分: {wo.washout_risk_score:.0f}/100 | {wo.risk_level.upper()}")
         if wo.signals:
@@ -1267,9 +1283,12 @@ def cmd_manipulation(args: list[str]):
                 f"   生命周期: {c.phase.value} | 波次≈{c.wave_count} | "
                 f"连弱{c.decline_days}日 | 累计{c.cumulative_drop_pct:.1%} | "
                 f"后半段割肉风险={'是' if c.latter_half_cut_risk else '否'}"
+                f"{' | 融券砸盘压力' if c.short_pressure_flag else ''}"
             )
             if c.retail_action_hint:
                 print(f"   → {c.retail_action_hint}")
+            if c.dual_hard_hint:
+                print(f"   双硬: {c.dual_hard_hint}")
         print()
         print(wo.summary)
     else:

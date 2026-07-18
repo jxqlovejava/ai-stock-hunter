@@ -76,6 +76,8 @@ class TestWashCycleAnalyzer:
         assert r.cumulative_drop_pct >= 0.05
         assert "wash_then_markup" in r.related_playbook_ids
         assert r.retail_action_hint
+        assert r.dual_hard_hint
+        assert "砸不走" in r.dual_hard_hint
 
     def test_failed_washout_on_large_drop(self):
         bars = _bars_decline(n=12, daily_drop=0.03)  # ~30%+
@@ -98,12 +100,29 @@ class TestWashCycleAnalyzer:
         assert r.earnings_cover_flag is True
         assert any("财报" in e or "中报" in e for e in r.evidence)
 
+    def test_short_pressure_boosts_confidence(self):
+        bars = _bars_decline(n=10, daily_drop=0.012)
+        base = WashCycleAnalyzer().analyze("000001", bars)
+        boosted = WashCycleAnalyzer().analyze(
+            "000001",
+            bars,
+            short_balance_5d_change_pct=25.0,
+            short_balance=0.8,
+        )
+        assert boosted.short_pressure_flag is True
+        assert boosted.confidence >= base.confidence
+        assert any("融券" in e for e in boosted.evidence)
+        info = boosted.to_info_dict()
+        assert info["phase"] == boosted.phase.value
+        assert info["short_pressure_flag"] is True
+
     def test_to_manipulation_signal_dict(self):
         bars = _bars_decline(n=10, daily_drop=0.012)
         r = WashCycleAnalyzer().analyze("000001", bars)
         d = r.to_manipulation_signal_dict()
         assert d["playbook_id"] == "wash_then_markup"
         assert "confidence" in d
+        assert "dual_hard_hint" in d
 
 
 class TestWashoutDetectorIntegration:
@@ -138,6 +157,7 @@ class TestPlaybookAndSizing:
         assert "wash_then_markup" in ids
         assert "washout_consecutive_yin" in ids
         assert "shakeout" in ids
+        assert "washout_long_lower_shadow" in ids
 
     def test_sizing_has_wash_then_markup(self):
         eng = ManipulationSizingEngine()
@@ -145,3 +165,38 @@ class TestPlaybookAndSizing:
         strat = eng.STOP_STRATEGIES["wash_then_markup"]
         assert strat.stop_type == "wide"
         assert strat.stop_loss_pct <= -0.04
+
+
+class TestLongLowerShadow:
+    def test_detect_long_lower_shadow(self):
+        bars = _bars_decline(n=8, daily_drop=0.02)
+        # force prior drop + hammer last bar
+        for i, b in enumerate(bars[:-1]):
+            b["close"] = 100.0 * (1 - 0.02 * (i + 1))
+            b["open"] = b["close"] * 1.005
+            b["high"] = b["open"]
+            b["low"] = b["close"] * 0.998
+        last = bars[-1]
+        last["close"] = bars[-2]["close"] * 0.995
+        last["open"] = last["close"] * 0.99
+        last["high"] = last["close"] * 1.01
+        last["low"] = last["close"] * 0.92
+        result = WashoutDetector().detect_daily("000001", bars, include_wash_cycle=False)
+        ids = [s.playbook_id for s in result.signals]
+        assert "washout_long_lower_shadow" in ids
+
+
+class TestPlaybookValidatorWashThenMarkup:
+    def test_validate_wash_then_markup_preliminary(self):
+        from src.game_theory.playbook_validator import PlaybookValidator, EvidenceGrade
+        from src.game_theory.playbooks import TOP_PLAYBOOKS
+
+        pb = next(p for p in TOP_PLAYBOOKS if p.id == "wash_then_markup")
+        v = PlaybookValidator().validate_playbook(pb)
+        assert v.total_samples >= 5
+        assert v.supporting_samples >= 4
+        assert v.evidence_grade_after in (
+            EvidenceGrade.PRELIMINARY,
+            EvidenceGrade.CONFIRMED,
+        )
+        assert "wash_then_markup" in v.playbook_id

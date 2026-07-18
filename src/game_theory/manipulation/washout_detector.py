@@ -84,6 +84,12 @@ WASHOUT_SMALL_RISE_MAX = 0.02          # 小阳涨幅 < 2%
 WASHOUT_BIG_DROP_MIN = 0.04            # 大阴跌幅 > 4%
 WASHOUT_SRD_WINDOW = 3                 # 检测窗口 (天, 最小需3天检测二阴夹一阳)
 
+# 二次洗 + 长下影（视频：再砸后长下影收针洗掉最后一批）
+WASHOUT_LLS_LOWER_SHADOW_RATIO = 0.55  # 下影线 / 全振幅 ≥ 55%
+WASHOUT_LLS_BODY_MAX_RATIO = 0.35      # 实体 / 振幅 ≤ 35%
+WASHOUT_LLS_PRIOR_DROP_MIN = 0.03      # 前 3 日累计跌 ≥ 3%
+WASHOUT_LLS_RANGE_MIN = 0.02           # 当日振幅 ≥ 2%
+
 
 # ── 复用现有数据模型 ──
 
@@ -213,6 +219,8 @@ class WashoutDetector:
         *,
         earnings_window: bool = False,
         include_wash_cycle: bool = True,
+        short_balance_5d_change_pct: float | None = None,
+        short_balance: float | None = None,
     ) -> WashoutResult:
         """执行日级洗盘模式检测。
 
@@ -223,6 +231,8 @@ class WashoutDetector:
             ma_data: 均线数据 {20: 1.23, 60: 1.15, ...} 或 None（自动计算）
             earnings_window: 是否财报窗口（注入多波生命周期）
             include_wash_cycle: 是否附加 WashCycleAnalyzer（默认开）
+            short_balance_5d_change_pct: 融券余额 5 日变化率（%），注入洗盘置信度
+            short_balance: 当前融券余额（亿元）
 
         Returns:
             WashoutResult
@@ -240,10 +250,11 @@ class WashoutDetector:
         date_str = daily_bars[-1].get("date", datetime.now().strftime("%Y-%m-%d"))
         signals: list[ManipulationSignal] = []
 
-        # 日级 3 种形态检测（不重复生命周期）
+        # 日级形态检测（不重复生命周期）
         signals.append(self._detect_consecutive_yin_washout(daily_bars))
         signals.append(self._detect_support_breakdown(daily_bars, ma_data))
         signals.append(self._detect_small_rise_big_drop(daily_bars))
+        signals.append(self._detect_long_lower_shadow_wash(daily_bars))
 
         signals = [s for s in signals if s is not None]
 
@@ -257,6 +268,8 @@ class WashoutDetector:
                 daily_bars,
                 name=name,
                 earnings_window=earnings_window,
+                short_balance_5d_change_pct=short_balance_5d_change_pct,
+                short_balance=short_balance,
             )
             cycle_sig = self._wash_cycle_to_signal(wash_cycle)
             if cycle_sig is not None:
@@ -273,6 +286,8 @@ class WashoutDetector:
 
             if wash_cycle.phase != WashCyclePhase.QUIET:
                 summary = f"{summary}\n  【生命周期】{wash_cycle.summary}"
+                if wash_cycle.dual_hard_hint:
+                    summary = f"{summary}\n  【双硬】{wash_cycle.dual_hard_hint}"
 
         return WashoutResult(
             symbol=symbol,
@@ -296,6 +311,8 @@ class WashoutDetector:
         *,
         earnings_window: bool = False,
         include_wash_cycle: bool = True,
+        short_balance_5d_change_pct: float | None = None,
+        short_balance: float | None = None,
     ) -> WashoutResult:
         """组合日内和日级检测，返回综合结果。"""
         intraday_signals: list[ManipulationSignal] = []
@@ -316,6 +333,8 @@ class WashoutDetector:
                 ma_data,
                 earnings_window=earnings_window,
                 include_wash_cycle=include_wash_cycle,
+                short_balance_5d_change_pct=short_balance_5d_change_pct,
+                short_balance=short_balance,
             )
             daily_signals = result.signals
             wash_cycle = result.wash_cycle
@@ -410,6 +429,7 @@ class WashoutDetector:
                 "washout_consecutive_yin",
                 "washout_small_rise_big_drop",
                 "washout_support_breakdown",
+                "washout_long_lower_shadow",
             ):
                 new_ev = list(s.evidence) + extras
                 tip = " | ".join(extras)
@@ -1224,6 +1244,70 @@ class WashoutDetector:
             ),
         )
 
+    def _detect_long_lower_shadow_wash(
+        self, daily_bars: list[dict]
+    ) -> Optional[ManipulationSignal]:
+        """二次洗后长下影收针：前段下跌 + 当日长下影，洗掉最后一批恐慌盘。"""
+        if not daily_bars or len(daily_bars) < 4:
+            return None
+
+        last = daily_bars[-1]
+        o = _safe_float(last.get("open"))
+        h = _safe_float(last.get("high"))
+        l = _safe_float(last.get("low"))
+        c = _safe_float(last.get("close"))
+        if min(o, h, l, c) <= 0 or h <= l:
+            return None
+
+        rng = h - l
+        if rng / c < WASHOUT_LLS_RANGE_MIN:
+            return None
+
+        body = abs(c - o)
+        lower_shadow = min(o, c) - l
+        if lower_shadow <= 0:
+            return None
+
+        lower_ratio = lower_shadow / rng
+        body_ratio = body / rng
+        if lower_ratio < WASHOUT_LLS_LOWER_SHADOW_RATIO:
+            return None
+        if body_ratio > WASHOUT_LLS_BODY_MAX_RATIO:
+            return None
+
+        # 前 3 日累计下跌
+        closes = [_safe_float(b.get("close")) for b in daily_bars[-4:-1]]
+        if len(closes) < 3 or any(x <= 0 for x in closes):
+            return None
+        prior_drop = (closes[0] - closes[-1]) / closes[0]
+        if prior_drop < WASHOUT_LLS_PRIOR_DROP_MIN:
+            return None
+
+        conf = 0.58
+        conf += min(0.12, (lower_ratio - 0.55) * 0.5)
+        conf += min(0.10, prior_drop)
+        conf = min(0.82, conf)
+
+        date_str = str(last.get("date", ""))
+        return ManipulationSignal(
+            playbook_id="washout_long_lower_shadow",
+            playbook_name="洗盘-长下影收针 (再砸后下影洗掉最后一批)",
+            confidence=round(conf, 2),
+            risk_level="medium",
+            detected_at=date_str,
+            evidence=[
+                f"下影线占振幅 {lower_ratio:.0%}（阈值≥{WASHOUT_LLS_LOWER_SHADOW_RATIO:.0%}）",
+                f"实体仅占振幅 {body_ratio:.0%}，收盘收回大部分跌幅",
+                f"前 3 日累计跌 {prior_drop:.1%}，符合二次洗后收针",
+            ],
+            scene="daily",
+            suggestion=(
+                "⚠️ 长下影收针：常见于二次砸盘后洗掉最后恐慌盘。"
+                "勿在下影最低点割肉；亦勿认定立刻反转满仓。"
+                " 对照 wash_then_markup 生命周期与双硬条件。"
+            ),
+        )
+
     # ────────────────────────────────────────────────────
     # 辅助方法
     # ────────────────────────────────────────────────────
@@ -1270,16 +1354,17 @@ class WashoutDetector:
             return 0.0
 
         weights = {
-            "washout_sharp_drop": 0.18,
-            "washout_consecutive_yin": 0.18,
-            "washout_continuous_suppression": 0.13,
-            "washout_one_sided_decline": 0.13,
-            "washout_support_breakdown": 0.10,
+            "washout_sharp_drop": 0.16,
+            "washout_consecutive_yin": 0.16,
+            "washout_continuous_suppression": 0.12,
+            "washout_one_sided_decline": 0.12,
+            "washout_support_breakdown": 0.09,
             "washout_small_rise_big_drop": 0.07,
+            "washout_long_lower_shadow": 0.08,
             "washout_high_open_low": 0.04,
             "washout_low_open_high": 0.04,
             # 多波生命周期 meta（与形态互补，权重中等避免双计放大）
-            "wash_then_markup": 0.13,
+            "wash_then_markup": 0.12,
         }
 
         score = 0.0
