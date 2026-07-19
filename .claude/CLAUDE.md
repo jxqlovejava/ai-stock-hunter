@@ -247,6 +247,7 @@ feedback add       # 添加交易反馈
 | 5 | GS Quant | 本地+GitHub | 机构级风险 / 时序 / 回测抽象 |
 | 6 | TradingAgents-Astock | 本地+GitHub | A 股多 Agent 辩论 / 数据源 / 角色 |
 | 7 | Investment-News | 本地+GitHub | 全球产业链资讯看板 / RSS 多源聚合 / AI 摘要管道 / 赛道-A 股映射 |
+| 8 | go-stock | 本地+GitHub | AI Agent 多模式 / 工具分组路由 / MCP+Skill 扩展 / 桌面应用工程 |
 
 ### 🛡️ RiskGuard — 风控机制参考 (`~/Documents/workspace/riskguard`)
 
@@ -713,6 +714,81 @@ sources.json (108 源 / 12 赛道)
 
 > ⚠️ **注意**：Investment-News 是资讯聚合工具，不是交易系统。其核心价值在于 **(1) 全球产业链领先信号的自动化中文摘要管道** 和 **(2) 12 赛道→A 股板块的映射框架**。白泽可直接复用其 `sources.json` 赛道-源映射、fetch→digest 管道模式、双 LLM provider 架构。  
 > 详见 [`docs/reference/investment-news-analysis.md`](../docs/reference/investment-news-analysis.md)。
+
+### 🖥️ go-stock — AI Agent 桌面股票分析工具 (`~/Documents/workspace/go-stock-dev`)
+
+> 源码：https://github.com/ArvinLovegood/go-stock（GNU GPLv3）  
+> 定位：基于 Wails (Go) + Vue/NaiveUI 的桌面端 AI 大模型驱动股票分析工具 — A 股/港股/美股
+
+#### 一、技术架构
+
+```
+Wails 桌面壳
+  ├── Go backend（数据获取 / Agent 引擎 / MCP 客户端）
+  │     ├── agent/     — CloudWeGo Eino Agent（React / PlanExecute / DeepAgents）
+  │     ├── data/      — 多源数据 API（东财/新浪/通达信/Tushare/问财/华尔街见闻）
+  │     ├── db/        — SQLite（会话记忆 / 配置）
+  │     └── models/    — 数据模型
+  └── Vue 3 frontend
+        ├── NaiveUI 组件库
+        └── 自研 Canvas K 线组件（技术指标 / 筹码分布 / 绘图工具）
+```
+
+#### 二、Agent 引擎核心设计
+
+**三种运行模式按复杂度自动切换**（`agent/agent.go:classifyComplexity()`）：
+
+| 模式 | 适用场景 | 切换条件 |
+|------|---------|---------|
+| `React` | 简单问答（查行情/问股价） | 默认 |
+| `PlanExecute` | 复杂分析（深度报告/多标的对比） | 问题 > 80 字 或 涉及 ≥5 个工具组 或 意图为 ComprehensiveReport |
+| `DeepAgents` | 最复杂场景 | 综合报告 + 多主体 |
+
+**意图检测**（`agent/tools/intent.go`）：7 种意图（ComprehensiveReport / Screening / NewsResearch / MoneyFlow / MarketOverview / CodeLookup / QuoteLookup），完全基于关键词规则匹配，**零 LLM 调用成本**。
+
+**工具分组+动态过滤**（`agent/tools/tool_groups.go`）：~100+ 工具分 7 组（base / stock_analysis / market / screening / money_flow / news_research / operations），按问题关键词匹配后只加载相关工具组 — 减少 prompt token，提高工具选择准确率。
+
+**工具输出元数据**（`agent/agent_tool_meta.go`）：每条工具输出自动添加 `[as_of=时间] [tool=工具名] [status=ok/empty/error]` 前缀，确保数据溯源。
+
+**时间上下文注入**（`agent/agent_context.go`）：每次 Agent 调用前注入当前时间 + 全球指数状态 + A 股交易日提醒 + "不得引用训练记忆中的过期数字"强制声明。
+
+#### 三、MCP 与 Skill 扩展体系
+
+- **MCP Client**（`data/mcp_server_api.go`）：基于 mark3labs/mcp-go，支持 SSE / Streamable HTTP，动态发现外部工具
+- **Skill 系统**（`data/skill_api.go`）：结构化存储（name / system_prompt / trigger_keywords / mcp_server_ids），DB 持久化，支持触发关键词匹配
+- **飞书 Bot**（`agent/feishu_bot.go`）：IM 消息 → Agent 分析 → 返回结果
+
+#### 四、数据源矩阵
+
+| 数据源 | 协议 | 数据类型 |
+|--------|------|------|
+| 东方财富 | HTTP API | 行情/K线/资金流向/板块排名 |
+| 新浪 | HTTP API | K线/分时 |
+| 通达信 TDX | TCP（gotdx）| K线 |
+| Tushare | HTTP API | 基本面/财务/宏观 |
+| 华尔街见闻 | HTTP API | 全球快讯/日历 |
+| 同花顺问财 | HTTP API | 自然语言选股/查询 |
+| 东财妙想 | HTTP API | AI 财报点评/行业研究/金融问答 |
+
+#### 五、可直接借鉴到本项目的业务机制
+
+| # | 机制 | 来源 | 应用到本项目 |
+|---|------|------|------------|
+| 1 | **Agent 多模式自动切换**（React/PlanExecute/DeepAgents 按复杂度） | `agent/agent.go` | orchestrator 按问题类型选择 Agent 深度 |
+| 2 | **规则路由意图检测**（关键词→7 种意图→工具组，零 LLM 成本） | `agent/tools/intent.go` | 替代 LLM 做分析阶段路由，减少 API 开销 |
+| 3 | **工具分组+动态过滤**（7 组×关键词映射→按需加载，减少 token） | `agent/tools/tool_groups.go` | 各分析阶段裁剪工具集 |
+| 4 | **工具输出元数据标记**（`[as_of=][tool=][status=]`） | `agent/agent_tool_meta.go` | guardrails 数据溯源标准化格式 |
+| 5 | **时间上下文注入**（当前时间+指数状态+交易日+过期警告） | `agent/agent_context.go` | 分析启动前的环境上下文注入 |
+| 6 | **MCP Client 集成**（mark3labs/mcp-go，SSE/HTTP） | `data/mcp_server_api.go` | 白泽接入外部 MCP 工具服务 |
+| 7 | **结构化 Skill 系统**（DB 持久化 + 触发词 + MCP 绑定） | `data/skill_api.go` | 白泽 skill 体系结构化升级 |
+| 8 | **多 Provider ChatModel 工厂**（10+ LLM 统一接口） | `agent/chat_model_factory.go` | 白泽 LLM 调用统一入口 |
+| 9 | **定时任务 AI 分析**（cron + Agent 自动执行） | `agent/cron_task_api.go` | 自动盯盘/定时简报 |
+| 10 | **SQLite 会话记忆**（session-based，可配置轮数） | `agent/chat_memory.go` | 替代 `interaction_log.jsonl` 临时方案 |
+| 11 | **问财 (iwencai) 自然语言查询** | `data/iwencai_api.go` | 与 CLI scan/preset 互补 |
+| 12 | **工具可用性运行时检查**（API Key 未配→工具自动标记不可用） | `data/tool_registry.go` | 集中管理 API Key 与工具可用性 |
+
+> ⚠️ **注意**：go-stock 是面向个人投资者的 AI 辅助分析桌面工具，不是全自动交易决策系统。其核心价值在于 **(1) Eino Agent 多模式架构 + 规则路由**、(2) **工具分组+动态过滤的 prompt 优化策略**、(3) **MCP + Skill 的扩展体系**、(4) **桌面应用的工程实践**。  
+> 详见 [`docs/reference/go-stock-dev-analysis.md`](../docs/reference/go-stock-dev-analysis.md)。
 
 ## 开发工作流
 

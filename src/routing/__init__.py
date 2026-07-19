@@ -2,6 +2,15 @@
 """5 层路由内核 + 事件驱动管道基础设施。"""
 
 from .admission import AdmissionCheck, AdmissionResult
+from .alert_engine import (
+    ALERT_PRIORITY_MAP,
+    AlertCheckResult,
+    AlertEngine,
+    AlertPriority,
+    AlertType,
+    PriceAlert,
+    get_alert_summary,
+)
 from .diagnosis import DiagnosisEngine, DiagnosisReport
 from .verdict import VerdictEngine, Verdict
 from .positioning import PositioningEngine, TradeSignal
@@ -55,6 +64,9 @@ from .context import AnalysisContext, TokenCounter, create_context
 __all__ = [
     "Orchestrator",
     "AdmissionCheck", "AdmissionResult",
+    # -- Price Alert Engine --
+    "AlertEngine", "PriceAlert", "AlertType", "AlertPriority",
+    "AlertCheckResult", "get_alert_summary", "ALERT_PRIORITY_MAP",
     "DiagnosisEngine", "DiagnosisReport",
     "VerdictEngine", "Verdict",
     "PositioningEngine", "TradeSignal",

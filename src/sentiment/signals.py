@@ -21,6 +21,12 @@ from typing import Optional
 
 import numpy as np
 
+from src.sentiment.freq_weighted_sentiment import (
+    FreqWeightedSentiment,
+    FreqWeightedSentimentAnalyzer,
+)
+from src.sentiment.stock_changes import StockChangesFetcher, StockChangesSnapshot
+
 try:
     import pandas as pd
     HAS_PANDAS = True
@@ -81,6 +87,9 @@ class MarketSentiment:
     limit_pool_insight: str = ""      # 涨跌停/炸板解读
     vix_insight: str = ""             # 波动率解读
     sector_signal_insight: str = ""   # 板块轮动信号
+    # 盘中异动 (Level 4)
+    stock_changes_snapshot: Optional[StockChangesSnapshot] = None
+    changes_insight: str = ""         # 异动解读
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +434,25 @@ class SentimentDataFetcher:
             logger.warning(f"获取融资余额历史失败: {e}")
             return {"error": str(e), "source": "akshare/上交所"}
 
+    @staticmethod
+    def fetch_stock_changes() -> dict:
+        """获取盘中异动数据（22 种东财异动类型）。
+
+        Returns dict with: snapshot (StockChangesSnapshot), source, error
+        """
+        try:
+            snapshot = StockChangesFetcher.fetch()
+            if snapshot.error:
+                return {"error": snapshot.error, "source": snapshot.source}
+            return {
+                "snapshot": snapshot,
+                "source": snapshot.source,
+                "error": None,
+            }
+        except Exception as e:
+            logger.warning(f"获取盘中异动数据失败: {e}")
+            return {"error": str(e), "source": "东财 push2ex"}
+
 
 # ---------------------------------------------------------------------------
 # 历史分位数存储
@@ -538,10 +566,30 @@ class SentimentDetector:
 
     def __init__(self, fetcher: Optional[SentimentDataFetcher] = None):
         self.fetcher = fetcher or SentimentDataFetcher()
+        self._nlp_analyzer = FreqWeightedSentimentAnalyzer()
 
     # ------------------------------------------------------------------
     # 公共 API
     # ------------------------------------------------------------------
+
+    def analyze_news_sentiment(
+        self, texts: list[str]
+    ) -> FreqWeightedSentiment:
+        """对新闻文本做 NLP 情感分析（频率权重词典法）。
+
+        可用于对当日资讯标题/摘要做快速情感判定，作为市场情绪指标的
+        补充维度。单条文本调用 analyze()，多条（如同一新闻多来源）
+        调用 analyze_multi() 做跨文本聚合。
+
+        Args:
+            texts: 新闻文本列表（标题/摘要/正文片段均可）
+
+        Returns:
+            FreqWeightedSentiment 包含得分、分类、关键词、转折检测
+        """
+        if len(texts) == 1:
+            return self._nlp_analyzer.analyze(texts[0])
+        return self._nlp_analyzer.analyze_multi(texts)
 
     def detect_market(self, **overrides: float | int) -> MarketSentiment:
         """检测当前大盘情绪 — 拉取实时数据并评估。
@@ -867,6 +915,50 @@ class SentimentDetector:
                 data_source=ivix["source"],
             ))
 
+        # ---- 6b. 盘中异动 (go-stock P0-1) ----
+        changes_data = self.fetcher.fetch_stock_changes()
+        changes_snapshot = None
+        changes_insight = ""
+        if changes_data.get("error"):
+            data_errors.append(f"盘中异动: {changes_data['error']}")
+        else:
+            changes_snapshot = changes_data.get("snapshot")
+            if changes_snapshot is not None:
+                # 异动比 → 情绪增强信号
+                if changes_snapshot.signal == "bullish_bias":
+                    score += 5
+                    greed_signals.append(
+                        f"盘中异动看多占比 {changes_snapshot.bullish_ratio*100:.0f}%（{changes_snapshot.bullish_count}/{changes_snapshot.total_count}）"
+                    )
+                elif changes_snapshot.signal == "bearish_bias":
+                    score -= 8
+                    panic_signals.append(
+                        f"盘中异动看空占比 {(1-changes_snapshot.bullish_ratio)*100:.0f}%（{changes_snapshot.bearish_count}/{changes_snapshot.total_count}）"
+                    )
+
+                if changes_snapshot.top_bullish_stocks:
+                    greed_signals.append(
+                        f"异动活跃标的: {', '.join(changes_snapshot.top_bullish_stocks[:3])}"
+                    )
+
+                changes_insight = changes_snapshot.description
+                if changes_snapshot.signal == "bullish_bias":
+                    changes_insight += "，市场异动偏向积极，短线资金活跃"
+                elif changes_snapshot.signal == "bearish_bias":
+                    changes_insight += "，市场异动偏向消极，注意风险"
+
+                indicators.append(IndicatorSnapshot(
+                    name="盘中异动", en_name="stock_changes",
+                    current_value=changes_snapshot.bullish_ratio * 100, unit="%看多",
+                    signal=(
+                        "greed" if changes_snapshot.signal == "bullish_bias"
+                        else "panic" if changes_snapshot.signal == "bearish_bias"
+                        else "normal"
+                    ),
+                    description=changes_insight,
+                    data_source=changes_data.get("source", "东财 push2ex"),
+                ))
+
         # ---- 7. 主力资金流向 (P1 新增) ----
         fund_flow = self.fetcher.fetch_market_fund_flow()
         if fund_flow.get("error"):
@@ -1027,6 +1119,8 @@ class SentimentDetector:
             limit_pool_insight=limit_pool_insight,
             vix_insight=vix_insight,
             sector_signal_insight=sector_insight,
+            stock_changes_snapshot=changes_snapshot,
+            changes_insight=changes_insight,
         )
 
     # ------------------------------------------------------------------

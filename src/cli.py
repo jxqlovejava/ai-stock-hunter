@@ -3904,9 +3904,44 @@ def cmd_sweep(args: list[str]):
     alerts = mgr.check(quotes)
     sweep_alerts = mgr.scan_watchlist([s["symbol"] for s in watchlist], quotes, context)
 
+    # ── AlertEngine 价位预警（持久化 + 防抖） ──────────────────────
+    from src.routing.alert_engine import (
+        AlertEngine, AlertType, AlertPriority, PriceAlert, get_alert_summary,
+    )
+
+    price_engine = AlertEngine()
+    # 同步持仓止损/止盈预警到 engine
+    price_engine.sync_from_positions()
+    # 为自选股添加涨跌幅预警（±5%）
+    for s in watchlist:
+        sym = s["symbol"]
+        price_engine.add_alert(PriceAlert(
+            symbol=sym,
+            name=s.get("name", sym),
+            alert_type=AlertType.CHANGE_PCT,
+            priority=AlertPriority.MEDIUM,
+            threshold=5.0,
+            direction="cross",
+        ))
+
+    # 检查价位预警
+    def _price_provider(symbol: str) -> dict | None:
+        price = quotes.get(symbol)
+        if price is None:
+            return None
+        ctx = context.get(symbol, {})
+        return {
+            "price": price,
+            "change_pct": ctx.get("change_pct", 0),
+            "name": ctx.get("name", symbol),
+        }
+
+    engine_results = price_engine.check_all(_price_provider)
+    engine_alerts = [r for r in engine_results if r.triggered]
+
     # 输出
     all_alerts = alerts + sweep_alerts
-    if not all_alerts:
+    if not all_alerts and not engine_alerts:
         print("✅ 无预警触发")
     else:
         critical = [a for a in all_alerts if a.severity == "CRITICAL"]
@@ -3920,6 +3955,11 @@ def cmd_sweep(args: list[str]):
             print(f"\n⚠️ 警告 ({len(warnings)}):")
             for a in warnings:
                 print(f"  🟡 {a.alert_type}: {a.message}")
+
+        # AlertEngine 价位预警
+        if engine_alerts:
+            print(f"\n💹 价位预警 ({len(engine_alerts)}):")
+            print(get_alert_summary(engine_results))
 
     # 概览
     print(f"\n📊 自选股概览:")
