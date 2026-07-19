@@ -16,6 +16,19 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# 东财 API 直连 Session（绕过系统代理如 Clash，避免 ProxyError）
+_EM_SESSION = requests.Session()
+_EM_SESSION.trust_env = False
+_EM_SESSION.proxies = {"http": None, "https": None}
+_EM_SESSION.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://quote.eastmoney.com/",
+})
+
 # 东财异动 API
 _EM_CHANGES_URL = "https://push2ex.eastmoney.com/getAllStockChanges"
 
@@ -136,16 +149,8 @@ class StockChangesFetcher:
         )
 
         try:
-            resp = requests.get(
+            resp = _EM_SESSION.get(
                 url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    "Referer": "https://quote.eastmoney.com/",
-                },
                 timeout=StockChangesFetcher._REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
