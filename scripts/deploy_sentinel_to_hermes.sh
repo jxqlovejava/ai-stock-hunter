@@ -85,7 +85,7 @@ EOF
 chmod +x /home/ubuntu/.hermes/scripts/baize_sentinel.py"
 
 # 分频道薄入口（Hermes 只配 script 名、不便带参数时用）
-for mode in alert funds open close sentiment watchlist; do
+for mode in alert funds open close sentiment watchlist entry_signal; do
   "${SSH[@]}" "$HOST" "cat > /home/ubuntu/.hermes/scripts/baize_${mode}.py <<EOFMODE
 #!/usr/bin/env python3
 import os, sys
@@ -109,10 +109,17 @@ echo "--- funds ---"
 "${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --mode funds --force 2>&1 | head -40"
 
 echo ""
+echo "==> 同步 kline_cache（日线缓存，供入场信号/五法使用）"
+if [[ -d "$ROOT/data/kline_cache" ]]; then
+  "${SSH[@]}" "$HOST" "mkdir -p '$REMOTE_ROOT/data/kline_cache'"
+  "${SCP[@]}" "$ROOT/data/kline_cache"/*.csv "$HOST:$REMOTE_ROOT/data/kline_cache/" 2>/dev/null || echo "  (无 csv 缓存文件，跳过)"
+fi
+
+echo ""
 echo "✅ 部署完成"
 echo "持仓: $REMOTE_POS"
-echo "入口: baize_sentinel.py --mode <alert|funds|open|close|sentiment>"
-echo "或:   baize_alert.py / baize_funds.py / baize_open.py / baize_close.py / baize_sentiment.py"
+echo "入口: baize_sentinel.py --mode <alert|funds|open|close|sentiment|entry_signal>"
+echo "或:   baize_alert.py / baize_funds.py / baize_open.py / baize_close.py / baize_sentiment.py / baize_entry_signal.py"
 echo ""
 echo "建议 Hermes cron（人话推送，分频道）:"
 echo "  1) 盘中持仓  */2 9-11,13-14 * * 1-5   → baize_alert.py"
@@ -120,3 +127,4 @@ echo "  2) 两融+自选  0 10,14 * * 1-5          → baize_funds.py"
 echo "  3) 开盘前     15 9 * * 1-5             → baize_open.py"
 echo "  4) 收盘后     10 15 * * 1-5            → baize_close.py"
 echo "  5) 情绪极端   */15 9-14 * * 1-5        → baize_sentiment.py"
+echo "  6) 入场信号   30 10,14 * * 1-5          → baize_entry_signal.py"

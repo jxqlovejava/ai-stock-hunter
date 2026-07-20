@@ -43,6 +43,7 @@ class ChannelConfig:
     enable_margin: bool = True
     enable_watchlist: bool = True
     enable_context: bool = True
+    kline_cache_dir: Path = Path("data/kline_cache")
 
 
 def _now_bj() -> datetime:
@@ -597,6 +598,189 @@ def run_sentiment_extreme(cfg: ChannelConfig) -> str:
     return "\n".join(lines)
 
 
+# ── 包5：入场信号监控（自选股融资止跌回升 + 下影线缩量）───────────
+
+
+def run_entry_signal_channel(cfg: ChannelConfig) -> str:
+    """监控自选股入场信号：①融资余额止跌回升 ②日线下影线+缩量。"""
+    stocks = _load_watchlist(cfg.watchlist_path)
+    if not stocks:
+        return ""
+
+    # 只盯配置了 entry_signals 的标的
+    monitored: list[dict] = []
+    for s in stocks:
+        es = s.get("entry_signals")
+        if isinstance(es, dict) and es:
+            monitored.append(s)
+
+    if not monitored:
+        return ""
+
+    store = SentinelStateStore(cfg.state_path)
+    now = _now_bj().timestamp()
+    day = _now_bj().strftime("%Y-%m-%d")
+
+    hits: list[str] = []
+    for s in monitored:
+        sym = str(s.get("symbol") or "")
+        name = str(s.get("name") or sym)
+        es = s.get("entry_signals") or {}
+        reasons: list[str] = []
+
+        # ① 融资余额止跌回升
+        if es.get("margin_reversal"):
+            mr = _check_margin_reversal(sym, name)
+            if mr:
+                reasons.append(mr)
+
+        # ② 日线下影线 + 缩量
+        if es.get("hammer_volume_contract"):
+            hv = _check_hammer_volume(sym, name, cfg)
+            if hv:
+                reasons.append(hv)
+
+        if not reasons:
+            continue
+
+        ck = f"entry_signal:{sym}:{day}"
+        if not cfg.force and store.is_cooling(ck, now):
+            continue
+        store.set_cooling(ck, cfg.cool_watchlist, now)
+
+        quotes, _ = fetch_quotes([sym], names={sym: name})
+        q = quotes.get(sym)
+        price_str = f" @ {q.price:.2f}" if q and q.price > 0 else ""
+        hits.append(
+            f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {r}" for r in reasons)
+        )
+
+    store.prune_cooling(now)
+    store.save()
+
+    if not hits:
+        return ""
+
+    body = "\n\n".join(hits)
+    return (
+        f"【入场信号监测】{day}\n\n{body}\n\n"
+        "⚠️ 信号仅为条件触发，不构成买入建议。入场前请确认：\n"
+        "① 管道完整诊断通过 ② 止损位已设定 ③ 仓位不超限"
+    )
+
+
+def _check_margin_reversal(sym: str, name: str) -> str | None:
+    """检测融资余额是否从连续下降转为回升。返回人话描述或 None。"""
+    try:
+        from src.game_theory.margin import get_margin_analyzer
+
+        ma = get_margin_analyzer()
+        hist = ma.load_history(sym)
+        if not hist or len(hist) < 5:
+            return None
+
+        # 取最近 5 个交易日的融资余额
+        recent = hist[-5:]
+        balances = [h.margin_balance for h in recent]
+        dates = [h.date for h in recent]
+
+        # 需要前 3-4 天中有 ≥2 天下降 AND 最新一天上升
+        if len(balances) < 4:
+            return None
+
+        prev_diffs = [
+            balances[i] - balances[i - 1] for i in range(1, len(balances) - 1)
+        ]
+        latest_diff = balances[-1] - balances[-2]
+
+        # 条件：此前 ≥2 天连续下降 + 最新一天回升 > 0.3%
+        down_count = sum(1 for d in prev_diffs if d < -0.01)  # 下降超 100 万
+        if down_count >= 2 and latest_diff > 0.005:  # 回升超 500 万
+            pct = (latest_diff / balances[-2]) * 100
+            return (
+                f"💰 融资余额止跌回升：连续下降后 {dates[-1]} 回升 {latest_diff:.2f}亿（+{pct:.2f}%）\n"
+                f"   近5日：{' → '.join(f'{b:.1f}亿' for b in balances)}"
+            )
+
+        # 备用信号：余额在低位企稳（2 天不降）
+        if down_count >= 2 and abs(latest_diff) <= 0.003:
+            return (
+                f"💰 融资余额初步企稳：{dates[-1]} 变化 {latest_diff:+.3f}亿（不再下降）\n"
+                f"   近5日：{' → '.join(f'{b:.1f}亿' for b in balances)}"
+            )
+
+        return None
+    except Exception:
+        return None
+
+
+def _check_hammer_volume(sym: str, name: str, cfg: ChannelConfig) -> str | None:
+    """检测日线是否出现长下影线+缩量。返回人话描述或 None。"""
+    try:
+        from src.alphas.macd_kdj import load_kline_cache
+
+        # 先尝试 cfg 缓存目录
+        cache_dir = getattr(cfg, "kline_cache_dir", Path("data/kline_cache"))
+        if isinstance(cache_dir, str):
+            cache_dir = Path(cache_dir)
+        df = load_kline_cache(sym, cache_dir)
+
+        # 回退 Hermes 路径
+        if df is None or len(df) < 5:
+            alt = Path.home() / "ai-stock-hunter" / "data" / "kline_cache"
+            if alt.exists():
+                df = load_kline_cache(sym, alt)
+
+        if df is None or len(df) < 5:
+            return None
+
+        # 取最近 5 根日线
+        recent = df.tail(5)
+        if len(recent) < 5:
+            return None
+
+        latest = recent.iloc[-1]
+        o, h, l, c, v = (
+            float(latest["open"]),
+            float(latest["high"]),
+            float(latest["low"]),
+            float(latest["close"]),
+            float(latest["volume"]),
+        )
+
+        # 计算下影线和上影线
+        body_bottom = min(o, c)
+        body_top = max(o, c)
+        lower_shadow = body_bottom - l
+        upper_shadow = h - body_top
+        body = abs(c - o)
+        real_body = max(body, 0.001)  # 避免除零
+
+        # 条件1：下影线显著长（≥ 2× 上影线 OR ≥ 1.5× 实体）
+        hammer_ok = (lower_shadow >= 2.0 * max(upper_shadow, 0.001)) or (
+            lower_shadow >= 1.5 * real_body
+        )
+
+        # 条件2：缩量（成交量 < 近5日均量的 60%）
+        avg_vol = float(recent.iloc[:-1]["volume"].mean())
+        vol_contract = v < avg_vol * 0.6
+
+        if not (hammer_ok and vol_contract):
+            return None
+
+        vol_pct = (v / avg_vol) * 100 if avg_vol > 0 else 100
+        lower_pct = (lower_shadow / real_body * 100) if real_body > 0 else 0
+        return (
+            f"📊 下影线+缩量：下影线/实体={lower_pct:.0f}% "
+            f"| 量能={vol_pct:.0f}%（仅为近5日均量{vol_pct:.0f}%）\n"
+            f"   O={o:.2f} H={h:.2f} L={l:.2f} C={c:.2f} "
+            f"| 下影={lower_shadow:.2f} 实体={body:.2f}"
+        )
+
+    except Exception:
+        return None
+
+
 # ── 统一入口 ─────────────────────────────────────────────────────
 
 
@@ -630,6 +814,8 @@ def run_channel(mode: str, cfg: ChannelConfig) -> str:
         return run_briefing(cfg, "close")
     if mode in ("sentiment", "extreme"):
         return run_sentiment_extreme(cfg)
+    if mode in ("entry_signal", "entry", "signal"):
+        return run_entry_signal_channel(cfg)
     # 未知 → 持仓
     return run_position_channel(cfg)
 

@@ -14,6 +14,7 @@ Hermes 约定:
   open       开盘前简报（包3）
   close      收盘简报（包3）
   sentiment  情绪/北向极端（包4）
+  entry_signal  入场信号监测（融资回升+下影缩量）
   auto       按北京时间粗选
 """
 
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--mode",
         default=os.environ.get("BAIZE_SENTINEL_MODE", "alert"),
-        help="alert|funds|margin|watchlist|open|close|sentiment|auto",
+        help="alert|funds|margin|watchlist|entry_signal|open|close|sentiment|auto",
     )
     parser.add_argument("--positions", type=Path, default=None)
     parser.add_argument("--state", type=Path, default=None)
@@ -102,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
         enable_margin=cfg_dict.get("enable_margin", True),
         enable_watchlist=cfg_dict.get("enable_watchlist", True),
         enable_context=cfg_dict.get("enable_context", True),
+        kline_cache_dir=Path(
+            cfg_dict.get("kline_cache_dir", "data/kline_cache")
+        ),
     )
 
     mode = (args.mode or "alert").lower()

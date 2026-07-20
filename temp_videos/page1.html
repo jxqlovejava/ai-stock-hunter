@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>如何看待下跌结束，只看这两个止跌标准</title>
+  <link rel="icon" type="image/png" href="/favicon.png?v=3" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
+  <link rel="stylesheet" href="/highlight.css" id="hl-theme-light">
+  <link rel="stylesheet" href="/highlight-dark.css" id="hl-theme-dark" disabled>
+  <style>
+    :root {
+      --bg: #f5f5f5; --surface: #fff; --text: #1a1a1a;
+      --text-secondary: #888; --text-tertiary: #aaa;
+      --accent: #5a5a5a; --accent-bg: #f0f0f0;
+      --ai-fab-bg: rgba(255,255,255,0.72);
+      --ai-fab-fg: #6c63ff;
+      --ai-fab-shadow: 0 4px 14px rgba(15,23,42,0.10), 0 1px 3px rgba(15,23,42,0.06);
+      --ai-fab-shadow-hover: 0 8px 22px rgba(108,99,255,0.18), 0 2px 6px rgba(15,23,42,0.08);
+      --border: #eee; --shadow-sm: rgba(0,0,0,0.05); --shadow-md: rgba(0,0,0,0.1);
+      --code-bg: #f2f2f2; --code-color: #d63384;
+    }
+    [data-theme="dark"] {
+      --bg: #0f0f0f; --surface: #1a1a1a; --text: #e8e8e8;
+      --text-secondary: #b0b0b0; --text-tertiary: #888;
+      --accent: #b0b0b0; --accent-bg: #2a2a2a;
+      --ai-fab-bg: rgba(28,28,30,0.68);
+      --ai-fab-fg: #b4a7ff;
+      --ai-fab-shadow: 0 4px 16px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.25);
+      --ai-fab-shadow-hover: 0 8px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(180,167,255,0.16);
+      --border: #3a3a3a; --shadow-sm: rgba(0,0,0,0.3); --shadow-md: rgba(0,0,0,0.4);
+      --code-bg: #2d2d2d; --code-color: #ff8fab;
+    }
+    [data-theme="dark"] .sort-btn.active,
+    [data-theme="dark"] .sort-btn.active:hover,
+    [data-theme="dark"] .sort-btn.active:focus,
+    [data-theme="dark"] .sort-btn.active:active {
+      background: var(--accent-bg); color: var(--accent); border-color: var(--accent-bg);
+    }
+    @keyframes skeleton-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.7; } }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; overscroll-behavior-x: none; }
+    .page-wrapper { overflow-x: hidden; position: relative; min-height: 100vh; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.7;
+      -webkit-font-smoothing: antialiased; transition: background 0.3s ease, color 0.3s ease;
+    }
+    .container { max-width: 720px; margin: 0 auto; padding: 0 0 40px; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; padding: max(8px, env(safe-area-inset-top)) 16px 12px; margin-bottom: 0; }
+    .theme-btn, .refresh-btn {
+      width: 36px; height: 36px; border: none; border-radius: 50%;
+      background: transparent; color: var(--text-secondary); cursor: pointer;
+      display: flex; align-items: center; justify-content: center; transition: color 0.2s;
+    }
+    .theme-btn:hover, .refresh-btn:hover { color: var(--text); }
+    .article-card { background: transparent; border-radius: 0; padding: 0; box-shadow: none; }
+    .article-header { margin-bottom: 24px; padding: 0 20px; border-bottom: none; }
+    .article-title { font-size: 26px; font-weight: 700; line-height: 1.25; color: var(--text); margin-bottom: 16px; word-break: break-word; }
+    .article-meta { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-secondary); }
+    .article-meta .avatar { background: var(--border); width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+    .article-meta .author-info { display: flex; flex-direction: column; }
+    .article-meta .author-name { font-weight: 400; color: var(--text); font-size: 15px; }
+    .article-meta .author-handle { color: var(--text-tertiary); font-size: 13px; }
+    .article-meta .divider { color: var(--border); }
+    .article-meta .date { color: var(--text-tertiary); font-size: 13px; }
+    .article-content { font-size: 17px; line-height: 1.7; color: var(--text); word-break: break-word; overflow-wrap: break-word; overflow-x: auto; padding: 0 16px; }
+    .article-content table { max-width: 100%; word-break: break-all; }
+    .article-content p { margin-bottom: 1.1em; }
+    .article-content a { color: var(--accent); text-decoration: none; }
+    .article-content a:hover { text-decoration: underline; }
+    .article-content strong { font-weight: 700; color: var(--text); }
+    .header-img { display: block; width: 100%; height: auto; margin: 0 0 20px; border-radius: 8px; box-shadow: 0 4px 12px var(--shadow-sm); }
+    .tweet-inline-img { display: block; width: 100%; height: auto; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 12px var(--shadow-sm); }
+    .tweet-inline-video { display: block; width: 100%; max-height: 480px; border-radius: 8px; margin: 20px 0; background: #000; box-shadow: 0 4px 12px var(--shadow-sm); }
+    [data-theme="dark"] .tweet-inline-img,
+    [data-theme="dark"] .header-img { opacity: 0.96; }
+    .article-footer { margin-top: 32px; padding: 0 20px; border-top: none; display: flex; justify-content: space-between; align-items: center; }
+    .source-link { font-size: 14px; color: var(--accent); text-decoration: none; }
+    .source-link:hover { text-decoration: underline; }
+    .back-link {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--surface); color: var(--text-secondary); text-decoration: none;
+      box-shadow: 0 1px 4px var(--shadow-sm);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .back-link:hover { color: var(--text); }
+    .back-link svg { width: 20px; height: 20px; }
+    .article-header .stats-bar { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+    .stats-bar .stat { display: inline-flex; align-items: center; gap: 3px; }
+
+    /* ---- GFM: Headings ---- */
+    .article-content h1, .article-content h2, .article-content h3,
+    .article-content h4, .article-content h5, .article-content h6 {
+      margin: 28px 0 16px; line-height: 1.3; color: var(--text);
+    }
+    .article-content h1 { font-size: 1.7em; font-weight: 700; padding-bottom: 0; border-bottom: none; }
+    .article-content h2 { font-size: 1.4em; font-weight: 600; padding-bottom: 0; border-bottom: none; }
+    .article-content h3 { font-size: 1.2em; font-weight: 600; }
+    .article-content h4 { font-size: 1.05em; font-weight: 600; }
+    .article-content h5 { font-size: 1em; font-weight: 600; }
+    .article-content h6 { font-size: 0.95em; font-weight: 600; color: var(--text-secondary); }
+
+    /* ---- GFM: Lists ---- */
+    .article-content ul, .article-content ol { padding-left: 1.75em; margin-bottom: 0.8em; }
+    .article-content li { margin-bottom: 8px; }
+    .article-content li > ul, .article-content li > ol { margin-bottom: 0; margin-top: 4px; }
+    .article-content ul { list-style-type: disc; }
+    .article-content ul ul { list-style-type: circle; }
+    .article-content ul ul ul { list-style-type: square; }
+
+    /* ---- GFM: Task lists ---- */
+    .article-content input[type="checkbox"] { margin-right: 8px; accent-color: var(--accent); }
+
+    /* ---- GFM: Code ---- */
+    .article-content code {
+      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 0.9em;
+      color: var(--code-color);
+    }
+    .article-content pre {
+      background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+      overflow-x: auto; margin-bottom: 0.8em; line-height: 1.5;
+    }
+    .article-content pre code {
+      background: none; padding: 0; border-radius: 0; color: inherit; font-size: 0.85em;
+    }
+    /* WeChat code-snippet (legacy HTML before normalizeWechatCodeSnippets):
+       hide line-number <ul><li> discs and force each <code> line onto its own row */
+    .article-content .code-snippet__line-index,
+    .article-content ul.code-snippet__line-index {
+      display: none !important;
+      list-style: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .article-content .code-snippet__fix {
+      margin: 0 0 0.8em;
+      overflow: hidden;
+    }
+    .article-content .code-snippet__fix pre,
+    .article-content pre[class*="code-snippet"] {
+      margin-bottom: 0;
+    }
+    .article-content .code-snippet__fix pre > code,
+    .article-content pre[class*="code-snippet"] > code {
+      display: block;
+      background: none;
+      padding: 0;
+      border-radius: 0;
+      color: inherit;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ---- GFM: Blockquotes ---- */
+    .article-content blockquote {
+      margin: 0 0 1.1em; padding: 10px 16px; color: var(--text-secondary);
+      border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 6px 6px 0;
+    }
+    .article-content blockquote p:last-child { margin-bottom: 0; }
+
+    /* ---- GFM: Tables ---- */
+    .article-content table { border-collapse: collapse; width: 100%; margin-bottom: 0.8em; font-size: 0.95em; }
+    .article-content th, .article-content td {
+      border: 1px solid var(--border); padding: 8px 12px; text-align: left;
+    }
+    .article-content th { background: var(--surface); font-weight: 600; }
+    .article-content tr:nth-child(even) { background: var(--surface); }
+
+    /* ---- GFM: Horizontal rule ---- */
+    .article-content hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+
+    @media (min-width: 769px) {
+      .article-title { font-size: 30px; }
+      .article-content { font-size: 18px; padding: 0 20px; }
+      .article-content pre { padding: 16px; }
+      .article-content pre code { font-size: 0.875em; }
+      .article-header { padding: 0 20px; }
+      .article-footer { padding: 0 20px; }
+    }
+    @media (max-width: 768px) and (min-width: 481px) {
+      .article-content { font-size: 17.5px; }
+    }
+    @media (max-width: 480px) {
+      .article-header { padding: 0 16px; }
+      .article-content { padding: 0 16px; }
+      .article-footer { padding: 0 16px; }
+      .header-img { margin: 0 0 16px; }
+      .article-title { font-size: 24px; }
+      .article-content pre { padding: 12px; font-size: 0.825em; }
+    }
+    .share-menu-wrap { position: relative; display: inline-flex; align-items: center; }
+    .share-btn {
+      width: 32px; height: 32px; border: none; border-radius: 50%;
+      background: transparent; color: var(--text-secondary); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: all 0.2s; line-height: 0;
+      -webkit-appearance: none; appearance: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .share-btn:hover { color: var(--text); }
+    .share-menu {
+      display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 10050;
+      min-width: 148px; padding: 6px 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; box-shadow: 0 8px 28px var(--shadow-md, rgba(0,0,0,0.12));
+      overflow: hidden;
+    }
+    .share-menu.open { display: block; }
+    .share-menu-item {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 12px 16px; border: none; background: transparent;
+      color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
+      font-family: inherit; line-height: 1.3;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .share-menu-item:hover, .share-menu-item:active { background: var(--bg); }
+    .share-menu-item svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-secondary); }
+    .share-menu-backdrop {
+      display: none; position: fixed; inset: 0; z-index: 10040; background: transparent;
+    }
+    .share-menu-backdrop.open { display: block; }
+    .share-toast {
+      position: fixed; left: 50%; bottom: max(48px, env(safe-area-inset-bottom));
+      transform: translateX(-50%) translateY(12px); z-index: 11000;
+      padding: 10px 18px; border-radius: 20px;
+      background: rgba(0,0,0,0.82); color: #fff; font-size: 14px;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+      white-space: nowrap;
+    }
+    .share-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    [data-theme="dark"] .share-toast { background: rgba(255,255,255,0.92); color: #111; }
+    .share-overlay {
+      display: none; position: fixed; inset: 0; z-index: 10000;
+      background: rgba(0,0,0,0.6); flex-direction: column;
+      justify-content: center; align-items: center;
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    }
+    .share-preview {
+      background: var(--surface); border-radius: 12px;
+      width: calc(100vw - 32px); max-width: 420px; max-height: 85vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.3);
+    }
+    .share-preview-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .share-close-btn {
+      width: 28px; height: 28px; border: none; border-radius: 50%;
+      background: transparent; color: var(--text-secondary); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .share-close-btn:hover { color: var(--text); }
+    .share-preview-body {
+      flex: 1; overflow-y: auto; padding: 12px;
+      display: flex; justify-content: center; align-items: flex-start;
+    }
+    .share-preview-body img { width: 100%; height: auto; border-radius: 4px; }
+    .share-loading {
+      display: flex; align-items: center; gap: 8px;
+      padding: 40px 0; color: var(--text-secondary); font-size: 14px;
+    }
+    .share-preview-footer {
+      padding: 16px 20px; border-top: 1px solid var(--border);
+      display: flex; justify-content: center;
+    }
+    .share-save-btn {
+      padding: 10px 32px; border: none; border-radius: 20px;
+      background: var(--accent); color: #fff; font-size: 15px;
+      cursor: pointer; font-weight: 500; transition: opacity 0.2s;
+    }
+    .share-save-btn:hover { opacity: 0.85; }
+    .share-save-btn:disabled { opacity: 0.4; cursor: default; }
+    .theme-btn:focus-visible,
+    .refresh-btn:focus-visible,
+    .share-btn:focus-visible,
+    .share-menu-item:focus-visible,
+    .back-link:focus-visible,
+    .share-save-btn:focus-visible,
+    .share-close-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .ask-ai-btn {
+      position: fixed; bottom: 24px; right: 20px; z-index: 9999;
+      width: 46px; height: 46px; border-radius: 50%;
+      border: none;
+      background: var(--ai-fab-bg);
+      color: var(--ai-fab-fg);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--ai-fab-shadow);
+      backdrop-filter: blur(14px) saturate(1.15);
+      -webkit-backdrop-filter: blur(14px) saturate(1.15);
+      transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+                  box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+      text-decoration: none;
+    }
+    .ask-ai-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--ai-fab-shadow-hover);
+    }
+    .ask-ai-btn:active { transform: translateY(0) scale(0.96); }
+    .ask-ai-btn:focus-visible { outline: 2px solid var(--ai-fab-fg); outline-offset: 3px; }
+    .ask-ai-btn svg { width: 22px; height: 22px; display: block; }
+    @media (max-width: 480px) {
+      .ask-ai-btn { bottom: 20px; right: 14px; width: 44px; height: 44px; }
+      .ask-ai-btn svg { width: 20px; height: 20px; }
+    }
+    /* ---- Image lightbox ---- */
+    .img-lightbox {
+      position: fixed; inset: 0; z-index: 20000;
+      background: #000; display: none;
+      flex-direction: column; justify-content: center; align-items: center;
+      overflow: hidden; touch-action: none;
+    }
+    .img-lightbox.show { display: flex; }
+    .img-lightbox-track {
+      display: flex; height: 100%; width: 100%;
+      transition: transform 0.25s ease;
+      will-change: transform;
+    }
+    .img-lightbox-item {
+      flex: 0 0 100%; height: 100%;
+      display: flex; justify-content: center; align-items: center;
+      position: relative;
+    }
+    .img-lightbox-item img {
+      max-width: 100%; max-height: 100%;
+      object-fit: contain;
+      user-select: none; -webkit-user-drag: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .img-lightbox-close {
+      position: absolute; top: max(12px, env(safe-area-inset-top)); right: 16px; z-index: 20001;
+      width: 40px; height: 40px; border: none; border-radius: 50%;
+      background: rgba(255,255,255,0.15); color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .img-lightbox-close:hover { background: rgba(255,255,255,0.25); }
+    .img-lightbox-close svg { width: 22px; height: 22px; }
+    .img-lightbox-counter {
+      position: absolute; top: max(20px, env(safe-area-inset-top)); left: 0; right: 0;
+      text-align: center; color: rgba(255,255,255,0.85); font-size: 14px;
+      pointer-events: none; z-index: 20001;
+    }
+    .img-lightbox-hint {
+      position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 0; right: 0;
+      text-align: center; color: rgba(255,255,255,0.45); font-size: 12px;
+      pointer-events: none; z-index: 20001;
+    }
+  </style>
+</head>
+<body>
+<div class="page-wrapper">
+<div class="container">
+    <div class="top-bar">
+    <a href="/" class="back-link" title="返回列表" onclick="history.length>1?history.back():null;return false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12H6"/><path d="M12 5l-7 7 7 7"/></svg>
+    </a>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <div class="share-menu-wrap">
+        <span class="share-btn" id="shareBtn" onclick="toggleShareMenu(event)" title="分享" role="button" aria-haspopup="menu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+        <div class="share-menu" id="shareMenu" role="menu" aria-label="分享选项">
+          <button type="button" class="share-menu-item" role="menuitem" onclick="copyArticleLink()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            复制链接
+          </button>
+          <button type="button" class="share-menu-item" role="menuitem" onclick="shareAsLongImage()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            分享长图
+          </button>
+        </div>
+      </div>
+      <button class="theme-btn" onclick="toggleTheme()" title="切换主题">
+        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+    </div>
+    <div class="share-menu-backdrop" id="shareMenuBackdrop" onclick="closeShareMenu()" aria-hidden="true"></div>
+    <div class="share-toast" id="shareToast" role="status" aria-live="polite"></div>
+  </div>
+    <article class="article-card">
+      
+
+      <header class="article-header">
+        <h1 class="article-title">如何看待下跌结束，只看这两个止跌标准</h1>
+        <div class="article-meta">
+          <img src="../avatars/twitter_owudjca1t_比特迪克.jpg" alt="" class="avatar" loading="lazy" />
+          <div class="author-info">
+            <span class="author-name">比特迪克</span>
+            <span class="author-handle">@owudjca1t</span>
+          </div>
+          <span class="divider">|</span>
+          <span class="date">2026/07/16 14:21</span>
+        </div>
+        <div class="stats-bar">
+          <span class="stat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span>27</span></span>
+          <span class="stat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg><span>79</span></span>
+          <span class="stat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><span>746</span></span>
+        </div>
+      </header>
+      <div class="article-content"><p>如何看待下跌结束，只看这两个止跌标准</p>
+
+<video src="../videos/owudjca1t_2077639715931783367_vid0.mp4" controls preload="metadata" class="tweet-inline-video"></video></div>
+      <div class="article-footer">
+        <a href="https://x.com/owudjca1t/status/2077639715931783367" class="source-link" target="_blank" rel="noopener">原文：https://x.com/owudjca1t/status/2077639715931783367</a>
+      </div>
+    </article>
+<div class="share-overlay" id="shareOverlay" style="display:none">
+  <div class="share-preview">
+    <div class="share-preview-header">
+      <span style="font-size:15px;font-weight:600;color:var(--text)">分享长图</span>
+      <button class="share-close-btn" onclick="closeSharePreview()" title="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="share-preview-body" id="sharePreviewBody">
+      <div class="share-loading"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> 正在生成预览...</div>
+    </div>
+    <div class="share-preview-footer">
+      <button class="share-save-btn" id="shareSaveBtn" onclick="saveShareImage()" disabled>保存图片</button>
+    </div>
+  </div>
+</div>
+<div class="img-lightbox" id="imgLightbox">
+  <div class="img-lightbox-counter" id="imgLightboxCounter"></div>
+  <button class="img-lightbox-close" onclick="closeImgLightbox()" aria-label="关闭">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <div class="img-lightbox-track" id="imgLightboxTrack"></div>
+  <div class="img-lightbox-hint">左右滑动切换 · 下拉关闭</div>
+</div>
+<script>
+// Disable pinch-zoom and page-level horizontal swipe, keep vertical scroll
+(function() {
+  var lastTouchEnd = 0;
+  document.addEventListener('touchstart', function(e) {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchmove', function(e) {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchend', function(e) {
+    var now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, false);
+  document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
+  document.addEventListener('gesturechange', function(e) { e.preventDefault(); });
+  document.addEventListener('gestureend', function(e) { e.preventDefault(); });
+})();
+var title = "如何看待下跌结束，只看这两个止跌标准";
+var _shareImageDataUrl = null;
+var _html2canvasLoaded = false;
+var _shareToastTimer = 0;
+function _loadHtml2canvas(callback) {
+  if (_html2canvasLoaded) { callback(); return; }
+  if (typeof html2canvas !== 'undefined') { _html2canvasLoaded = true; callback(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+  s.onload = function() { _html2canvasLoaded = true; callback(); };
+  s.onerror = function() {
+    var pb = document.getElementById('sharePreviewBody');
+    if (pb) pb.innerHTML = '<div class="share-loading" style="color:#fa5151">截图库加载失败，请检查网络后刷新重试</div>';
+  };
+  document.head.appendChild(s);
+}
+function showShareToast(msg) {
+  var t = document.getElementById('shareToast');
+  if (!t) return;
+  t.textContent = msg || '';
+  t.classList.add('show');
+  clearTimeout(_shareToastTimer);
+  _shareToastTimer = setTimeout(function() { t.classList.remove('show'); }, 1600);
+}
+function toggleShareMenu(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  var menu = document.getElementById('shareMenu');
+  if (!menu) return;
+  if (menu.classList.contains('open')) closeShareMenu();
+  else openShareMenu();
+}
+function openShareMenu() {
+  var menu = document.getElementById('shareMenu');
+  var backdrop = document.getElementById('shareMenuBackdrop');
+  var btn = document.getElementById('shareBtn');
+  if (menu) menu.classList.add('open');
+  if (backdrop) backdrop.classList.add('open');
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+function closeShareMenu() {
+  var menu = document.getElementById('shareMenu');
+  var backdrop = document.getElementById('shareMenuBackdrop');
+  var btn = document.getElementById('shareBtn');
+  if (menu) menu.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function copyArticleLink() {
+  var url = window.location.href.split('#')[0];
+  closeShareMenu();
+  function ok() { showShareToast('链接已复制'); }
+  function fail() {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = url;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      var copied = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (copied) { ok(); return; }
+    } catch (err) {}
+    showShareToast('复制失败，请手动复制地址栏');
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(ok).catch(fail);
+  } else {
+    fail();
+  }
+}
+function shareAsLongImage() {
+  closeShareMenu();
+  openSharePreview();
+}
+function openSharePreview() {
+  var overlay = document.getElementById('shareOverlay');
+  if (!overlay) return;
+  closeShareMenu();
+  overlay.style.display = 'flex';
+  var previewBody = document.getElementById('sharePreviewBody');
+  if (!previewBody) return;
+  previewBody.innerHTML = '<div class="share-loading">正在生成预览...</div>';
+  var saveBtn = document.getElementById('shareSaveBtn');
+  if (saveBtn) saveBtn.disabled = true;
+  _loadHtml2canvas(function() {
+    var card = document.querySelector('.article-card');
+    if (!card) { previewBody.innerHTML = '<div class="share-loading" style="color:#fa5151">未找到文章内容</div>'; return; }
+    var bgColor = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f5f5f5';
+    html2canvas(card, {
+      backgroundColor: bgColor,
+      scale: 2,
+      useCORS: true,
+      logging: false
+    }).then(function(canvas) {
+      _shareImageDataUrl = canvas.toDataURL('image/png');
+      previewBody.innerHTML = '<img src="' + _shareImageDataUrl + '" alt="预览" style="width:100%;height:auto;display:block">';
+      var btn = document.getElementById('shareSaveBtn');
+      if (btn) btn.disabled = false;
+    }).catch(function(err) {
+      previewBody.innerHTML = '<div class="share-loading" style="color:#fa5151">生成预览失败，请重试</div>';
+    });
+  });
+}
+function closeSharePreview() {
+  var overlay = document.getElementById('shareOverlay');
+  if (overlay) overlay.style.display = 'none';
+  var previewBody = document.getElementById('sharePreviewBody');
+  if (previewBody) previewBody.innerHTML = '<div class="share-loading">正在生成预览...</div>';
+  var saveBtn = document.getElementById('shareSaveBtn');
+  if (saveBtn) saveBtn.disabled = true;
+  _shareImageDataUrl = null;
+}
+function saveShareImage() {
+  if (!_shareImageDataUrl) return;
+  var filename = title.substring(0, 40).replace(/[^a-zA-Z0-9_-]/g, '') + '.png';
+  var a = document.createElement('a');
+  a.href = _shareImageDataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+(function(){
+  var t=localStorage.getItem('theme');
+  if(t) document.documentElement.setAttribute('data-theme',t);
+  else if(window.matchMedia('(prefers-color-scheme:dark)').matches) document.documentElement.setAttribute('data-theme','dark');
+  updateThemeIcon();
+})();
+function refreshPage(btn) {
+  if (btn && btn.classList) {
+    btn.classList.add('spinning');
+    setTimeout(function() { location.reload(); }, 180);
+  } else {
+    location.reload();
+  }
+}
+function toggleTheme() {
+  var c = document.documentElement.getAttribute('data-theme');
+  var n = c === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', n);
+  localStorage.setItem('theme', n);
+  updateThemeIcon();
+}
+function updateThemeIcon() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var s = document.getElementById('theme-icon-sun');
+  var m = document.getElementById('theme-icon-moon');
+  if (s) s.style.display = isDark ? 'none' : '';
+  if (m) m.style.display = isDark ? '' : 'none';
+  var hlLight = document.getElementById('hl-theme-light');
+  var hlDark = document.getElementById('hl-theme-dark');
+  if (hlLight) hlLight.disabled = isDark;
+  if (hlDark) hlDark.disabled = !isDark;
+}
+// Set AI button href + prefetch recommended questions while user reads article
+(function() {
+  function setAiHref() {
+    var ctx = decodeURIComponent(window.location.pathname).replace(/^\/articles\//, '');
+    var btn = document.getElementById('askAiBtn');
+    if (btn && ctx) btn.href = '/qa?context=' + encodeURIComponent(ctx) + '&new=1';
+    // Warm suggestions cache so /qa?context=… opens with questions ready
+    if (ctx && !window.__qaSuggestPrefetched) {
+      window.__qaSuggestPrefetched = true;
+      try {
+        fetch('/api/qa/suggestions?context=' + encodeURIComponent(ctx), {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        }).catch(function() {});
+      } catch (e) {}
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setAiHref);
+  } else {
+    setAiHref();
+  }
+})();
+// ---- Image lightbox ----
+(function() {
+  var lightbox = document.getElementById('imgLightbox');
+  var track = document.getElementById('imgLightboxTrack');
+  var counter = document.getElementById('imgLightboxCounter');
+  var images = [];
+  var current = 0;
+  var startX = 0, startY = 0, currentX = 0, currentY = 0;
+  var isDragging = false;
+  var startTime = 0;
+
+  function openImgLightbox(index) {
+    if (!images.length) return;
+    current = Math.max(0, Math.min(index, images.length - 1));
+    render();
+    lightbox.classList.add('show');
+    document.body.style.overflow = 'hidden';
+  }
+
+  window.closeImgLightbox = function() {
+    lightbox.classList.remove('show');
+    document.body.style.overflow = '';
+  };
+
+  function render() {
+    track.innerHTML = images.map(function(src) {
+      return '<div class="img-lightbox-item"><img src="' + src + '" alt=""></div>';
+    }).join('');
+    updateTransform();
+  }
+
+  function updateTransform() {
+    track.style.transform = 'translateX(-' + (current * 100) + '%)';
+    counter.textContent = (current + 1) + ' / ' + images.length;
+  }
+
+  function goTo(idx) {
+    current = Math.max(0, Math.min(idx, images.length - 1));
+    updateTransform();
+  }
+
+  function onTouchStart(e) {
+    if (e.touches.length !== 1) return;
+    isDragging = true;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    currentX = 0;
+    currentY = 0;
+    startTime = Date.now();
+    track.style.transition = 'none';
+  }
+
+  function onTouchMove(e) {
+    if (!isDragging || e.touches.length !== 1) return;
+    var x = e.touches[0].clientX;
+    var y = e.touches[0].clientY;
+    currentX = x - startX;
+    currentY = y - startY;
+    var offset = -current * window.innerWidth + currentX;
+    track.style.transform = 'translateX(' + offset + 'px)';
+    var item = track.children[current];
+    if (item) item.style.transform = 'translateY(' + currentY + 'px)';
+  }
+
+  function onTouchEnd(e) {
+    if (!isDragging) return;
+    isDragging = false;
+    var item = track.children[current];
+    if (item) item.style.transform = '';
+
+    // Pull down to close
+    if (currentY > 120 && Math.abs(currentX) < Math.abs(currentY)) {
+      window.closeImgLightbox();
+      track.style.transition = 'transform 0.25s ease';
+      updateTransform();
+      return;
+    }
+
+    track.style.transition = 'transform 0.25s ease';
+    var elapsed = Date.now() - startTime;
+    var threshold = window.innerWidth * 0.2;
+    if (Math.abs(currentX) > threshold || (Math.abs(currentX) > 30 && elapsed < 300)) {
+      if (currentX > 0) goTo(current - 1);
+      else goTo(current + 1);
+    } else {
+      updateTransform();
+    }
+  }
+
+  function init() {
+    var imgs = document.querySelectorAll('.article-content img, .header-img');
+    images = [];
+    imgs.forEach(function(img) {
+      if (img.classList.contains('avatar')) return;
+      var src = img.getAttribute('src');
+      if (src && images.indexOf(src) === -1) images.push(src);
+    });
+    imgs.forEach(function(img) {
+      if (img.classList.contains('avatar')) return;
+      img.style.cursor = 'pointer';
+      img.addEventListener('click', function() {
+        var src = img.getAttribute('src');
+        var idx = images.indexOf(src);
+        openImgLightbox(idx >= 0 ? idx : 0);
+      });
+    });
+  }
+
+  lightbox.addEventListener('touchstart', onTouchStart, { passive: true });
+  lightbox.addEventListener('touchmove', onTouchMove, { passive: true });
+  lightbox.addEventListener('touchend', onTouchEnd);
+  lightbox.addEventListener('click', function(e) {
+    if (e.target === lightbox || e.target === track) window.closeImgLightbox();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (!lightbox.classList.contains('show')) return;
+    if (e.key === 'Escape') window.closeImgLightbox();
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+    if (e.key === 'ArrowRight') goTo(current + 1);
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+<a href="/qa" class="ask-ai-btn" title="问 AI" aria-label="问 AI" id="askAiBtn"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="aiSpark" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#6366f1"/><stop offset="55%" stop-color="currentColor"/><stop offset="100%" stop-color="#a78bfa"/></linearGradient></defs><path d="M12 1.2l2.55 6.75 6.75 2.55-6.75 2.55L12 19.8l-2.55-6.75L2.7 10.5l6.75-2.55L12 1.2z" fill="url(#aiSpark)"/><path d="M19.2 15.1l1.25 3.15 3.15 1.25-3.15 1.25-1.25 3.15-1.25-3.15-3.15-1.25 3.15-1.25 1.25-3.15z" fill="url(#aiSpark)" opacity="0.88"/></svg></a>
+</div>
+</div>
+</body>
+</html>
