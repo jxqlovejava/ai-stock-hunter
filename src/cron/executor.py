@@ -160,3 +160,8 @@ def register_default_jobs():
         "monitor_group_scan",
         "python -m src.sentinel --mode monitor_group"
     )
+    # 6. 突发资讯监测 (高频，每15-30分钟)
+    JobExecutor.register_builtin(
+        "news_flash_scan",
+        "python -m src.sentinel --mode news_flash"
+    )

@@ -16,6 +16,8 @@ Hermes 约定:
   sentiment  情绪/北向极端（包4）
   entry_signal  入场信号监测（融资回升+下影缩量）
   monitor_group 产业链监控组（核心+下游+设备商联动）
+  news_flash   突发资讯推送（7×24快讯+个股新闻关键词过滤）
+  guba        股吧情绪异动（热度飙升/多空极端/帖量暴增）
   auto       按北京时间粗选
 """
 
@@ -35,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--mode",
         default=os.environ.get("BAIZE_SENTINEL_MODE", "alert"),
-        help="alert|funds|margin|watchlist|entry_signal|open|close|sentiment|auto",
+        help="alert|funds|margin|watchlist|entry_signal|monitor_group|news_flash|guba|open|close|sentiment|auto",
     )
     parser.add_argument("--positions", type=Path, default=None)
     parser.add_argument("--state", type=Path, default=None)

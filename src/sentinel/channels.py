@@ -1050,6 +1050,375 @@ def _check_equipment_risk(
     return "\n".join(hits)
 
 
+# ── 包7：突发资讯推送（监控组标的+行业关键词）─────────────────────
+
+# 监控组关联的行业关键词（用于从7×24快讯中过滤相关资讯）
+_NEWS_INDUSTRY_KEYWORDS = [
+    # 电子布 / 玻纤
+    "电子布", "玻纤布", "玻璃纤维", "低介电", "Low-Dk", "Low-CTE", "Q布", "石英布",
+    "电子纱", "覆铜板", "CCL", "M9", "M8", "M10",
+    # PCB / 载板
+    "PCB", "正交背板", "mSAP", "FC-BGA", "ABF", "IC载板", "封装基板",
+    "高多层板", "HDI",
+    # AI 算力 / 英伟达
+    "Rubin", "英伟达", "NVIDIA", "GPU", "AI服务器", "算力", "HBM",
+    "CoWoS", "先进封装",
+    # 设备
+    "织布机", "喷气织机", "织机", "丰田",
+    # 竞对 / 行业事件
+    "日东纺", "台耀", "生益科技", "胜宏科技", "沪电股份", "深南电路",
+    "宏和科技", "中国巨石", "国际复材", "中材科技", "菲利华",
+    "卓郎智能", "泰坦股份",
+    # 供需信号（注意：通用词"突破"仅在高优先级触发中使用，此处放更具体的信号词）
+    "涨价", "提价", "缺货", "停产", "扩产", "验证通过", "通过认证",
+]
+
+# 高优先级标题关键词（命中即为 P0，必须推送）
+_NEWS_HIGH_PRIORITY = [
+    "扩产", "涨价", "提价", "突破", "认证通过", "首次", "独家",
+    "停产", "减产", "缺货", "供不应求", "订单排", "加单",
+    "减持", "增持", "回购",
+    "跌停", "涨停",
+    "量产", "交付",
+    "英伟达", "Rubin",
+]
+
+
+def _build_news_monitor_symbols() -> list[dict]:
+    """从监控组配置中提取需要关注资讯的标的列表。"""
+    groups = _load_monitor_groups(DEFAULT_MONITOR_GROUPS)
+    symbols: list[dict] = []
+    seen: set[str] = set()
+    for g in groups:
+        core = g.get("core") or {}
+        cs = str(core.get("symbol") or "")
+        cn = str(core.get("name") or "")
+        if cs and cs not in seen:
+            symbols.append({"symbol": cs, "name": cn, "role": "核心标的"})
+            seen.add(cs)
+        for ds in g.get("downstream") or []:
+            dsym = str(ds.get("symbol") or "")
+            if dsym and dsym not in seen:
+                symbols.append({
+                    "symbol": dsym,
+                    "name": str(ds.get("name") or ""),
+                    "role": str(ds.get("role") or "下游"),
+                })
+                seen.add(dsym)
+        for eq in g.get("equipment_risk") or []:
+            esym = str(eq.get("symbol") or "")
+            if esym and esym not in seen:
+                symbols.append({
+                    "symbol": esym,
+                    "name": str(eq.get("name") or ""),
+                    "role": str(eq.get("role") or "设备商"),
+                })
+                seen.add(esym)
+    return symbols
+
+
+def _news_title_hash(title: str) -> str:
+    """生成新闻标题的短哈希，用于去重冷却。"""
+    import hashlib
+    return hashlib.md5(title.strip().encode("utf-8")).hexdigest()[:12]
+
+
+def _is_news_fresh(time_str: str, max_days: int = 7) -> bool:
+    """判断新闻时间是否在 max_days 内。无法解析的返回 True（保留）。"""
+    if not time_str or not time_str.strip():
+        return True
+    import re
+    from datetime import timedelta
+    # 常见格式: "2026-07-20 15:43:34" 或 "2026-07-20"
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", time_str)
+    if not match:
+        return True  # 无法解析，保留
+    try:
+        news_date = datetime.strptime(match.group(1), "%Y-%m-%d").replace(tzinfo=BEIJING)
+        cutoff = _now_bj() - timedelta(days=max_days)
+        return news_date >= cutoff
+    except ValueError:
+        return True
+
+
+def run_news_flash_channel(cfg: ChannelConfig) -> str:
+    """突发资讯频道：扫描监控组标的+行业关键词的最新资讯。
+
+    数据源：东财7×24快讯（零鉴权）+ 东财个股新闻搜索。
+    过滤：命中监控组标的名称/代码或行业关键词。
+    优先级：高优先级关键词 → P0 即时推送；常规 → 汇总推送。
+    """
+    store = SentinelStateStore(cfg.state_path)
+    now = _now_bj().timestamp()
+    day = _now_bj().strftime("%Y-%m-%d")
+    now_str = _now_bj().strftime("%H:%M")
+
+    # ── 加载监控标的 ──
+    monitored = _build_news_monitor_symbols()
+    if not monitored:
+        return ""
+
+    # 构建标的查找表
+    sym_to_info: dict[str, dict] = {}
+    all_names: set[str] = set()
+    for m in monitored:
+        sym_to_info[m["symbol"]] = m
+        all_names.add(m["name"])
+        all_names.add(m["symbol"])
+        # 也加入简称（如 "中材"、"胜宏"、"生益"）
+        name = m["name"]
+        if len(name) >= 2:
+            all_names.add(name[:2])
+
+    # ── 1. 东财 7×24 全球快讯 ──
+    p0_items: list[dict] = []  # 高优先级
+    p1_items: list[dict] = []  # 常规
+
+    try:
+        from src.data.eastmoney_fallback import fetch_em_global_news
+
+        flash_news = fetch_em_global_news(page_size=60)
+        for entry in flash_news:
+            title = str(entry.get("title") or "")
+            summary = str(entry.get("summary") or "")
+            text = title + " " + summary
+
+            # 关键词匹配
+            matched_names = [kw for kw in all_names if kw in text]
+            matched_industry = [kw for kw in _NEWS_INDUSTRY_KEYWORDS if kw in text]
+            if not matched_names and not matched_industry:
+                continue
+
+            # 去重冷却（同一条新闻一天只推一次）
+            tid = _news_title_hash(title)
+            ck = f"news:{tid}:{day}"
+            if not cfg.force and store.is_cooling(ck, now):
+                continue
+
+            # 快讯当日有效
+            if not _is_news_fresh(entry.get("time", ""), max_days=1):
+                continue
+
+            store.set_cooling(ck, cfg.cool_watchlist, now)
+
+            is_high = (
+                matched_names
+                and any(kw in text for kw in _NEWS_HIGH_PRIORITY)
+            )
+
+            item = {
+                "title": title,
+                "time": entry.get("time", now_str),
+                "source": "东财快讯",
+                "matched": list(set(matched_names + matched_industry[:3])),
+                "is_high": is_high,
+            }
+            if is_high:
+                p0_items.append(item)
+            else:
+                p1_items.append(item)
+    except Exception as e:
+        logger.debug("7×24快讯获取失败: %s", e)
+
+    # ── 2. 个股新闻搜索（核心标的+重点下游） ──
+    try:
+        from src.data.eastmoney_fallback import fetch_em_stock_news
+
+        for m in monitored[:5]:  # 限制数量避免请求过多
+            sym = m["symbol"]
+            name = m["name"]
+            try:
+                news_list = fetch_em_stock_news(sym, max_results=5)
+                for entry in news_list:
+                    title = str(entry.get("title") or "")
+                    tid = _news_title_hash(title)
+                    ck = f"news:{tid}:{day}"
+                    if not cfg.force and store.is_cooling(ck, now):
+                        continue
+
+                    # 个股新闻 3 日内有效
+                    if not _is_news_fresh(entry.get("time", ""), max_days=3):
+                        continue
+
+                    store.set_cooling(ck, cfg.cool_watchlist, now)
+
+                    is_high = any(kw in title for kw in _NEWS_HIGH_PRIORITY)
+                    item = {
+                        "title": title,
+                        "time": entry.get("time", now_str),
+                        "source": f"{name}({sym})",
+                        "matched": [name],
+                        "is_high": is_high,
+                    }
+                    if is_high:
+                        p0_items.append(item)
+                    else:
+                        p1_items.append(item)
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug("个股新闻获取失败: %s", e)
+
+    store.prune_cooling(now)
+    store.save()
+
+    if not p0_items and not p1_items:
+        return ""
+
+    # ── 格式化输出 ──
+    lines = [f"【突发资讯监测】{day} {now_str}"]
+    total = len(p0_items) + len(p1_items)
+
+    if p0_items:
+        lines.append(f"\n🔴 高优先级（{len(p0_items)}条）：")
+        for item in p0_items[:8]:
+            tags = "、".join(item["matched"][:3])
+            lines.append(f"· {item['title']}")
+            lines.append(f"  [{item['source']} | {item['time']} | 关联：{tags}]")
+
+    if p1_items:
+        lines.append(f"\n🟡 常规关注（{len(p1_items)}条）：")
+        for item in p1_items[:5]:
+            tags = "、".join(item["matched"][:2])
+            lines.append(f"· {item['title']}")
+            lines.append(f"  [{item['source']} | {item['time']} | {tags}]")
+
+    lines.append(f"\n📊 本次扫描共 {total} 条相关资讯")
+    lines.append("💡 资讯仅作信号参考，不构成买卖建议。")
+    return "\n".join(lines)
+
+
+# ── 包8：股吧情绪异动（热度飙升 / 多空极端 / 帖量暴增）───────────
+
+
+def run_guba_hotspot_channel(cfg: ChannelConfig) -> str:
+    """股吧情绪异动监测：检测自选+持仓标的热度飙升/多空极端/帖量暴增。
+
+    空字符串 = 静默（无异常或冷却中）。
+    """
+    store = SentinelStateStore(cfg.state_path)
+    now = _now_bj().timestamp()
+    day = _now_bj().strftime("%Y-%m-%d")
+
+    # 收集标的：自选 + 持仓
+    watch_stocks = {s.get("symbol"): s.get("name") or s.get("symbol")
+                    for s in _load_watchlist(cfg.watchlist_path)}
+    for sym, name in _load_position_symbols(cfg.positions_path):
+        if sym not in watch_stocks:
+            watch_stocks[sym] = name
+    if not watch_stocks:
+        return ""
+
+    symbols = list(watch_stocks.keys())
+
+    try:
+        from src.data.guba_provider import GubaProvider
+        provider = GubaProvider()
+        results = provider.fetch_sentiments_batch(symbols, max_workers=6)
+    except Exception as e:
+        logger.debug("guba hotspot fetch failed: %s", e)
+        return ""
+
+    # ── 异动检测 ──
+    alerts: list[dict] = []
+    for sym, sentiment in results.items():
+        if sentiment is None:
+            continue
+        name = watch_stocks.get(sym, sym)
+        signals: list[str] = []
+        severity = "low"
+
+        # 热度飙升：heat_score >= 75
+        if sentiment.heat_score >= 75:
+            signals.append(f"🔥热度飙升 heat={sentiment.heat_score}")
+            severity = "high"
+
+        # 帖量暴增：24h 帖量 >= 60
+        if sentiment.posts_last_24h >= 60:
+            signals.append(f"📈帖量暴增 24h={sentiment.posts_last_24h}帖")
+            if severity != "high":
+                severity = "mid"
+
+        # 多空极端：多空比 >= 2.0 or <= 0.5
+        ratio = sentiment.bull_bear_ratio
+        if ratio is not None:
+            if ratio >= 2.0:
+                signals.append(f"🐂 极端看多 多空比={ratio:.1f}")
+                severity = "high"
+            elif ratio <= 0.5:
+                signals.append(f"🐻 极端看空 多空比={ratio:.1f}")
+                severity = "high"
+
+        # 互动暴增：帖均互动 >= 8000
+        if sentiment.engagement_per_post >= 8000:
+            signals.append(f"💬帖均互动={sentiment.engagement_per_post:.0f}")
+            if severity == "low":
+                severity = "mid"
+
+        if not signals:
+            continue
+
+        alerts.append({
+            "symbol": sym,
+            "name": name,
+            "severity": severity,
+            "signals": signals,
+            "heat_score": sentiment.heat_score,
+            "hot_titles": sentiment.hot_titles[:3],
+            "post_count": sentiment.post_count,
+            "posts_last_hour": sentiment.posts_last_hour,
+            "bullish": sentiment.bullish_count,
+            "bearish": sentiment.bearish_count,
+        })
+
+    if not alerts:
+        return ""
+
+    # ── 冷却 ──
+    cool_key = f"guba:{day}"
+    if not cfg.force and store.is_cooling(cool_key, now):
+        return ""
+    store.set_cooling(cool_key, cfg.cool_sentiment, now)
+    store.prune_cooling(now)
+    store.save()
+
+    # ── 按严重度排序 ──
+    sev_order = {"high": 0, "mid": 1, "low": 2}
+    alerts.sort(key=lambda a: (sev_order.get(a["severity"], 9), -a["heat_score"]))
+
+    # ── 格式化人话卡片 ──
+    high_alerts = [a for a in alerts if a["severity"] == "high"]
+    mid_alerts = [a for a in alerts if a["severity"] == "mid"]
+    low_alerts = [a for a in alerts if a["severity"] == "low"]
+
+    lines = [f"【股吧情绪异动】{day}"]
+
+    if high_alerts:
+        lines.append(f"\n🔴 高优先级（{len(high_alerts)}只）：")
+        for a in high_alerts:
+            lines.append(f"· {a['name']}({a['symbol']})")
+            for sig in a["signals"]:
+                lines.append(f"  {sig}")
+            hot_preview = " / ".join(
+                t[:30] for t in a["hot_titles"][:2]
+            )
+            if hot_preview:
+                lines.append(f"  热议: {hot_preview}")
+
+    if mid_alerts:
+        lines.append(f"\n🟡 关注（{len(mid_alerts)}只）：")
+        for a in mid_alerts:
+            lines.append(f"· {a['name']}({a['symbol']}) {' '.join(a['signals'])}")
+
+    if low_alerts:
+        lines.append(f"\n🟢 轻度异动（{len(low_alerts)}只）：")
+        for a in low_alerts:
+            lines.append(f"· {a['name']}({a['symbol']}) {a['signals'][0]}")
+
+    lines.append("\n💡 股吧情绪仅作市场热度参考，不构成买卖建议。")
+    return "\n".join(lines)
+
+
 # ── 统一入口 ─────────────────────────────────────────────────────
 
 
@@ -1065,6 +1434,8 @@ def run_channel(mode: str, cfg: ChannelConfig) -> str:
       sentiment — 情绪极端（包4）
       entry_signal — 入场信号监测（包5）
       monitor_group — 产业链监控组（包6）
+      news_flash — 突发资讯推送（包7）
+      guba — 股吧情绪异动（包8）
       auto — 按时段选择（见下）
     """
     mode = (mode or "alert").strip().lower()
@@ -1089,6 +1460,10 @@ def run_channel(mode: str, cfg: ChannelConfig) -> str:
         return run_entry_signal_channel(cfg)
     if mode in ("monitor_group", "group", "monitor", "mg"):
         return run_monitor_group_channel(cfg)
+    if mode in ("news_flash", "news", "flash", "breaking"):
+        return run_news_flash_channel(cfg)
+    if mode in ("guba", "guba_hotspot", "guba_heat"):
+        return run_guba_hotspot_channel(cfg)
     # 未知 → 持仓
     return run_position_channel(cfg)
 
