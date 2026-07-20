@@ -95,6 +95,7 @@ PROVIDER_CONFIDENCE: dict[str, float] = {
     "akshare": 0.70,
     "cninfo": 0.90,
     "tonghuashun": 0.80,
+    "guba": 0.80,
     "manual": 0.95,
     "llm_derived": 0.40,
     "miaoxiang-data-executive": 0.80,
@@ -119,6 +120,7 @@ PROVIDER_SOURCE_TIER: dict[str, str] = {
     "tonghuashun": SOURCE_TIER_T1,
     "eastmoney": SOURCE_TIER_T1,
     "huatai": SOURCE_TIER_T1,
+    "guba": SOURCE_TIER_T1,
     "tencent": SOURCE_TIER_T2,
     "akshare": SOURCE_TIER_T2,
     "miaoxiang-data-executive": SOURCE_TIER_T2,
@@ -166,6 +168,7 @@ FRESHNESS_LIMITS: dict[str, timedelta] = {
     "macro_indicator": timedelta(hours=4),
     "us_overnight": timedelta(hours=4),
     "sector_capital_flow": timedelta(minutes=15),
+    "guba_sentiment": timedelta(minutes=15),
 }
 
 

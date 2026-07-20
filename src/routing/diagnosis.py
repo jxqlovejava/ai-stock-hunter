@@ -35,6 +35,9 @@ class DiagnosisReport:
     earnings_revision_score: float = 50.0  # Phase 3: 盈利修正因子
     bottleneck_analysis: Optional[BottleneckAnalysis] = None  # cyberagent 瓶颈分析
     sentiment_signal: str = "NEUTRAL"
+    guba_heat_score: float = 0.0         # 股吧热度分 0-100（无数据=0）
+    guba_bull_bear_ratio: Optional[float] = None  # 股吧多空比 >1偏多 <1偏空
+    guba_hot_titles: list[str] = field(default_factory=list)  # 股吧 Top 3 热帖标题
     alpha_profile: Optional[AlphaProfile] = None  # Phase 4: Alpha Lens 视角
     executive_score: float = 50.0     # V4: 高管因子评分
     executive_risks: list[str] = field(default_factory=list)  # V4: 高管风险提示
@@ -160,6 +163,7 @@ class DiagnosisEngine:
         manipulation_scan: Optional[object] = None,    # Phase 11: ManipulationScan
         block_trade_profile: Optional[object] = None,  # Phase 12: BlockTradeProfile
         sector_flow: Optional[object] = None,          # 行业板块资金流向
+        guba_sentiment: Optional[object] = None,       # 股吧情绪快照 (GubaSentiment)
     ) -> DiagnosisReport:
         report = DiagnosisReport(symbol=symbol, name=name)
 
@@ -231,6 +235,12 @@ class DiagnosisEngine:
 
         if sentiment:
             report.sentiment_signal = sentiment.get("level", "NEUTRAL")
+
+        # 股吧情绪注入（T1 信源，与大盘 sentiment 互补）
+        if guba_sentiment is not None:
+            report.guba_heat_score = getattr(guba_sentiment, "heat_score", 0.0)
+            report.guba_bull_bear_ratio = getattr(guba_sentiment, "bull_bear_ratio", None)
+            report.guba_hot_titles = list(getattr(guba_sentiment, "hot_titles", [])[:3])
 
         # Phase 4: Alpha Lens 注入
         report.alpha_profile = alpha_profile
@@ -610,6 +620,12 @@ class DiagnosisEngine:
                 provider="miaoxiang-data-executive", field="executive",
                 data_type="executive", source_tier="T2", nature="fact",
             ))
+        # 股吧情绪（T1 信源）
+        citations.append(make_citation(
+            provider="guba", field="guba_sentiment",
+            data_type="guba_sentiment", source_tier="T1", nature="interpretation",
+            confidence=0.80,
+        ))
 
         # 评分维度 — 基于原始数据的分析解释
         citations.append(make_citation(
@@ -1153,6 +1169,7 @@ class DiagnosisEngine:
             ("质量因子", report.quality_score), ("动量因子", report.momentum_score),
             ("盈利修正", report.earnings_revision_score), ("估值综合", report.valuation_score),
             ("周期适配", report.cycle_score), ("高管因子", report.executive_score),
+            ("股吧热度", report.guba_heat_score),
         ]
         strong_bull = [(n, s) for n, s in dims if s >= 70]
         strong_bear = [(n, s) for n, s in dims if s <= 30]
@@ -1238,6 +1255,13 @@ class DiagnosisEngine:
 
         lines.append(overall)
         lines.append(f"🔍 关注点: {focus}")
+
+        # ── 股吧热议 ──
+        if report.guba_hot_titles:
+            heat_emoji = "🔥" if report.guba_heat_score >= 75 else "📊" if report.guba_heat_score >= 50 else "💬"
+            lines.append(f"\n{heat_emoji} 股吧热议 (热度{report.guba_heat_score:.0f}/100):")
+            for t in report.guba_hot_titles[:3]:
+                lines.append(f"  · {t}")
 
         return "\n".join(lines)
 

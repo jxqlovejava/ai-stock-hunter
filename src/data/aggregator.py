@@ -41,6 +41,7 @@ from .schema import (
     SectorCapitalFlowSnapshot,
 )
 from .source_citation import make_citation, make_data_gap_citation
+from .guba_provider import GubaProvider, GubaSentiment
 from .us_overnight import USOvernightSnapshot, fetch_us_overnight
 from src.information.speed_monitor import SpeedMonitor
 from src.utils.decimal_utils import D, safe_divide
@@ -66,6 +67,7 @@ class DataAggregator:
         self._miaoxiang: "MiaoXiangProvider | None" = None  # type: ignore[name-defined]
         self._cninfo: "CninfoProvider | None" = None  # type: ignore[name-defined]
         self._kuaicha: "KuaichaClient | None" = None  # type: ignore[name-defined]
+        self._guba: GubaProvider | None = None
         self._cache: dict[str, tuple[datetime, object]] = {}
         self._cache_ttl = timedelta(minutes=5)
         self.speed_monitor = SpeedMonitor()  # 信息速度优势度量（共享实例）
@@ -140,6 +142,13 @@ class DataAggregator:
             except Exception:
                 self._kuaicha = None
         return self._kuaicha
+
+    @property
+    def guba(self) -> GubaProvider:
+        """懒加载股吧适配器。免费源，无需 API Key。"""
+        if self._guba is None:
+            self._guba = GubaProvider()
+        return self._guba
 
     # ------------------------------------------------------------------
     # Loader helpers
@@ -1304,6 +1313,27 @@ class DataAggregator:
         growth = round((latest.net_profit - prior.net_profit) / abs(prior.net_profit) * 100, 2)
         self._cache_set(cache_key, growth)
         return growth
+
+    def get_guba_sentiment(self, symbol: str) -> Optional[GubaSentiment]:
+        """获取股吧情绪快照（T1 信源，免费）。
+
+        Returns:
+            GubaSentiment 含帖子数、热帖标题、多空比、热度分等，
+            失败（如网络异常）返回 None。
+        """
+        cache_key = f"guba:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(minutes=5))
+        if cached is not None:
+            return cached
+        result = self.guba.fetch_sentiment(symbol)
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_guba_sentiments_batch(
+        self, symbols: list[str]
+    ) -> dict[str, Optional[GubaSentiment]]:
+        """批量获取多只股票股吧情绪数据。"""
+        return self.guba.fetch_sentiments_batch(symbols)
 
     # ------------------------------------------------------------------
     # cninfo 高管 / 关联方提取 (mx-data 降级)

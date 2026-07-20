@@ -993,6 +993,13 @@ class Orchestrator:
             result.margin_alerts = margin_alerts
             result.monitor_signals = monitor_signals
 
+        # 股吧情绪（T1 信源，免费，优先拉取）
+        guba_sentiment = None
+        try:
+            guba_sentiment = self.data.get_guba_sentiment(symbol)
+        except Exception:
+            logger.debug("guba sentiment fetch failed for %s", symbol)
+
         report = self.diagnosis.analyze(
             symbol, name,
             quote_dict, fin_list,
@@ -1009,10 +1016,11 @@ class Orchestrator:
             regime_adjustments=regime_adjustments,     # Phase 11: 宏观象限权重
             manipulation_scan=manipulation_scan,        # Phase 11: 反操纵扫描
             sector_flow=sector_flow,
+            guba_sentiment=guba_sentiment,
         )
         result.report = report
         result.market_sentiment = sentiment_dict
-        scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f}"
+        scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f} 股吧热度{report.guba_heat_score:.0f}"
         step_done("✅", scores)
         _wf[3] = "📊多维诊断✅"
         if us_overnight is not None:
