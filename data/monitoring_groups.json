@@ -1,0 +1,222 @@
+{
+  "groups": [
+    {
+      "id": "ai_electronic_fabric",
+      "name": "AI电子布产业链",
+      "description": "中材科技为核心，监控上下游+设备商，跟踪α逻辑完整性",
+      "created_at": "2026-07-20T23:00:00",
+      "core": {
+        "symbol": "002080",
+        "name": "中材科技",
+        "role": "核心标的",
+        "alpha_signals": [
+          {
+            "id": "q_cloth_output",
+            "name": "Q布月产量",
+            "description": "泰安新工厂Q布产能爬坡进度。当前月产1.5万米，目标2026年底月产600万米。",
+            "trigger": "月产量突破里程碑（如3万/10万/30万米）或产能爬坡不及预期",
+            "direction": "positive",
+            "check_method": "公司公告/调研纪要/券商研报中的月度产能数据"
+          },
+          {
+            "id": "low_cte_status",
+            "name": "Low-CTE布量产独占性",
+            "description": "国内唯一量产Low-CTE布的地位是否维持。打破日东纺垄断，适配CoWoS/FC-BGA。",
+            "trigger": "竞对（宏和科技/国际复材）宣布Low-CTE布量产或通过客户认证",
+            "direction": "positive",
+            "check_method": "竞争对手公告/CCL厂供应商名录/英伟达认证名单变动"
+          },
+          {
+            "id": "margin_reversal",
+            "name": "融资余额止跌回升",
+            "description": "两融资金从连续流出转为回流，表明市场情绪触底",
+            "trigger": "融资余额连续下降后单日回升>0.5%",
+            "direction": "positive",
+            "check_method": "margin_analyzer.get_alerts() 自动检测"
+          },
+          {
+            "id": "hammer_volume_contract",
+            "name": "日线下影线+缩量",
+            "description": "技术面出现止跌企稳信号：长下影线+成交量萎缩至5日均量60%以下",
+            "trigger": "下影线≥2×上影线 且 量能<5日均量60%",
+            "direction": "positive",
+            "check_method": "日线K线形态自动检测"
+          }
+        ],
+        "risk_signals": [
+          {
+            "id": "peer_competition",
+            "name": "同业竞争未解决",
+            "description": "与中国巨石玻纤业务同业竞争，承诺2020年解决→延期至2031年",
+            "trigger": "证监会问询/集团层面重组公告/同业竞争解决方案公告",
+            "direction": "negative"
+          },
+          {
+            "id": "lithium_membrane_loss",
+            "name": "锂电隔膜亏损",
+            "description": "锂膜毛利率仅4.3%，持续拖累整体利润",
+            "trigger": "锂膜业务毛利率跌破0%或扭亏为盈突破10%",
+            "direction": "negative"
+          },
+          {
+            "id": "private_placement",
+            "name": "定增压价风险",
+            "description": "定增扩产比例168.58%，市场担忧摊薄+压价动机",
+            "trigger": "定增方案获批/发行价确定/方案被否",
+            "direction": "negative"
+          }
+        ]
+      },
+      "downstream": [
+        {
+          "symbol": "300476",
+          "name": "胜宏科技",
+          "role": "PCB厂（最直接客户）",
+          "relation": "GB300 PCB独家采购中材Q布+Low-Dk布",
+          "monitor_signals": [
+            {
+              "id": "rubin_progress",
+              "name": "Rubin量产进度",
+              "trigger": "季度出货量指引上调/下调、Rubin NVL144量产时间变更",
+              "impact_on_core": "出货量↑ → 电子布采购↑ → 中材收入↑"
+            },
+            {
+              "id": "capex_change",
+              "name": "资本开支变化",
+              "trigger": "单季资本开支环比±30%以上",
+              "impact_on_core": "扩产加速 → 未来电子布需求增量"
+            },
+            {
+              "id": "revenue_guidance",
+              "name": "营收/利润指引",
+              "trigger": "季度营收/净利超预期或miss 15%以上",
+              "impact_on_core": "业绩超预期 → AI PCB需求旺盛 → 上游受益"
+            }
+          ]
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "role": "CCL厂（中材→生益→PCB）",
+          "relation": "大陆唯一M9 CCL认证，中材电子布核心客户",
+          "monitor_signals": [
+            {
+              "id": "m9_price_hike",
+              "name": "M9 CCL提价",
+              "trigger": "M9 CCL公告提价幅度/频率变化",
+              "impact_on_core": "CCL提价 → 上游电子布需求旺盛 → 中材受益"
+            },
+            {
+              "id": "m9_quota",
+              "name": "配额供货状态",
+              "trigger": "从配额供货→开放供货（意味着供给缓解）",
+              "impact_on_core": "配额放松 → 上游供给瓶颈可能缓解 → 涨价持续性打折"
+            },
+            {
+              "id": "shengyi_expansion",
+              "name": "CCL扩产进度",
+              "trigger": "松山湖二期等新产能投产公告",
+              "impact_on_core": "CCL扩产 → 电子布需求增量"
+            }
+          ]
+        },
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "role": "IC载板厂（中材Low-CTE布→FC-BGA）",
+          "relation": "内资IC载板龙头，FC-BGA量产16层，中材Low-CTE布下游",
+          "monitor_signals": [
+            {
+              "id": "fcbga_yield",
+              "name": "FC-BGA良率突破",
+              "trigger": "良率爬升至85%+公告或新增大客户认证",
+              "impact_on_core": "FC-BGA放量 → Low-CTE布需求↑（国内唯一供应商）"
+            },
+            {
+              "id": "abf_expansion",
+              "name": "ABF载板扩产",
+              "trigger": "无锡/广州新产线投产公告",
+              "impact_on_core": "载板扩产 → Low-CTE布采购增量"
+            }
+          ]
+        },
+        {
+          "symbol": "002463",
+          "name": "沪电股份",
+          "role": "PCB厂（M9正交背板唯一认证）",
+          "relation": "78层M9正交背板全球唯一认证内资，中材Q布下游",
+          "monitor_signals": [
+            {
+              "id": "nvidia_order",
+              "name": "英伟达订单变化",
+              "trigger": "新获英伟达认证/订单或订单份额被竞对侵蚀",
+              "impact_on_core": "订单增加 → 正交背板需求↑ → Q布需求↑"
+            },
+            {
+              "id": "backplane_massprod",
+              "name": "78层背板量产爬坡",
+              "trigger": "M9正交背板月出货量里程碑",
+              "impact_on_core": "量产爬坡顺利 → Q布采购量增加"
+            }
+          ]
+        }
+      ],
+      "equipment_risk": [
+        {
+          "symbol": "600545",
+          "name": "卓郎智能",
+          "role": "织机设备商（反向指标）",
+          "relation": "VGT-9对标丰田织机，若突破超薄布→丰田垄断松动→电子布供给瓶颈缓解→中材α逻辑削弱",
+          "monitor_signals": [
+            {
+              "id": "vgt9_ultrathin",
+              "name": "VGT-9超薄布突破",
+              "trigger": "宣布可量产4-7μm超薄电子布织机并通过客户验证",
+              "impact_on_core": "⚠️ 负面：电子布扩产门槛降低 → 供给增加 → 涨价逻辑削弱"
+            },
+            {
+              "id": "volkmann_order",
+              "name": "电子布设备大单签约",
+              "trigger": "新签电子布设备订单超10亿或多家布厂同时下单",
+              "impact_on_core": "⚠️ 负面：设备大单=下游布厂集中扩产 → 未来供给增加"
+            }
+          ]
+        },
+        {
+          "symbol": "003036",
+          "name": "泰坦股份",
+          "role": "织机设备商（反向指标）",
+          "relation": "TT-8001对标丰田JAT910，若通过验证批量交付→进口替代加速→扩产门槛下降",
+          "monitor_signals": [
+            {
+              "id": "tt8001_approval",
+              "name": "TT-8001客户验证通过",
+              "trigger": "公告通过头部电子布厂验证并获批量订单",
+              "impact_on_core": "⚠️ 负面：国产织机可用 → 扩产加速 → 供给增加"
+            },
+            {
+              "id": "tt8001_1080",
+              "name": "1080超薄型号量产",
+              "trigger": "1080型号通过验证进入量产",
+              "impact_on_core": "⚠️ 负面：超薄布设备国产化→最紧缺环节供给缓解"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "wechat_push": {
+    "enabled": true,
+    "schedule": {
+      "intraday": "每个交易日 10:00/14:00 盘中扫描",
+      "post_market": "每个交易日 15:30 收盘后汇总",
+      "event_driven": "重大信号触发即时推送（需Hermes支持）"
+    },
+    "priority_levels": {
+      "p0_immediate": "核心标的入场/止损信号触发",
+      "p1_high": "下游客户重大扩产/砍单",
+      "p2_medium": "设备商技术突破/批量订单",
+      "p3_info": "常规产能进度更新"
+    }
+  }
+}

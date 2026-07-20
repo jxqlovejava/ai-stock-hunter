@@ -781,6 +781,275 @@ def _check_hammer_volume(sym: str, name: str, cfg: ChannelConfig) -> str | None:
         return None
 
 
+# ── 包6：产业链监控组（核心标的+下游+设备商联动扫描）───────────
+
+DEFAULT_MONITOR_GROUPS = Path("data/monitoring_groups.json")
+
+
+def _load_monitor_groups(path: Path) -> list[dict]:
+    """加载监控组配置。"""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return list(data.get("groups") or [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def run_monitor_group_channel(
+    cfg: ChannelConfig,
+    group_id: str | None = None,
+) -> str:
+    """产业链监控组：扫描核心标的入场/α验证信号 + 下游/设备商异动。
+
+    输出格式为人话卡片，适合 Hermes → 微信推送。
+    空字符串 = 静默（无变化或冷却中）。
+    """
+    groups = _load_monitor_groups(DEFAULT_MONITOR_GROUPS)
+    if not groups:
+        return ""
+
+    # 选组：指定 group_id 或取第一个
+    if group_id:
+        groups = [g for g in groups if g.get("id") == group_id]
+    if not groups:
+        return ""
+
+    store = SentinelStateStore(cfg.state_path)
+    now = _now_bj().timestamp()
+    day = _now_bj().strftime("%Y-%m-%d")
+
+    all_sections: list[str] = []
+
+    for group in groups:
+        sections: list[str] = []
+        group_name = group.get("name", "监控组")
+        core = group.get("core") or {}
+        core_sym = str(core.get("symbol") or "")
+        core_name = str(core.get("name") or core_sym)
+
+        # ── 1. 核心标的入场信号 ──
+        entry_hits = _check_core_entry_signals(core, cfg, store, now, day)
+        if entry_hits:
+            sections.append(f"🎯 {core_name}({core_sym}) 入场信号：\n" + entry_hits)
+
+        # ── 2. 核心标的 α 验证信号（手动跟踪项提醒） ──
+        alpha_reminders = _check_alpha_verification(core, store, now, day)
+        if alpha_reminders:
+            sections.append(f"🔬 {core_name} α验证提醒：\n" + alpha_reminders)
+
+        # ── 3. 下游客户异动 ──
+        downstream = group.get("downstream") or []
+        ds_hits = _check_downstream_moves(downstream, core_name, store, now, day)
+        if ds_hits:
+            sections.append("📈 下游客户异动：\n" + ds_hits)
+
+        # ── 4. 设备商风险指标 ──
+        equip = group.get("equipment_risk") or []
+        eq_hits = _check_equipment_risk(equip, core_name, store, now, day)
+        if eq_hits:
+            sections.append("⚠️ 设备商风险信号：\n" + eq_hits)
+
+        if not sections:
+            continue
+
+        header = f"【{group_name}】{day}"
+        all_sections.append(header + "\n\n" + "\n\n".join(sections))
+
+    if not all_sections:
+        return ""
+
+    # 冷却：同一天同组只推送一次（除非 force）
+    for group in groups:
+        gid = group.get("id", "unknown")
+        cool_key = f"monitor_group:{gid}:{day}"
+        if not cfg.force and store.is_cooling(cool_key, now):
+            return ""
+        store.set_cooling(cool_key, cfg.cool_watchlist, now)
+
+    store.prune_cooling(now)
+    store.save()
+
+    body = "\n\n---\n\n".join(all_sections)
+    return (
+        body
+        + "\n\n💡 信号说明：入场信号=技术面/资金面触发；α验证=基本面里程碑；"
+        "下游异动=需求端先行指标；设备商=供给端风险。"
+        "\n⚠️ 信号仅作参考，不构成买卖建议。入场前请确认管道诊断通过+止损已设。"
+    )
+
+
+def _check_core_entry_signals(
+    core: dict,
+    cfg: ChannelConfig,
+    store: SentinelStateStore,
+    now: float,
+    day: str,
+) -> str:
+    """复用现有入场信号检测逻辑，为监控组核心标的生成摘要。"""
+    sym = str(core.get("symbol") or "")
+    name = str(core.get("name") or sym)
+    alpha_signals = core.get("alpha_signals") or []
+    sig_map = {s.get("id"): s for s in alpha_signals}
+
+    reasons: list[str] = []
+
+    # 融资余额止跌回升
+    if sig_map.get("margin_reversal", {}).get("trigger"):
+        mr = _check_margin_reversal(sym, name)
+        if mr:
+            reasons.append(mr)
+
+    # 下影线+缩量
+    if sig_map.get("hammer_volume_contract", {}).get("trigger"):
+        hv = _check_hammer_volume(sym, name, cfg)
+        if hv:
+            reasons.append(hv)
+
+    if not reasons:
+        return ""
+
+    quotes, _ = fetch_quotes([sym], names={sym: name})
+    q = quotes.get(sym)
+    price_str = f" @ {q.price:.2f}" if q and q.price > 0 else ""
+    return f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {r}" for r in reasons)
+
+
+def _check_alpha_verification(
+    core: dict,
+    store: SentinelStateStore,
+    now: float,
+    day: str,
+) -> str:
+    """α验证信号提醒：Q布产量里程碑 / Low-CTE独占性。
+
+    这些是事件驱动信号，无法自动从行情数据检测。
+    此处生成定期提醒，敦促人工核查。
+    """
+    sym = str(core.get("symbol") or "")
+    name = str(core.get("name") or sym)
+    alpha_signals = core.get("alpha_signals") or []
+    sig_map = {s.get("id"): s for s in alpha_signals}
+
+    lines: list[str] = []
+
+    # Q布产量追踪
+    q_sig = sig_map.get("q_cloth_output")
+    if q_sig:
+        ck = f"alpha:q_cloth:{sym}:{day}"
+        if not store.is_cooling(ck, now):
+            lines.append(
+                f"📐 Q布产量：{q_sig.get('description', '')}\n"
+                f"   核查方式：{q_sig.get('check_method', '公司公告/调研纪要')}"
+            )
+            store.set_cooling(ck, 24 * 60, now)  # 每日最多提醒一次
+
+    # Low-CTE独占性
+    ct_sig = sig_map.get("low_cte_status")
+    if ct_sig:
+        ck = f"alpha:low_cte:{sym}:{day}"
+        if not store.is_cooling(ck, now):
+            lines.append(
+                f"🔒 Low-CTE布：{ct_sig.get('description', '')}\n"
+                f"   核查方式：{ct_sig.get('check_method', '竞对公告/英伟达认证名单')}"
+            )
+            store.set_cooling(ck, 24 * 60, now)
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _check_downstream_moves(
+    downstream: list[dict],
+    core_name: str,
+    store: SentinelStateStore,
+    now: float,
+    day: str,
+) -> str:
+    """扫描下游客户股价异动（±5%），作为需求端先行指标。"""
+    if not downstream:
+        return ""
+
+    symbols = [str(d["symbol"]) for d in downstream]
+    names = {str(d["symbol"]): str(d.get("name") or "") for d in downstream}
+    role_map = {str(d["symbol"]): str(d.get("role") or "") for d in downstream}
+    impact_map = {}
+    for d in downstream:
+        for sig in d.get("monitor_signals") or []:
+            impact_map.setdefault(str(d["symbol"]), {})[sig.get("id")] = sig.get(
+                "impact_on_core", ""
+            )
+
+    quotes, _ = fetch_quotes(symbols, names=names)
+    hits: list[str] = []
+
+    for sym in symbols:
+        q = quotes.get(sym)
+        if not q:
+            continue
+        chg = q.change_pct or 0
+        nm = names.get(sym, sym)
+        role = role_map.get(sym, "")
+        if abs(chg) >= 5:
+            direction = "↑" if chg > 0 else "↓"
+            hits.append(
+                f"{direction} {nm}({sym}) {chg:+.1f}% | {role}\n"
+                f"   对{core_name}影响：{'需求旺盛→利好' if chg > 0 else '需求走弱→警惕'}"
+            )
+        # 跌超3%也提示
+        elif chg <= -3:
+            hits.append(
+                f"🔻 {nm}({sym}) {chg:+.1f}% | {role}\n"
+                f"   关注是否趋势性走弱"
+            )
+
+    if not hits:
+        return ""
+
+    return "\n".join(hits)
+
+
+def _check_equipment_risk(
+    equipment: list[dict],
+    core_name: str,
+    store: SentinelStateStore,
+    now: float,
+    day: str,
+) -> str:
+    """扫描设备商股价异动（大涨=市场预期技术突破/批量订单）。"""
+    if not equipment:
+        return ""
+
+    symbols = [str(d["symbol"]) for d in equipment]
+    names = {str(d["symbol"]): str(d.get("name") or "") for d in equipment}
+    role_map = {str(d["symbol"]): str(d.get("role") or "") for d in equipment}
+
+    quotes, _ = fetch_quotes(symbols, names=names)
+    hits: list[str] = []
+
+    for sym in symbols:
+        q = quotes.get(sym)
+        if not q:
+            continue
+        chg = q.change_pct or 0
+        nm = names.get(sym, sym)
+        role = role_map.get(sym, "")
+        # 设备商大涨=市场可能在定价技术突破→对中材是风险信号
+        if chg >= 5:
+            hits.append(
+                f"🔴 {nm}({sym}) {chg:+.1f}% | {role}\n"
+                f"   设备商大涨→市场可能在定价技术突破→{core_name}供给瓶颈逻辑承压"
+            )
+
+    if not hits:
+        return ""
+
+    return "\n".join(hits)
+
+
 # ── 统一入口 ─────────────────────────────────────────────────────
 
 
@@ -794,6 +1063,8 @@ def run_channel(mode: str, cfg: ChannelConfig) -> str:
       open — 开盘前简报（包3）
       close — 收盘简报（包3）
       sentiment — 情绪极端（包4）
+      entry_signal — 入场信号监测（包5）
+      monitor_group — 产业链监控组（包6）
       auto — 按时段选择（见下）
     """
     mode = (mode or "alert").strip().lower()
@@ -816,6 +1087,8 @@ def run_channel(mode: str, cfg: ChannelConfig) -> str:
         return run_sentiment_extreme(cfg)
     if mode in ("entry_signal", "entry", "signal"):
         return run_entry_signal_channel(cfg)
+    if mode in ("monitor_group", "group", "monitor", "mg"):
+        return run_monitor_group_channel(cfg)
     # 未知 → 持仓
     return run_position_channel(cfg)
 

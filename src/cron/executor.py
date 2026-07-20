@@ -155,3 +155,8 @@ def register_default_jobs():
         "post_market_panic",
         "python -m src sweep --panic"
     )
+    # 5. 产业链监控组扫描 (盘中 10:00/14:00 + 收盘后 15:30)
+    JobExecutor.register_builtin(
+        "monitor_group_scan",
+        "python -m src.sentinel --mode monitor_group"
+    )

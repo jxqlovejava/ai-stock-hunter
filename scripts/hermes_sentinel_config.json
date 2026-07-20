@@ -19,5 +19,11 @@
   "cool_margin": 180,
   "cool_watchlist": 60,
   "cool_sentiment": 120,
-  "watchlist_path": "/home/ubuntu/.hermes/baize/watchlist.json"
+  "watchlist_path": "/home/ubuntu/.hermes/baize/watchlist.json",
+  "monitor_groups_path": "/home/ubuntu/.hermes/baize/monitoring_groups.json",
+  "monitor_group_schedule": {
+    "intraday_1": "0 10 * * 1-5",
+    "intraday_2": "0 14 * * 1-5",
+    "post_market": "30 15 * * 1-5"
+  }
 }

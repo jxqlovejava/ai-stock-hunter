@@ -15,6 +15,7 @@ Hermes 约定:
   close      收盘简报（包3）
   sentiment  情绪/北向极端（包4）
   entry_signal  入场信号监测（融资回升+下影缩量）
+  monitor_group 产业链监控组（核心+下游+设备商联动）
   auto       按北京时间粗选
 """
 
