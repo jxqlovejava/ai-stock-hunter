@@ -1288,5 +1288,25 @@
     "panic_count": 0,
     "greed_count": 0,
     "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-20T16:59:24.989790",
+    "score": 40,
+    "level": "NORMAL",
+    "confidence": 0.69,
+    "percentile": 66.7,
+    "panic_count": 1,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-07-20T17:00:43.053723",
+    "score": 40,
+    "level": "NORMAL",
+    "confidence": 0.69,
+    "percentile": 66.7,
+    "panic_count": 1,
+    "greed_count": 0,
+    "extreme_count": 0
   }
 ]
