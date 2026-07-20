@@ -28,11 +28,13 @@ Phase 1: 信息搜集 (AttributionEngine 自动并行 — 7 通道)
   ├→ 行业分类
   ├→ 🆕 周期品价格 (大宗商品/原材料) — 周期股自动拉取
   └→ 🆕 管理层指引 (投资者交流/业绩说明会/互动易)
+  └→ 🆕 股吧情绪 (guba.eastmoney.com — T1信源，帖子热度/多空比/热议标题)
 
 Phase 2: 多维归因 (8 维度并行 AI 分析)
   ├→ macro-monitor (宏观背景)
   ├→ sector-research (板块联动)
   ├→ sentiment-analysis (情绪状态)
+  ├→ 🆕 股吧讨论 (guba — 与 sentiment-analysis 并行，提供散户情绪佐证+热议方向)
   ├→ topic-manager (主题生命周期)
   ├→ policy-tracker (行业政策)
   ├→ 资金面 + T+0 技术面
@@ -76,7 +78,7 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 |------|-------|-------------|---------|
 | 宏观背景 | `macro-monitor` | 当前货币-信用象限？利好/利空成长股？美股隔夜走势对A股开盘影响？ | `macro_assessment` |
 | 板块联动 | `sector-research` | 同行业其他股票是否联动？板块资金流向？ | `sector_assessment` |
-| 情绪状态 | `sentiment-analysis` | 大盘恐慌/贪婪？个股情绪极端？A股实时市场数据（涨跌家数/成交额/涨跌停池）？ | `sentiment_assessment` |
+| 情绪状态 | `sentiment-analysis` + 🆕 `guba` (T1) | 大盘恐慌/贪婪？个股情绪极端？A股实时市场数据（涨跌家数/成交额/涨跌停池）？🆕 股吧散户情绪（热度/多空比/热议方向） | `sentiment_assessment` |
 | 主题周期 | `topic-manager` | 相关主题处于什么生命周期？拥挤度？ | `topic_assessment` |
 | 行业政策 | `policy-tracker` | 近期有无行业政策变化？影响方向？ | 合并入 `sector_assessment` |
 | 资金面 | a-stock-data | 北向/龙虎榜/融资融券/大宗交易 具体数据 | `capital_flow_assessment` |
@@ -201,5 +203,7 @@ python -m src attribute <code> [--date YYYY-MM-DD]
 - Python 实现: `src/routing/attribution.py` (AttributionEngine), `src/routing/attribution_types.py` (DTO), `src/routing/attribution_formatter.py` (格式器)
 - CLI 入口: `python -m src attribute <code> [--date YYYY-MM-DD]`
 - 依赖 Skill: `last30days-cn`, `a-stock-data`, `macro-monitor`, `sector-research`, `sentiment-analysis`, `policy-tracker`, `topic-manager`
+- 🆕 数据源: `guba` (T1 东财股吧) — 散户情绪佐证、热议方向、多空比
+- 🆕 数据源: `guba` (T1) — 归因前可运行 `python -m src.sentinel --mode guba` 获取自选/持仓标的热度异动
 - 输出标准: `.claude/rules/guardrails.md` §归因输出强制格式
 - 因果链: `src/macro/event_analyzer.py`
