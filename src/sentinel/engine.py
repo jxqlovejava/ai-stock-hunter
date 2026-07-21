@@ -184,6 +184,10 @@ class SentinelEngine:
         limits = limits or cfg.resolve_limits()
         name = pos.name or q.name or pos.symbol
         price = q.price
+        # 日内涨跌幅（提前计算，后续告警 body 统一引用）
+        chg = q.change_pct
+        if chg == 0 and q.prev_close and q.prev_close > 0:
+            chg = (price - q.prev_close) / q.prev_close * 100.0
         st = self.store.get_symbol(pos.symbol)
 
         # 换日重置振幅标记
@@ -215,6 +219,7 @@ class SentinelEngine:
         # --- P0: 止损触及 ---
         if pos.stop_price and pos.stop_price > 0 and pos.direction == "LONG":
             if price <= pos.stop_price * (1 - cfg.stop_hit_buffer_pct / 100.0):
+                day_tag = f"今日 {chg:+.1f}% | " if chg != 0 else ""
                 candidates.append(
                     SentinelAlert(
                         level=AlertLevel.P0,
@@ -223,8 +228,8 @@ class SentinelEngine:
                         name=name,
                         title="止损触及",
                         body=(
-                            f"现价 {price:.2f} ≤ 止损 {pos.stop_price:.2f}\n"
-                            f"成本 {pos.entry_price:.2f} | 浮盈 "
+                            f"{day_tag}现价 {price:.2f} ≤ 止损 {pos.stop_price:.2f}\n"
+                            f"成本 {pos.entry_price:.2f} | 成本浮盈 "
                             f"{_pnl_pct(price, pos.entry_price):+.1f}%\n"
                             f"动作：按纪律减/平，勿补仓硬扛"
                         ),
@@ -237,6 +242,7 @@ class SentinelEngine:
                 # 逼近止损
                 dist = (price - pos.stop_price) / price * 100.0
                 if 0 < dist <= cfg.stop_near_pct:
+                    day_tag = f"今日 {chg:+.1f}% | " if chg != 0 else ""
                     candidates.append(
                         SentinelAlert(
                             level=AlertLevel.P0,
@@ -245,9 +251,9 @@ class SentinelEngine:
                             name=name,
                             title="止损逼近",
                             body=(
-                                f"现价 {price:.2f} | 止损 {pos.stop_price:.2f} | "
+                                f"{day_tag}现价 {price:.2f} | 止损 {pos.stop_price:.2f} | "
                                 f"仅差 {dist:.2f}%\n"
-                                f"成本 {pos.entry_price:.2f} | 浮盈 "
+                                f"成本 {pos.entry_price:.2f} | 成本浮盈 "
                                 f"{_pnl_pct(price, pos.entry_price):+.1f}%\n"
                                 f"动作：准备执行，勿幻想反弹"
                             ),
@@ -261,6 +267,7 @@ class SentinelEngine:
         if pos.entry_price > 0 and pos.direction == "LONG":
             break_line = pos.entry_price * (1 - cfg.cost_break_pct / 100.0)
             if price < break_line:
+                day_tag = f"今日 {chg:+.1f}% | " if chg != 0 else ""
                 candidates.append(
                     SentinelAlert(
                         level=AlertLevel.P1,
@@ -269,7 +276,7 @@ class SentinelEngine:
                         name=name,
                         title="跌破成本",
                         body=(
-                            f"现价 {price:.2f} < 成本 {pos.entry_price:.2f} "
+                            f"{day_tag}现价 {price:.2f} < 成本 {pos.entry_price:.2f} "
                             f"({_pnl_pct(price, pos.entry_price):+.1f}%)\n"
                             f"动作：不补仓；若同步逼近止损优先风控"
                         ),
@@ -280,9 +287,6 @@ class SentinelEngine:
                 )
 
         # --- P1: 日内大跌/大涨 ---
-        chg = q.change_pct
-        if chg == 0 and q.prev_close and q.prev_close > 0:
-            chg = (price - q.prev_close) / q.prev_close * 100.0
         if chg <= -cfg.day_drop_pct:
             candidates.append(
                 SentinelAlert(
@@ -408,6 +412,7 @@ class SentinelEngine:
             if cfg.float_loss_pct is not None:
                 loss_thr = abs(cfg.float_loss_pct)
             if pnl <= -loss_thr:
+                day_tag = f"今日 {chg:+.1f}% | " if chg != 0 else ""
                 candidates.append(
                     SentinelAlert(
                         level=AlertLevel.P0,
@@ -416,7 +421,7 @@ class SentinelEngine:
                         name=name,
                         title="单票浮亏超限",
                         body=(
-                            f"浮盈 {pnl:+.1f}% ≤ -{loss_thr:.1f}% 阈值\n"
+                            f"{day_tag}成本浮盈 {pnl:+.1f}% ≤ -{loss_thr:.1f}% 阈值\n"
                             f"成本 {pos.entry_price:.2f} → 现价 {price:.2f}\n"
                             f"动作：风控优先，评估减仓/止损，禁止补仓摊薄"
                         ),
@@ -433,6 +438,7 @@ class SentinelEngine:
                 if cfg.peak_drawdown_pct is not None:
                     dd_thr = abs(cfg.peak_drawdown_pct)
                 if dd >= dd_thr:
+                    day_tag = f"今日 {chg:+.1f}% | " if chg != 0 else ""
                     candidates.append(
                         SentinelAlert(
                             level=AlertLevel.P1,
@@ -441,10 +447,10 @@ class SentinelEngine:
                             name=name,
                             title="浮盈回吐",
                             body=(
-                                f"从高点 {peak_f:.2f} 回撤 {dd:.1f}% "
+                                f"{day_tag}从高点 {peak_f:.2f} 回撤 {dd:.1f}% "
                                 f"(≥{dd_thr:.1f}%)\n"
                                 f"现价 {price:.2f} | 成本 {pos.entry_price:.2f} | "
-                                f"浮盈 {pnl:+.1f}%\n"
+                                f"成本浮盈 {pnl:+.1f}%\n"
                                 f"动作：考虑上移止损/分批止盈，勿因回撤情绪化加仓"
                             ),
                             price=price,
