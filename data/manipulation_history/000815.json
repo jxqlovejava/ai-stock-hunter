@@ -1,0 +1,36 @@
+[
+  {
+    "record_id": "752f8c284a154a2783efac341bf11a9f",
+    "symbol": "000815",
+    "name": "美利云",
+    "date": "2026-07-21",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 14.66,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-07-21T23:48:37.859458"
+  },
+  {
+    "record_id": "4603a3b2ab9842869293a31f57c9c102",
+    "symbol": "000815",
+    "name": "美利云",
+    "date": "2026-07-22",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 14.66,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-07-22T00:02:27.713339"
+  }
+]
