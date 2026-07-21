@@ -164,6 +164,15 @@ class VerdictEngine:
             mm_bias_flags = imm_fit.bias_flags
         score = max(0, min(100, score * gt_mult * mm_mult))
 
+        # 置信度 = 信息完整度的函数（初始化前置，后续操纵风险/回调入场/四视角辩论可在此基础上加减）
+        confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
+        if gt_profile is not None:
+            confidence_inputs.append(gt_score)
+        if imm_fit is not None:
+            confidence_inputs.append(mm_score)
+        confidence = 0.5 + 0.3 * (min(confidence_inputs) / 50.0)
+        confidence = min(confidence, 0.95)
+
         # Phase 11: 操纵风险折扣 — 高操纵风险直接降分降置信度
         manip_risk = getattr(report, "manipulation_risk_score", 0.0) or 0.0
         risks: list[dict] = []
@@ -229,15 +238,6 @@ class VerdictEngine:
                 if oversold:
                     risk_text += f"（阶段跌幅 {oversold.phase_decline_pct:.1f}%）"
                 risks.append({"text": risk_text, "severity": "critical", "source": "oversold_break"})
-
-        # 置信度 = 信息完整度的函数
-        confidence_inputs = [fundamental, valuation, macro, cycle, adjusted_sector]
-        if gt_profile is not None:
-            confidence_inputs.append(gt_score)
-        if imm_fit is not None:
-            confidence_inputs.append(mm_score)
-        confidence = 0.5 + 0.3 * (min(confidence_inputs) / 50.0)
-        confidence = min(confidence, 0.95)
 
         # Phase 6+: 四视角辩论分歧降低置信度
         debate = getattr(report, "debate_result", None)
