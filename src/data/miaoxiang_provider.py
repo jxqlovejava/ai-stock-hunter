@@ -211,11 +211,15 @@ class MiaoXiangProvider(DataProvider):
 
         # 先查十大股东
         raw = self._adapter.query_data(f"{symbol} 十大股东")
+        if raw is None:
+            self._check_quota_status()
         parties = self._parse_related_from_raw(raw)
 
         # 补充关联公司
         raw2 = self._adapter.query_data(f"{symbol} 关联公司 子公司")
-        if raw2:
+        if raw2 is None:
+            self._check_quota_status()
+        else:
             extra = self._parse_related_from_raw(raw2)
             seen = {p.entity_name for p in parties}
             for p in extra:
