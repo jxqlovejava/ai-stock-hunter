@@ -311,16 +311,20 @@ def fetch_northbound_history(
     """
     try:
         import akshare as ak
-        df = ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
+        from src.data.akshare import _akshare_call
+        # 新版 API: stock_hsgt_hist_em（旧版 stock_hsgt_north_net_flow_in_em 已移除）
+        df = _akshare_call(ak.stock_hsgt_hist_em)
         if df is None or df.empty:
             return None
 
         df = df.rename(columns={
             "日期": "date",
-            "当日净流入": "net_flow_100m",
-            "累计净流入": "cumulative_100m",
+            "当日成交净买额": "net_flow_100m",
+            "历史累计净买额": "cumulative_100m",
         })
         df["date"] = pd.to_datetime(df["date"])
+        # 过滤掉净买额为 NaN 的行（非交易日）
+        df = df.dropna(subset=["net_flow_100m"])
 
         # Filter date range
         start = pd.Timestamp(start_date)

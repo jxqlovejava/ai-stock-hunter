@@ -180,6 +180,89 @@ def _to_tx_symbol(symbol: str) -> str:
     return f"sz{code}"  # 默认深交所
 
 
+# ---------------------------------------------------------------------------
+# AKShare 调用重试工具 — 东财 datacenter 偶发 RemoteDisconnected
+# ---------------------------------------------------------------------------
+
+import functools  # noqa: E402
+import time  # noqa: E402
+
+
+def _retry_akshare(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    backoff: float = 2.0,
+    retryable_exceptions: tuple = (ConnectionError, ConnectionResetError, TimeoutError, OSError),
+):
+    """重试装饰器 — 处理东财 datacenter 临时连接断开。
+
+    Args:
+        max_retries: 最大重试次数（默认 3）
+        base_delay: 首次等待秒数（默认 1.0）
+        backoff: 指数退避倍数（默认 2.0）
+        retryable_exceptions: 哪些异常需要重试
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            delay = base_delay
+            for attempt in range(1 + max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except retryable_exceptions as e:
+                    last_exc = e
+                    err_msg = str(e)
+                    logger.debug(
+                        "AKShare 调用 %s 失败 (attempt %d/%d): %s",
+                        func.__name__, attempt + 1, 1 + max_retries, err_msg,
+                    )
+                    if attempt < max_retries:
+                        time.sleep(delay)
+                        delay *= backoff
+                except Exception as e:
+                    # 非可重试异常（如 AttributeError）直接抛出
+                    raise
+            logger.warning("AKShare %s 重试 %d 次后仍失败: %s", func.__name__, max_retries, last_exc)
+            raise last_exc  # type: ignore[misc]
+        return wrapper
+    return decorator
+
+
+def _akshare_call(func, *args, max_retries: int = 2, **kwargs):
+    """带指数退避重试的执行 AKShare 调用。
+
+    东财 datacenter 偶发 RemoteDisconnected/ConnectionReset，
+    用此函数替代裸 ak.* 调用可大幅提升稳定度。
+
+    Args:
+        func: AKShare 函数（如 ak.stock_zh_a_spot_em）
+        max_retries: 最大重试次数
+        *args, **kwargs: 传给 func 的参数
+
+    Returns:
+        func 的返回值，所有重试都失败时抛出原始异常
+    """
+    import time
+    last_exc = None
+    delay = 1.0
+    retryable = (ConnectionError, ConnectionResetError, TimeoutError, OSError)
+    for attempt in range(1 + max_retries):
+        try:
+            return func(*args, **kwargs)
+        except retryable as e:
+            last_exc = e
+            logger.debug("akshare_call %s 失败 (attempt %d/%d): %s",
+                         getattr(func, "__name__", str(func)),
+                         attempt + 1, 1 + max_retries, e)
+            if attempt < max_retries:
+                time.sleep(delay)
+                delay *= 2.0
+        except Exception:
+            raise
+    raise last_exc  # type: ignore[misc]
+
+
 class AKShareProvider(DataProvider):
     """AKShare 数据适配器。"""
 
@@ -446,21 +529,21 @@ class AKShareProvider(DataProvider):
         """获取今日龙虎榜数据（独有）。"""
         try:
             today = datetime.now().strftime("%Y%m%d")
-            return ak.stock_lhb_detail_em(start_date=today, end_date=today)
+            return _akshare_call(ak.stock_lhb_detail_em, start_date=today, end_date=today)
         except Exception:
             return pd.DataFrame()
 
     def get_margin_trading(self) -> pd.DataFrame:
         """获取融资融券数据（独有）。"""
         try:
-            return ak.stock_margin_detail_sse(date=datetime.now().strftime("%Y%m%d"))
+            return _akshare_call(ak.stock_margin_detail_sse, date=datetime.now().strftime("%Y%m%d"))
         except Exception:
             return pd.DataFrame()
 
     def get_northbound_flow(self) -> pd.DataFrame:
         """获取北向资金流向。"""
         try:
-            return ak.stock_hsgt_fund_flow_summary_em()
+            return _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
         except Exception:
             return pd.DataFrame()
 
@@ -472,8 +555,9 @@ class AKShareProvider(DataProvider):
         """
         try:
             with _em_no_proxy():
-                return ak.stock_sector_fund_flow_rank(
-                    indicator=indicator, sector_type="行业资金流"
+                return _akshare_call(
+                    ak.stock_sector_fund_flow_rank,
+                    indicator=indicator, sector_type="行业资金流",
                 )
         except Exception:
             return pd.DataFrame()
@@ -484,7 +568,7 @@ class AKShareProvider(DataProvider):
             code = symbol.strip()[-6:]
             first = code[0]
             market = "sh" if first in ("6", "9") else "sz"
-            return ak.stock_individual_fund_flow(stock=code, market=market)
+            return _akshare_call(ak.stock_individual_fund_flow, stock=code, market=market)
         except Exception:
             return pd.DataFrame()
 

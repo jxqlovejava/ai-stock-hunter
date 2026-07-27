@@ -411,7 +411,9 @@ def get_northbound_flow(symbol: str) -> dict[str, Any]:
     code = normalize_symbol(symbol)
     try:
         import akshare as ak
-        df = ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
+        from src.data.akshare import _akshare_call
+        # 新版 API: stock_hsgt_fund_flow_summary_em（旧版 stock_hsgt_north_net_flow_in_em 已移除）
+        df = _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
         # 个股北向持股查询
         hold = ak.stock_hsgt_individual_em(market="沪股通")
         if hold is None or hold.empty:

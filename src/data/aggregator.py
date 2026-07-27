@@ -42,7 +42,7 @@ from .schema import (
 )
 from .source_citation import make_citation, make_data_gap_citation
 from .guba_provider import GubaProvider, GubaSentiment
-from .us_overnight import USOvernightSnapshot, fetch_us_overnight
+from .us_overnight import USOvernightSnapshot, fetch_us_overnight, GlobalMarketSnapshot, fetch_global_market
 from src.information.speed_monitor import SpeedMonitor
 from src.utils.decimal_utils import D, safe_divide
 
@@ -366,6 +366,29 @@ class DataAggregator:
             self._cache_set(cache_key, snapshot)
         return snapshot
 
+    def get_global_market(self, include_a_share: bool = True) -> Optional[GlobalMarketSnapshot]:
+        """获取全球主要市场综合快照 (US + 亚太 + A股大盘)。
+
+        通过东方财富全球指数 API 一次性拉取 S&P500/Nasdaq/Dow/日经/KOSPI/恒生，
+        第二次独立请求拉取上证/深证/创业板。使用 10 分钟内存缓存。
+        数据不可用时返回 None，不抛异常。
+        """
+        cache_key = "global_market"
+        ttl = timedelta(minutes=10)
+        cached = self._cache_get(cache_key, ttl=ttl)
+        if cached is not None:
+            return cached
+
+        try:
+            snapshot = fetch_global_market(include_a_share=include_a_share)
+        except Exception as exc:
+            logger.debug("get_global_market failed: %s", exc)
+            return None
+
+        if snapshot is not None:
+            self._cache_set(cache_key, snapshot)
+        return snapshot
+
     # ------------------------------------------------------------------
     # Public A-share data APIs
     # ------------------------------------------------------------------
@@ -563,6 +586,90 @@ class DataAggregator:
         except Exception:
             self.speed_monitor.end_event("history_fetch", t0, source="error")
             raise
+
+    def get_daily_bars(
+        self,
+        symbol: str,
+        market: str = "",
+        count: int = 60,
+    ) -> list[dict] | None:
+        """获取日线 OHLCV 数据，返回 list[dict] 供操纵检测/洗盘检测使用。
+
+        Args:
+            symbol: 6 位股票代码
+            market: 市场标记 ("SH"/"SZ")，部分数据源可能需要
+            count: 需要的 K 线根数（实际返回可能少于 count）
+
+        Returns:
+            list[dict] 每根 K 线 {open, high, low, close, volume, date}，
+            按日期升序排列；数据不足时返回 None
+        """
+        try:
+            # count 根日线 ≈ count * 1.5 自然日（考虑周末/节假日）
+            from datetime import timedelta
+            end = datetime.now()
+            start = end - timedelta(days=int(count * 1.8))
+            df = self.get_history(
+                symbol,
+                start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"),
+                period="daily",
+            )
+            if df is None or df.empty:
+                logger.debug("get_daily_bars: 无日线数据 (%s)", symbol)
+                return None
+
+            # 统一列名映射（不同 loader 列名不同）
+            col_map = {}
+            for col in df.columns:
+                col_lower = str(col).lower().strip()
+                if col_lower in ("date", "日期", "datetime", "trade_date", "tradedate"):
+                    col_map[col] = "date"
+                elif col_lower in ("open", "开盘", "开盘价"):
+                    col_map[col] = "open"
+                elif col_lower in ("high", "最高", "最高价"):
+                    col_map[col] = "high"
+                elif col_lower in ("low", "最低", "最低价"):
+                    col_map[col] = "low"
+                elif col_lower in ("close", "收盘", "收盘价"):
+                    col_map[col] = "close"
+                elif col_lower in ("volume", "成交量", "vol"):
+                    col_map[col] = "volume"
+            df = df.rename(columns=col_map)
+
+            bars = []
+            for _, row in df.iterrows():
+                date_val = row.get("date")
+                if date_val is None:
+                    continue
+                # date 可能是 Timestamp 或 string
+                if hasattr(date_val, "strftime"):
+                    date_str = date_val.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(date_val)[:10]
+
+                try:
+                    o = float(row["open"])
+                    h = float(row["high"])
+                    l = float(row["low"])
+                    c = float(row["close"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                v = int(float(row.get("volume", 0) or 0))
+
+                bars.append({
+                    "open": o, "high": h, "low": l, "close": c,
+                    "volume": v, "date": date_str,
+                })
+
+            if not bars:
+                return None
+            # 按日期升序
+            bars.sort(key=lambda b: b["date"])
+            return bars[-count:]  # 只保留最近 count 根
+        except Exception as e:
+            logger.warning("get_daily_bars(%s) 失败: %s", symbol, e)
+            return None
 
     # ------------------------------------------------------------------
     # Status

@@ -111,7 +111,8 @@ class SentimentDataFetcher:
         """
         try:
             import akshare as ak
-            df = ak.stock_zh_a_spot_em()
+            from src.data.akshare import _akshare_call
+            df = _akshare_call(ak.stock_zh_a_spot_em)
             if df is None or len(df) == 0:
                 return {"error": "A 股实时行情返回空数据", "source": "akshare/东财"}
 
@@ -150,17 +151,22 @@ class SentimentDataFetcher:
         """
         try:
             import akshare as ak
-            # 尝试沪股通+深股通北向净流入
-            df = ak.stock_hsgt_north_net_flow_in_em(symbol="沪股通")
+            from src.data.akshare import _akshare_call
+            # 新版 API: stock_hsgt_fund_flow_summary_em
+            # 取代已被移除的 stock_hsgt_north_net_flow_in_em
+            df = _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
             if df is not None and len(df) > 0:
-                latest = df.iloc[-1]
-                net_flow = float(latest.iloc[0]) if hasattr(latest, 'iloc') else 0.0
-                return {
-                    "net_flow_rmb": net_flow,  # 亿元
-                    "direction": "流入" if net_flow > 0 else "流出",
-                    "source": "akshare/东方财富",
-                    "error": None,
-                }
+                # 筛选北向条目（沪股通+深股通）
+                north = df[df["资金方向"] == "北向"]
+                if north is not None and len(north) > 0:
+                    # 取最后一行的净买额
+                    net_flow = float(pd.to_numeric(north["成交净买额"], errors="coerce").sum())
+                    return {
+                        "net_flow_rmb": round(net_flow, 2),  # 亿元
+                        "direction": "流入" if net_flow > 0 else "流出",
+                        "source": "akshare/东方财富 (stock_hsgt_fund_flow_summary_em)",
+                        "error": None,
+                    }
             return {"error": "北向资金数据为空", "source": "akshare/东方财富"}
         except ImportError:
             return {"error": "akshare 未安装", "source": "N/A"}
@@ -200,7 +206,8 @@ class SentimentDataFetcher:
         """
         try:
             import akshare as ak
-            df = ak.stock_zh_index_daily_em(symbol="sh000001")  # 上证指数
+            from src.data.akshare import _akshare_call
+            df = _akshare_call(ak.stock_zh_index_daily_em, symbol="sh000001")  # 上证指数
             if df is None or len(df) < 21:
                 return {"error": "上证指数数据不足", "source": "akshare/东方财富"}
 
@@ -337,7 +344,8 @@ class SentimentDataFetcher:
         """
         try:
             import akshare as ak
-            df = ak.stock_market_fund_flow()
+            from src.data.akshare import _akshare_call
+            df = _akshare_call(ak.stock_market_fund_flow)
             if df is None or len(df) == 0:
                 return {"error": "大盘资金流向数据为空", "source": "akshare/东方财富"}
 
@@ -1014,7 +1022,16 @@ class SentimentDetector:
 
         # ---- 9. 综合判定 ----
         if extreme_signals:
-            level = SentimentLevel.EXTREME_PANIC if score < 30 else SentimentLevel.EXTREME_GREED
+            # 按信号内容分类：恐慌类（极端恐慌/跌停/北向流出/炸板/QVIX）vs 贪婪类（极度贪婪）
+            panic_extreme = [s for s in extreme_signals if "贪婪" not in s]
+            greed_extreme = [s for s in extreme_signals if "贪婪" in s]
+            if panic_extreme and not greed_extreme:
+                level = SentimentLevel.EXTREME_PANIC
+            elif greed_extreme and not panic_extreme:
+                level = SentimentLevel.EXTREME_GREED
+            else:
+                # 两类信号同时存在，回退到分数阈值
+                level = SentimentLevel.EXTREME_PANIC if score < 30 else SentimentLevel.EXTREME_GREED
         elif len(panic_signals) >= 3:
             level = SentimentLevel.PANIC
         elif len(panic_signals) >= 1 and len(greed_signals) >= 1:

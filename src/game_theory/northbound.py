@@ -341,13 +341,15 @@ class NorthboundAnalyzer:
 
         try:
             import akshare as ak
-            df = ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
+            from src.data.akshare import _akshare_call
+            # 新版 API: stock_hsgt_fund_flow_summary_em（旧版 stock_hsgt_north_net_flow_in_em 已移除）
+            df = _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
             if df is not None and len(df) > 0:
-                for col in ["净流入", "当日净流入", "资金流向"]:
-                    if col in df.columns:
-                        val = float(pd.to_numeric(df[col], errors="coerce").iloc[-1])
-                        self._mem_set(cache_key, val)
-                        return val
+                north = df[df["资金方向"] == "北向"]
+                if north is not None and len(north) > 0:
+                    val = float(pd.to_numeric(north["成交净买额"], errors="coerce").sum())
+                    self._mem_set(cache_key, val)
+                    return val
         except Exception as e:
             logger.debug("AKShare northbound fallback failed: %s", e)
         return None
