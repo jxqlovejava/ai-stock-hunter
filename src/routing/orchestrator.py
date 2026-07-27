@@ -49,6 +49,7 @@ from src.output.step_output import (
     print_verdict, print_positioning, print_risk_control,
     print_source_citations, print_t0, print_deep_research,
     print_sector_impact_summary, print_news_context,
+    print_fundamental_diagnosis, print_manipulation_info,
 )
 from src.output.markdown_report import save_markdown_report
 
@@ -312,11 +313,143 @@ class Orchestrator:
         quote_dict["cross_validated"] = cross_validated
         quote_dict["dispute"] = dispute
 
-        # 计算 MA20/MA60 + close_series 用于反追高检查
-        self._inject_ma_data(symbol, quote_dict)
+        # ── Phase 0: 并行预拉取 K线/财务/宏观/北向/板块/大宗/盈利修正/全球市场/情绪 ──
+        # 消除重复网络调用 (修复前: K线×3, 财务×2, 行情×2, 各阶段串行IO)
+        _bars_df_cache = None
+        _close_series_cache: list[float] = []
+        _fin_cache: list[dict] = []
+        _macro_regime = None
+        _nb_profile = None
+        _sector_flow = None
+        _bt_profile = None
+        _earnings_factor = None
+        _global_market = None
+        _sentiment = None
+
+        def _io_bars_and_fin():
+            nonlocal _bars_df_cache, _close_series_cache, _fin_cache
+            import pandas as pd
+            try:
+                _bars_df_cache = self.data.get_history(
+                    symbol, start_date="", end_date="", period="daily")
+                if _bars_df_cache is not None and not getattr(_bars_df_cache, "empty", True):
+                    col_map = {
+                        "open": "open", "high": "high", "low": "low",
+                        "close": "close", "volume": "volume", "vol": "volume",
+                        "开盘": "open", "最高": "high", "最低": "low",
+                        "收盘": "close", "成交量": "volume",
+                    }
+                    if hasattr(_bars_df_cache, "rename"):
+                        _bars_df_cache = _bars_df_cache.rename(
+                            columns={c: col_map[c] for c in _bars_df_cache.columns if c in col_map})
+            except Exception:
+                pass
+            if _bars_df_cache is not None and not _bars_df_cache.empty:
+                c_col = _bars_df_cache["close"] if "close" in _bars_df_cache.columns else None
+                if c_col is not None and len(c_col) > 0:
+                    _close_series_cache = c_col.tolist()
+            try:
+                fins = self.data.get_financials(symbol, market, count=12)
+                _fin_cache = [f.model_dump() for f in (fins or [])] if fins else []
+            except Exception:
+                pass
+
+        def _io_macro():
+            nonlocal _macro_regime
+            try:
+                _macro_regime = self._get_macro_regime()
+            except Exception:
+                pass
+
+        def _io_northbound():
+            nonlocal _nb_profile
+            try:
+                _nb_profile = self._get_northbound_profile()
+            except Exception:
+                pass
+
+        def _io_sector_flow():
+            nonlocal _sector_flow
+            try:
+                _sector_flow = self.data.get_sector_capital_flow()
+            except Exception:
+                pass
+
+        def _io_block_trade():
+            nonlocal _bt_profile
+            try:
+                _bt_profile = self._get_block_trade_profile(symbol)
+            except Exception:
+                pass
+
+        def _io_earnings():
+            nonlocal _earnings_factor
+            try:
+                _earnings_factor = self._get_earnings_revision(symbol)
+            except Exception:
+                pass
+
+        def _io_global_market():
+            nonlocal _global_market
+            try:
+                _global_market = self.data.get_global_market()
+            except Exception:
+                try:
+                    _global_market = self.data.get_us_overnight()
+                except Exception:
+                    pass
+
+        def _io_sentiment():
+            nonlocal _sentiment
+            try:
+                from src.sentiment.signals import SentimentDetector
+                _sentiment = SentimentDetector().detect_market()
+            except Exception:
+                pass
+
+        io_tasks = {
+            "bars+fin": _io_bars_and_fin,
+            "macro": _io_macro,
+            "northbound": _io_northbound,
+            "sector_flow": _io_sector_flow,
+            "block_trade": _io_block_trade,
+            "earnings": _io_earnings,
+            "global_market": _io_global_market,
+            "sentiment": _io_sentiment,
+        }
+        with ThreadPoolExecutor(max_workers=len(io_tasks)) as pool:
+            futures = {pool.submit(fn): label for label, fn in io_tasks.items()}
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception:
+                    logger.debug("Phase 0 IO %s failed", futures[f])
+
+        # 从缓存注入 MA + close_series (替代 _inject_ma_data)
+        if len(_close_series_cache) >= 60:
+            import pandas as pd
+            try:
+                quote_dict["ma20"] = float(pd.Series(_close_series_cache).rolling(20).mean().iloc[-1])
+                quote_dict["ma60"] = float(pd.Series(_close_series_cache).rolling(60).mean().iloc[-1])
+            except Exception:
+                quote_dict["ma20"] = quote_dict["ma60"] = None
+            quote_dict["close_series"] = _close_series_cache[-10:]
+        elif len(_close_series_cache) >= 20:
+            import pandas as pd
+            try:
+                quote_dict["ma20"] = float(pd.Series(_close_series_cache).rolling(20).mean().iloc[-1])
+            except Exception:
+                quote_dict["ma20"] = None
+            quote_dict["ma60"] = None
+            quote_dict["close_series"] = _close_series_cache[-10:]
+        elif _close_series_cache:
+            quote_dict["ma20"] = quote_dict["ma60"] = None
+            quote_dict["close_series"] = _close_series_cache
 
         cv_label = "✅ 双源一致" if cross_validated else "⚠️ 单源"
-        step_done("✅", f"价格 {quote.price:.2f}  {cv_label}")
+        step_done("✅", f"价格 {quote.price:.2f}  {cv_label} | "
+                  f"K线{len(_close_series_cache)}根 财务{len(_fin_cache)}期 "
+                  f"IO并行{len(io_tasks)}路")
 
         # 加载投资者偏好
         investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
@@ -409,8 +542,8 @@ class Orchestrator:
         )
         self._inject_bottom_structure_ctx(symbol, market, quote_dict, ctx)
 
-        # 注入 r032/r033/r034 财务质量军规所需上下文
-        self._inject_financial_doctrine_ctx(symbol, market, ctx)
+        # 从 Phase 0 缓存注入财务军规上下文 (避免 _inject_financial_doctrine_ctx 重复拉取)
+        _inject_financial_doctrine_from_cache(_fin_cache, ctx)
 
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
@@ -454,22 +587,19 @@ class Orchestrator:
         _wf = ["🏥军规✅", "🚪准入", "🌐增强上下文", "📊多维诊断", "🎭辩论/Munger", "⏱️T+0", "⚖️裁决", "💰调度/🛡️风控", "📊溯源"]
         print(f"\n  📋 分析管道: {' → '.join(_wf)}")
 
-        # Step 2: 准入检查 — 尝试从数据源获取实际上市日期
+        # Step 2: 准入检查 — 复用 Phase 0 已拉取的 quote
         step_start(3, "准入检查 (ST/次新/流动性/停牌)")
         gate_ctx = {
             "is_limit_up": False,
             "is_limit_down": False,
             "is_suspended": False,
         }
-        try:
-            q = self.data.get_quote(symbol, market)
-            if q:
-                if q.listing_date:
-                    gate_ctx["listing_date"] = q.listing_date
-                if q.turnover and q.turnover > 0:
-                    gate_ctx["avg_daily_volume"] = float(q.turnover)
-        except Exception:
-            pass  # 数据不可用时使用 admission 的默认值
+        # 复用 Phase 0 的 quote (不再重复拉取)
+        if quote:
+            if quote.listing_date:
+                gate_ctx["listing_date"] = quote.listing_date
+            if quote.turnover and quote.turnover > 0:
+                gate_ctx["avg_daily_volume"] = float(quote.turnover)
         gate_result = self.admission.check(symbol, name, gate_ctx)
         result.gate_status = gate_result.status.value
         if gate_result.status.value == "REJECTED":
@@ -482,16 +612,25 @@ class Orchestrator:
 
         # ---- Phase 2.5: 宏观事件因果链分析 ----
         step_start(4, "增强上下文 (宏观/北向/盈利修正/反操纵)")
-        # 美股隔夜大盘快照提前获取，供宏观事件传导链使用
-        us_overnight = self.data.get_us_overnight()
+        # 复用 Phase 0 预拉结果 + 全球市场
+        us_overnight_val = None
+        if _global_market:
+            gm_dict = _global_market.to_dict()
+            us_data = gm_dict.get("us", {})
+            if us_data:
+                us_overnight_val = us_data
+                result.us_overnight = us_data
+        if us_overnight_val is None:
+            result.data_gaps.append("[DATA_GAP] 全球市场数据不可用")
+
         if macro_event_desc:
             try:
-                current_macro = {"us_overnight": us_overnight.to_dict()} if us_overnight else {}
+                current_macro = {"us_overnight": us_overnight_val} if us_overnight_val else {}
                 event_result = self.run_macro_event(
                     event_description=macro_event_desc,
                     category=macro_event_category,
                     stock_symbol=symbol,
-                    stock_sector="",  # 由 diagnosis 阶段补充
+                    stock_sector="",
                     current_macro=current_macro,
                 )
                 if event_result is not None:
@@ -499,13 +638,14 @@ class Orchestrator:
             except Exception as e:
                 logger.debug("Macro event analysis failed: %s", e)
 
-        # ---- Phase 3: 增强上下文 ----
-        macro_regime = self._get_macro_regime()
-        nb_profile = self._get_northbound_profile()
-        sector_flow = self.data.get_sector_capital_flow()
-        bt_profile = self._get_block_trade_profile(symbol)
-        earnings_factor = self._get_earnings_revision(symbol)
-        topic_adj = self._get_topic_adjustments()
+        # 复用 Phase 0 缓存 (消除 6 次串行 TCP 调用)
+        macro_regime = _macro_regime
+        nb_profile = _nb_profile
+        sector_flow = _sector_flow
+        bt_profile = _bt_profile
+        earnings_factor = _earnings_factor
+        global_market = _global_market
+        topic_adj = self._get_topic_adjustments()  # 本地数据, 无网络
 
         # Phase 11: 宏观象限前置 — 计算各维度权重调整
         regime_adjustments = None
@@ -571,6 +711,10 @@ class Orchestrator:
 
         # 增强宏观 dict
         enriched_macro = macro or {}
+        # 注入全球市场信息 (美股+日韩+恒生+A股大盘)
+        if global_market:
+            enriched_macro["global_market"] = global_market.to_dict()
+            enriched_macro["global_market_summary"] = global_market.summary
         if fiscal_regime is not None:
             enriched_macro.update({
                 "fiscal_deficit_ratio": getattr(fiscal_regime, "deficit_ratio", None),
@@ -621,10 +765,10 @@ class Orchestrator:
         if policy_transmission:
             enriched_macro["policy_transmission"] = policy_transmission
 
-        # ---- 注入美股隔夜大盘快照 ----
-        if us_overnight is not None:
-            enriched_macro["us_overnight"] = us_overnight.to_dict()
-            result.us_overnight = us_overnight.to_dict()
+        # ---- 注入全球市场大盘快照 (Phase 0 预拉) ----
+        if _global_market is not None:
+            enriched_macro["global_market"] = _global_market.to_dict()
+            enriched_macro["global_market_summary"] = _global_market.summary
         else:
             result.data_gaps.append("[DATA_GAP] 美股隔夜数据不可用")
 
@@ -659,6 +803,7 @@ class Orchestrator:
             enriched_macro["q2_dominant_player"] = fd_report.q2.dominant_player
             enriched_macro["q2_marginal_ranking"] = fd_report.q2.marginal_pricer_ranking
             enriched_macro["q3_info_advantage"] = fd_report.q3.information_advantage_score
+            print_fundamental_diagnosis(result.fundamental_diagnosis)
         except Exception as e:
             logger.debug("Fundamental diagnosis unavailable: %s", e)
 
@@ -722,7 +867,7 @@ class Orchestrator:
                 price_change_pct=(quote.change_pct if quote else 0.0) / 100.0,
             )
 
-            # 日级操纵检测
+            # 日级操纵检测 — 需要 list[dict] 格式，留原调用
             daily_detector = DailyManipulationDetector()
             daily_bars = self.data.get_daily_bars(symbol, market, count=40) if hasattr(self.data, 'get_daily_bars') else None
             _wash_daily_bars = daily_bars
@@ -952,11 +1097,11 @@ class Orchestrator:
 
         # Step 3: 多维诊断
         step_start(5, "多维诊断 (宏观/价值/质量/动量/盈利修正/瓶颈/情绪)")
-        # 使用真实行情 + 财务数据（8 期以计算同比增速）
-        fin_list = [f.model_dump() for f in self.data.get_financials(symbol, market, count=8)]
-        # 计算同比增速并注入 financial dict
-        fin_list = self._attach_yoy_growth(fin_list)
-        sentiment_dict = self._get_sentiment(nb_profile)
+        # 复用 Phase 0 缓存的财务数据
+        fin_list = list(_fin_cache[:8]) if _fin_cache else []
+        fin_list = self._attach_yoy_growth(fin_list) if fin_list else []
+        # 情绪 — 复用 Phase 0 预拉
+        sentiment_dict = _sentiment_to_dict(_sentiment) if _sentiment is not None else self._get_sentiment(nb_profile)
 
         # 注入融资融券 + Monitor 信号到增强上下文
         if margin_profile is not None:
@@ -1023,8 +1168,8 @@ class Orchestrator:
         scores = f"宏观{report.macro_score:.0f} 价值{report.value_score:.0f} 质量{report.quality_score:.0f} 动量{report.momentum_score:.0f} 股吧热度{report.guba_heat_score:.0f}"
         step_done("✅", scores)
         _wf[3] = "📊多维诊断✅"
-        if us_overnight is not None:
-            print(f"\n  🌙 美股隔夜: {us_overnight.summary}")
+        if _global_market is not None:
+            print(f"\n  🌏 全球市场: {_global_market.summary}")
         print_diagnosis(report, result.mental_model_info)
         print_admission(result.gate_status, market_sentiment=sentiment_dict, data_gaps=result.data_gaps, red_lines=result.red_lines)
         if report_source_citations_gap:
@@ -1516,6 +1661,9 @@ class Orchestrator:
                 logger.debug("Monitor Event creation failed: %s", e)
 
         print_source_citations(report, result.verdict)
+        # 🕵️ 反操纵深扫
+        if result.manipulation_info:
+            print_manipulation_info(result.manipulation_info)
         # 🔔 多通道资讯输出
         if result.news_context:
             print_news_context(result.news_context)
@@ -1992,7 +2140,11 @@ class Orchestrator:
         return result
 
     def _inject_ma_data(self, symbol: str, quote_dict: dict) -> None:
-        """从历史 K 线计算 MA20/MA60 + close_series，注入 quote_dict 用于反追高检查。"""
+        """从历史 K 线计算 MA20/MA60 + close_series，注入 quote_dict 用于反追高检查。
+
+        注意: 此方法内部会拉取 get_history()。如果调用方已有 K线缓存，应直接
+        注入 close_series 避免重复网络调用。返回值 None 表示无法复用结果。
+        """
         try:
             bars = self.data.get_history(symbol, start_date="", end_date="", period="daily")
             if bars is not None and not bars.empty:
@@ -3582,9 +3734,70 @@ def _perspective_to_dict(ps) -> dict:
         "sub_scores": ps.sub_scores,
         "evidence": ps.evidence[:5],
         "unique_insight": ps.unique_insight,
-        "questions": ps.questions_to_ask[:3],
+        "questions_to_ask": ps.questions_to_ask[:3],
         "qa_pairs": getattr(ps, "qa_pairs", [])[:3],  # 问题+回答对
     }
+
+
+def _inject_financial_doctrine_from_cache(fin_list: list[dict], ctx: dict) -> None:
+    """从 Phase 0 缓存的财务数据中提取 r032/r033/r034 军规上下文。
+
+    内联实现，避免 _inject_financial_doctrine_ctx() 内部重新创建
+    DataAggregator 并再次网络拉取财务数据。
+    """
+    if not fin_list:
+        return
+    from collections import defaultdict
+    by_year: dict[int, dict] = defaultdict(lambda: {"roe": None, "ocf": 0.0, "np": 0.0})
+    for f in fin_list:
+        period = f.get("report_period", "")
+        if not period or len(period) < 4:
+            continue
+        try:
+            year = int(period[:4])
+        except ValueError:
+            continue
+        is_q4 = "Q4" in period
+        if is_q4 or by_year[year]["roe"] is None:
+            roe = f.get("roe")
+            if roe is not None:
+                by_year[year]["roe"] = roe
+        ocf = f.get("operating_cash_flow")
+        if ocf is not None:
+            by_year[year]["ocf"] += ocf
+        np_ = f.get("net_profit")
+        if np_ is not None:
+            by_year[year]["np"] += np_
+
+    sorted_years = sorted(by_year.keys())[-3:]
+    ctx["roe_history"] = [
+        by_year[y]["roe"] for y in sorted_years
+        if by_year[y]["roe"] is not None
+    ]
+    ctx["operating_cash_flow_3y"] = sum(by_year[y]["ocf"] for y in sorted_years)
+    ctx["net_profit_3y"] = sum(by_year[y]["np"] for y in sorted_years)
+
+
+def _sentiment_to_dict(sentiment) -> dict:
+    """将 SentimentDetector 输出转为 dict 供 diagnosis 使用。"""
+    if sentiment is None:
+        return {"level": "NORMAL", "score": 50}
+    try:
+        return {
+            "level": (
+                sentiment.level.value
+                if hasattr(sentiment.level, "value")
+                else str(sentiment.level)
+            ),
+            "score": sentiment.score,
+            "advance_decline_ratio": getattr(sentiment, "advance_decline_ratio", 0.5),
+            "northbound_net": getattr(sentiment, "northbound_net", 0.0),
+            "limit_up_count": getattr(sentiment, "limit_up_count", 0),
+            "limit_down_count": getattr(sentiment, "limit_down_count", 0),
+        }
+    except Exception:
+        return {"level": "NORMAL", "score": 50}
+
 
 
 # ── 精简终端输出函数 (每段必出，但只出关键信息) ──────────────────

@@ -645,6 +645,170 @@ def print_news_context(nc: dict) -> None:
         print(f"\n  ⚠️ 部分通道失败: {', '.join(errors[:3])}")
 
 
+# ── 三大根本问题诊断 (Q1/Q2/Q3) ─────────────────────────────────────────
+
+def print_fundamental_diagnosis(fd: dict | None) -> None:
+    """输出三大根本问题诊断：谁在定价 / 什么在驱动 / 我有信息优势吗。"""
+    if not fd or not isinstance(fd, dict):
+        return
+
+    q1 = fd.get("q1", {}) or {}
+    q2 = fd.get("q2", {}) or {}
+    q3 = fd.get("q3", {}) or {}
+
+    has_content = any([
+        q1.get("classification"), q2.get("dominant_player"),
+        q3.get("information_advantage_score"),
+    ])
+    if not has_content:
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  🔍 三大根本问题诊断")
+    print(f"{'='*60}")
+
+    # Q1: 现在是什么市场？
+    if q1.get("classification") or q1.get("primary_driver"):
+        cls_cn = {
+            "STRUCTURAL_BULL": "🟢 结构性牛市",
+            "CYCLICAL_BULL": "🟢 周期性牛市",
+            "LIQUIDITY_DRIVEN": "🟡 流动性驱动",
+            "RANGE_BOUND": "🟡 区间震荡",
+            "STRUCTURAL_BEAR": "🔴 结构性熊市",
+            "CYCLICAL_BEAR": "🔴 周期性熊市",
+            "CRISIS": "🔴 危机模式",
+        }.get(str(q1.get("classification")), str(q1.get("classification", "?")))
+        driver_cn = {
+            "POLICY": "政策驱动", "LIQUIDITY": "流动性驱动",
+            "EARNINGS": "盈利驱动", "SENTIMENT": "情绪驱动",
+            "EXTERNAL": "外部冲击", "TECHNICAL": "技术面驱动",
+        }.get(str(q1.get("primary_driver")), str(q1.get("primary_driver", "?")))
+        print(f"  Q1: 现在是什么市场？")
+        print(f"     分类: {cls_cn}")
+        print(f"     主驱动: {driver_cn}")
+        if q1.get("confidence"):
+            print(f"     置信度: {q1['confidence']:.0%}")
+        if q1.get("rationale"):
+            print(f"     依据: {q1['rationale']}")
+
+    # Q2: 谁在定价？
+    if q2.get("dominant_player") or q2.get("marginal_pricer_ranking"):
+        dp_cn = {
+            "institutional": "机构", "hot_money": "游资",
+            "northbound": "北向资金", "retail": "散户",
+            "national_team": "国家队", "quant": "量化",
+            "mixed": "多力量博弈",
+        }.get(str(q2.get("dominant_player")), str(q2.get("dominant_player", "?")))
+        print(f"\n  Q2: 谁在定价？")
+        print(f"     主导力量: {dp_cn}")
+        ranking = q2.get("marginal_pricer_ranking", []) or []
+        if ranking:
+            ranked = []
+            for item in ranking[:4]:
+                if isinstance(item, dict):
+                    name = dp_cn.get(item.get("player", ""), item.get("player", "?"))
+                    ranked.append(f"{name}({item.get('influence', 0):.0%})")
+                else:
+                    ranked.append(dp_cn.get(str(item), str(item)))
+            print(f"     边际定价者排序: {' > '.join(ranked)}")
+        if q2.get("rationale"):
+            print(f"     依据: {q2['rationale']}")
+
+    # Q3: 我有信息优势吗？
+    if q3.get("information_advantage_score") is not None:
+        score = float(q3["information_advantage_score"])
+        bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
+        level = "🟢 有优势" if score >= 60 else ("🟡 一般" if score >= 40 else "🔴 无优势")
+        print(f"\n  Q3: 我有信息优势吗？")
+        print(f"     {bar} {score:.0f}/100  {level}")
+        if q3.get("known_unknowns"):
+            print(f"     已知未知: {q3['known_unknowns']}")
+        if q3.get("rationale"):
+            print(f"     依据: {q3['rationale']}")
+
+
+# ── 反操纵深扫 ───────────────────────────────────────────────────────────
+
+def print_manipulation_info(mi: dict | None) -> None:
+    """输出反操纵深扫结果：芯片风险/日内形态/资金背离/洗盘周期。"""
+    if not mi or not isinstance(mi, dict):
+        return
+
+    has_content = any(k in mi for k in [
+        "chip_risk", "daily_pattern", "capital_divergence",
+        "wash_cycle", "washout_risk", "overall_risk",
+    ])
+    if not has_content:
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  🕵️ 反操纵深扫")
+    print(f"{'='*60}")
+
+    # 芯片风险
+    chip = mi.get("chip_risk")
+    if isinstance(chip, (int, float)):
+        bar = "█" * min(10, int(chip / 10)) + "░" * max(0, 10 - int(chip / 10))
+        level = "🔴 高" if chip >= 60 else ("🟡 中" if chip >= 30 else "🟢 低")
+        print(f"  芯片风险: {bar} {chip:.0f}/100  {level}")
+
+    # 日内操纵形态
+    pattern = mi.get("daily_pattern", "")
+    if pattern:
+        pattern_cn = {
+            "fishing_line": "钓鱼线出货", "lure_bull_dump": "诱多出货",
+            "closing_pump": "尾盘拉升", "closing_dump": "尾盘砸盘",
+            "wash_trade_pump": "对倒拉升", "shakeout": "洗盘震仓",
+            "news_distribution": "消息配合出货", "normal": "✅ 正常",
+        }
+        for k, v in pattern_cn.items():
+            if k in str(pattern):
+                print(f"  日内形态: {v}")
+                break
+        else:
+            print(f"  日内形态: {pattern}")
+
+    # 资金背离
+    div = mi.get("capital_divergence", {})
+    if isinstance(div, dict) and div:
+        score = div.get("score", 0)
+        div_type = div.get("type", "")
+        bar = "█" * min(10, int(score / 10)) + "░" * max(0, 10 - int(score / 10))
+        print(f"  资金背离: {bar} {score:.0f}/100  类型:{div_type}")
+        if div.get("recommendation"):
+            print(f"    {div['recommendation']}")
+
+    # 洗盘周期
+    wc = mi.get("wash_cycle")
+    if isinstance(wc, dict):
+        phase = wc.get("phase", "?")
+        phase_cn = {
+            "BREAKDOWN": "🔴 破位洗盘", "WASHING": "🟡 洗盘中",
+            "ABSORPTION": "🟢 吸筹中", "DISTRIBUTION": "🔴 出货中",
+            "UNKNOWN": "⚪ 无法判断",
+        }.get(str(phase), str(phase))
+        print(f"  洗盘周期: {phase_cn}")
+        if wc.get("days_in_cycle"):
+            print(f"    已持续 {wc['days_in_cycle']} 天")
+        conf = wc.get("confidence", 0)
+        if conf:
+            print(f"    置信度 {conf:.0%}")
+
+    # 洗盘风险（整体）
+    wr = mi.get("washout_risk")
+    if isinstance(wr, (int, float)):
+        bar = "█" * min(10, int(wr / 10)) + "░" * max(0, 10 - int(wr / 10))
+        level = "🔴 高" if wr >= 60 else ("🟡 中" if wr >= 30 else "🟢 低")
+        print(f"  洗盘风险: {bar} {wr:.0f}/100  {level}")
+
+    # 综合风险
+    overall = mi.get("overall_risk")
+    if isinstance(overall, (int, float)):
+        bar = "█" * min(10, int(overall / 10)) + "░" * max(0, 10 - int(overall / 10))
+        level = "🔴 严重" if overall >= 70 else ("🟠 关注" if overall >= 40 else "🟢 正常")
+        print(f"  综合操纵风险: {bar} {overall:.0f}/100  {level}")
+
+
 # ── Step 11: T+0 日内时机分析 ────────────────────────────────────────
 
 def print_t0(t0_result: dict | None) -> None:

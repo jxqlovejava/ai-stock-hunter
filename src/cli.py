@@ -4850,6 +4850,70 @@ def cmd_swing_scan(args: list[str]):
             traceback.print_exc()
 
 
+@_safe_cmd
+def cmd_tactics(args: list[str]):
+    """短线战术分析 — 聚焦买卖时机判断。
+
+    用于选股管道选出好公司后，快速确认买入/卖出时机。
+
+    用法:
+      python -m src tactics 002415               # 标准模式 (10-12s)
+      python -m src tactics 002415 --fast        # 极速模式 (2-3s, 跳过辩论/芒格)
+      python -m src tactics 002415 --no-t0       # 盘后跳过T+0
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="短线战术分析 — 买卖时机判断")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--no-t0", action="store_true", dest="no_t0",
+                        help="跳过 T+0 日内时机分析（盘后推荐）")
+    parser.add_argument("--fast", action="store_true", dest="fast",
+                        help="极速模式: 跳过四大师辩论+芒格模型 (2-3s)")
+    parser.add_argument("--name", type=str, default="", help="股票名称（可选）")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src tactics <code> [--no-t0] [--fast]")
+        print()
+        print("短线战术分析 — 4-Phase 管道 (交易员思维模型):")
+        print("  Phase 0: 并行预拉 (行情/K线/财务/融资/板块/情绪)")
+        print("  Phase 1: 盘面全景 (市场背景/基本面/技术面/资金面)")
+        print("  Phase 2: 军规过筛 → 辩论‖芒格‖T+0")
+        print("  Phase 3: 裁决+仓位+风控")
+        print()
+        print("选项:")
+        print("  --fast     极速模式 2-3s (跳过辩论+芒格)")
+        print("  --no-t0    盘后模式 (跳过T+0)")
+        print()
+        print("与选股(diagnose/analyze)的区别:")
+        print("  跳过了准入/宏观/北向/盈利修正/Alpha/多维诊断/反操纵深扫")
+        print("  跳过了质量审查/情景估值/行业公司深度")
+        print("  新增了融资融券/板块资金流向/市场情绪/完整技术面")
+        print("  保留了军规(降级warn)/辩论/芒格/裁决/仓位管理")
+        return
+
+    if not _validate_symbol(symbol):
+        return
+
+    from src.routing.orchestrator import Orchestrator
+    from src.routing.tactics import run_tactics
+
+    orch = Orchestrator()
+    result = run_tactics(
+        orch,
+        symbol=symbol,
+        market=_infer_market(symbol),
+        name=parsed.name,
+        skip_t0=parsed.no_t0,
+        skip_debate=parsed.fast,
+    )
+
+    if result.warnings and not result.doctrine_passed:
+        print(f"\n⛔ 军规阻断: {', '.join(result.warnings[:5])}")
+        return
+
+
 # ---------------------------------------------------------------------------
 # 策略竞技场
 # ---------------------------------------------------------------------------
@@ -4881,6 +4945,17 @@ def _print_command_detail(cmd: str) -> None:
         "sentiment": ("python -m src sentiment", "市场情绪信号检测（恐慌/贪婪/极端）", []),
         "backtest": ("python -m src backtest", "运行策略回测", []),
         "technical": ("python -m src technical <code> [--name 名称]", "技术分析报告（六维评分 + 入场/出场时机）", ["--name: 股票名称（可选）"]),
+        "tactics": ("python -m src tactics <code> [--fast] [--no-t0]", "短线战术管道 — 买卖时机判断 (4-Phase 架构)", [
+            "--fast: 极速模式 2-3s (跳过辩论+芒格)",
+            "--no-t0: 跳过T+0日内分析（盘后使用）",
+            "--name: 股票名称（可选）",
+            "",
+            "4-Phase 管道:",
+            "  Phase 0: 6路并行预拉 (行情/K线/财务/融资/板块/情绪)",
+            "  Phase 1: 盘面全景 (市场背景/基本面/技术面/资金面)",
+            "  Phase 2: 军规→辩论‖芒格‖T+0",
+            "  Phase 3: 裁决+仓位+风控",
+        ]),
         "sweep": ("python -m src sweep", "自选股扫雷（检查所有自选股风险）", []),
         "preference": ("python -m src preference <view|setup|edit|reset>", "投资者偏好管理", ["view: 查看当前配置", "setup: 交互式设置向导", "edit: 编辑配置", "reset: 重置为默认"]),
         "preview-earnings": ("python -m src preview-earnings [code] [--consensus N] [--q2-shipment N]", "业绩先行研判 — 基于锂盐价格等高频公开数据测算Q2业绩", ["code: 股票代码 (默认002460 赣锋锂业)", "--consensus: 机构一致预期Q2净利(亿元)", "--q2-shipment: Q2锂盐出货量(千吨LCE)", "--no-sensitivity: 跳过敏感性分析"]),
@@ -5033,6 +5108,7 @@ _NL_ROUTES: list[dict] = [
     {"keys": ["分析", "诊断", "看看", "analyze", "diagnose", "怎么样", "如何"], "cmd": "diagnose", "help": "python -m src diagnose <code>  # 需要股票代码"},
     {"keys": ["形态", "k线", "蜡烛", "candlestick", "技术形态"], "cmd": "patterns", "help": "python -m src patterns <code>  # 需要股票代码"},
     {"keys": ["短线", "波段", "技术分析", "入场", "出场", "technical", "swing"], "cmd": "technical", "help": "python -m src technical <code>  # 需要股票代码"},
+    {"keys": ["买点", "卖点", "能买吗", "现在能买", "现在能进", "什么时候买", "什么时候卖", "止损", "止盈", "止损设", "能进吗", "还能拿", "还能拿吗", "加仓", "减仓", "tactics"], "cmd": "tactics", "help": "python -m src tactics <code>  # 需要股票代码"},
     {"keys": ["新手", "引导", "入门", "开始", "帮助", "help", "start", "怎么用", "如何使用"], "cmd": "start", "help": "python -m src start"},
     {"keys": ["自选", "盯盘", "扫雷", "watchlist", "sweep", "预警", "alert"], "cmd": "sweep", "help": "python -m src sweep"},
     {"keys": ["进化", "学习", "策略进化", "论文", "evolution"], "cmd": "evolution list", "help": "python -m src evolution list"},
@@ -5832,6 +5908,7 @@ def main():
         print("  alert panic <code>      恐慌套利检查")
         print()
         print("⚡ 短线/波段 (NEW):")
+        print("  tactics <code>          短线战术管道 (选股后确认买卖时机)")
         print("  technical <code>        技术分析报告 (六维评分)")
         print("  swing-scan              波段选股扫描")
         print("  monitor [start|once]    实时盯盘监控")
@@ -5947,6 +6024,7 @@ def main():
         "sweep": lambda: cmd_sweep(args),
         "alert": lambda: cmd_alert(args),
         # Phase 7: 短线/波段
+        "tactics": lambda: cmd_tactics(args),
         "monitor": lambda: cmd_monitor(args),
         "technical": lambda: cmd_technical(args),
         "swing-scan": lambda: cmd_swing_scan(args),

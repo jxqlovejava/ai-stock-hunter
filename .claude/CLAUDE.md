@@ -77,6 +77,7 @@ CLI (src/cli.py) → Orchestrator → 军规 → 准入检查 → 多维诊断 �
 | `serenity-bottleneck` | Serenity 先层后票/卡点挑战/研究优先级 |
 | `backtest-engine` | 策略回测 |
 | `stock-attribution` | 个股涨跌归因（3阶段强制workflow） |
+| `tactics` | 短线战术管道（买卖时机判断，选股后用） |
 
 ## CLI
 
@@ -234,6 +235,68 @@ feedback add       # 添加交易反馈
 
 结论：PE 对比产生的初步判断有 80% 的误判率。**必须跑完管道再下结论。**
 
+### 场景六：短线战术（买点卖点确认）
+
+**触发词**: 能买吗、什么时候买、买点、卖点、止损怎么设、止盈目标、现在能进吗、XX还能拿吗、加仓、减仓
+
+**使用前提**: 该股票已通过选股管道（场景一）或用户明确指定要分析买卖时机。
+
+**强制使用 `tactics` CLI 命令**（不跑选股全链路）：
+
+```bash
+python -m src tactics <code>            # 完整短线战术
+python -m src tactics <code> --no-t0    # 盘后跳过 T+0
+```
+
+| 阶段 | 执行模块 | 方式 |
+|------|---------|------|
+| 1. 行情获取 | 双源交叉验证 | 自动 |
+| 2. 军规门禁 | 31条重点规则（追高/急跌/财务红线） | 自动 |
+| 3. 轻诊断 | 价值/质量/动量 3 维快速确认 | 自动 |
+| 4. 技术 6 维评分 | 趋势/反转/量价/波动/均线/打板 | 自动 |
+| 5. 入场/出场信号 | 突破/金叉/回踩/超卖/底部结构 + 放量滞涨/超买/均线破位 | 自动 |
+| 6. 博弈论融合 | `gt_timing` — 谁在定价/拥挤度/席位/玩家风格匹配 | 自动 |
+| 7. 四大师辩论 | 时机视角辩论（"现在入场的风险收益比"） | 自动 |
+| 8. 芒格思维模型 | 时机匹配模型（机会成本/逆向思维/确认偏误/锚定效应） | 自动 |
+| 9. T+0 日内时机 | 分时形态/量价配合 | 自动 |
+| 10. MACD+KDJ 五法 | 金叉死叉交叉验证 | 自动 |
+| 11. 综合裁决 | 加权评分 + 置信度 | 自动 |
+| 12. 仓位/风控 | 仓位建议 + 止损设置 | 自动 |
+
+> ⚠️ **与选股管道的区别**：
+> - 跳过：准入检查/宏观象限/北向资金/盈利修正/Alpha Lens/多维诊断6维/反操纵深扫/质量审查/情景估值/行业公司深度
+> - 保留：军规/四大师辩论/芒格思维模型/综合裁决/仓位调度/风控执行
+> - 新增：技术6维全量/入场出场信号/博弈论融合/MACD+KDJ五法
+> - 耗时：20-35s（vs 选股全链路 30-90s）
+
+> ⚠️ **T+0 使用规则**：盘后或 AI 辅助场景建议 `--no-t0` 跳过日内噪音。
+> ⚠️ **选股后再用**：tactics 不做选股判断（无 Alpha Lens、无行业深度），
+>   必须先通过 diagnose/analyze 确认是好公司，再用 tactics 确认买入时机。
+
+### 三管道对照
+
+| 维度 | 选股(full/daily) | 短线战术(tactics) | 持仓体检(light) |
+|------|:---:|:---:|:---:|
+| CLI | `diagnose`/`analyze` | `tactics` | `diagnose --light` |
+| 阶段数 | 14-16 | 12 | 8 |
+| 耗时 | 30-90s | 20-35s | 5-15s |
+| 核心问题 | 这是好公司吗？ | 现在是好时机吗？ | 持仓有问题吗？ |
+| 军规 | ✅ 31条 | ✅ 31条 | ✅ 31条 |
+| 准入 | ✅ | ❌ | ✅ |
+| 宏观/北向/盈利修正 | ✅ | ❌ | ❌ |
+| Alpha Lens | ✅ | ❌ | ❌ |
+| 多维诊断 | ✅ 6维 | ❌ (轻3维) | ❌ (轻3维) |
+| 技术6维 | ❌ (T+0小部分) | ✅ 完整 | ❌ |
+| 入场/出场信号 | ❌ | ✅ | ✅ |
+| 博弈论融合 | ✅ | ✅ | ✅ |
+| 四大师辩论 | ✅ | ✅ (时机视角) | ❌ |
+| 芒格模型 | ✅ | ✅ (时机匹配) | ❌ |
+| 反操纵扫描 | ✅ 深扫 | ❌ (博弈含轻量) | ❌ |
+| 质量审查 | ✅ | ❌ | ❌ |
+| 情景估值 | ✅ | ❌ | ❌ |
+| 行业+公司深度 | ✅(deep) | ❌ | ❌ |
+| 裁决+仓位+风控 | ✅ | ✅ | ✅ |
+
 ## 参考项目
 
 设计决策、风控机制、回测逻辑、Agent 编排、产业链研究时，优先查阅以下参考项目。重点借鉴其**业务逻辑设计**而非技术架构。详细分析见 `docs/reference/`。
@@ -250,6 +313,9 @@ feedback add       # 添加交易反馈
 | 8 | go-stock | 本地+GitHub | AI Agent 多模式 / 工具分组路由 / MCP+Skill 扩展 | [分析](docs/reference/go-stock-dev-analysis.md) |
 | 9 | OpenStock | 本地+GitHub | Next.js 全栈参考 / Inngest 后台作业 / Finnhub 集成模式 | [分析](docs/reference/openstock-analysis.md) |
 | 10 | worth-buy-stocks | 本地+GitHub | 分层评分引擎 / SQLite 缓存架构 / cache-only 回测 / Agent 契约门禁 | [分析](docs/reference/worth-buy-stocks-analysis.md) |
+| 11 | free-stockdb | 本地+GitHub | 本地数据引擎 / 增量同步 / LevelDB 缓存 / 查询时复权 / 自实现 MCP | [分析](docs/reference/free-stockdb-analysis.md) |
+| 12 | TradingView Lightweight Charts | 本地+GitHub | K 线图渲染引擎 / Model-View-Renderer 三层分离 / 插件扩展体系 / Scale 坐标映射 / Canvas 性能优化 | [分析](docs/reference/tradingview-lightweight-charts-analysis.md) |
+| 13 | Kronos | GitHub | Foundation Model / BSQ Tokenizer / K 线语言建模 / 多粒度时序预训练 / Qlib A 股集成管道 | [分析](docs/reference/kronos-analysis.md) |
 
 ## 开发工作流
 

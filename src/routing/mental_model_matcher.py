@@ -68,6 +68,29 @@ class MentalModelMatcher:
         "macro_loose": ["货币宽松", "降息周期", "信用扩张", "流动性泛滥", "热钱涌入"],
         "cycle_peak": ["周期顶点", "经济过热", "产能过剩", "拐点", "盛极而衰"],
         "cycle_trough": ["周期底部", "困境反转", "复苏萌芽", "否极泰来"],
+        # 时机/择时 — 聚焦买卖时机判断（tactics 管道专用）
+        # 关键词分两段：前半段=短线术语（从 question 匹配），后半段=对应的 Munger 概念词（匹配模型描述）
+        "timing_entry": ["买入时机", "入场点", "建仓时机", "抄底时机", "买点确认", "金叉入场",
+                         "突破追涨", "回踩支撑", "底部企稳", "放量突破",
+                         # ↓ Munger 概念映射 — 这些词才真正命中模型描述
+                         "逆向投资", "安全边际", "市场先生", "恐惧贪婪", "价值回归",
+                         "延迟满足", "耐心", "概率思维", "期望值", "凯利公式"],
+        "timing_exit": ["卖出时机", "止盈时机", "止损纪律", "出场点", "死叉离场", "放量滞涨",
+                        "破位止损", "均线破位", "减仓时机", "清仓信号",
+                        # ↓ Munger 概念映射
+                        "损失厌恶", "沉没成本", "承认错误", "割肉", "果断止损",
+                        "机会成本", "拔掉鲜花", "浇灌杂草", "卖出决策", "认知失调"],
+        "timing_discipline": ["时机确认", "耐心等待", "机会成本", "逆向思维", "恐慌买入",
+                              "贪婪卖出", "纪律执行", "不被情绪左右", "等待确定性",
+                              # ↓ Munger 概念映射
+                              "能力圈", "待而不动", "击球区", "打孔卡",
+                              "准备纪律", "理性决策", "冷静分析", "知行合一"],
+        "timing_risk": ["追高风险", "抄底接刀", "止损过宽", "仓位过重", "频繁交易",
+                        "短线博弈", "过度交易", "FOMO追涨", "恐慌抛售",
+                        # ↓ Munger 概念映射
+                        "确认偏误", "过度自信", "从众心理", "羊群行为",
+                        "博傻理论", "非理性繁荣", "自我归因", "幸存者偏差",
+                        "铁锤人倾向", "奖励惩罚超级反应"],
     }
 
     def __init__(self):
@@ -272,6 +295,33 @@ class MentalModelMatcher:
         if question:
             signals[f"question:{question}"] = 0.6  # 问题自带的关键词权重
 
+        # ── 时机上下文检测（tactics 管道） ──
+        # 当 question 包含短线/时机关键词时，激活 timing 信号族
+        if question:
+            q_lower = question.lower()
+            timing_entry_kw = ["入场", "买点", "抄底", "建仓", "突破", "回踩", "金叉", "买入"]
+            timing_exit_kw = ["出场", "卖点", "止盈", "止损", "破位", "死叉", "减仓", "清仓", "卖出"]
+            timing_disc_kw = ["时机确认", "耐心等待", "机会成本", "逆向思维", "纪律执行", "独立思考"]
+            timing_risk_kw = ["追高", "接刀", "博弈", "频繁交易", "恐慌抛售", "FOMO", "去杠杆", "撤退"]
+
+            if any(kw in q_lower for kw in timing_entry_kw):
+                signals["timing_entry"] = 0.65
+            if any(kw in q_lower for kw in timing_exit_kw):
+                signals["timing_exit"] = 0.65
+            if any(kw in q_lower for kw in timing_disc_kw):
+                signals["timing_discipline"] = 0.55
+            if any(kw in q_lower for kw in timing_risk_kw):
+                signals["timing_risk"] = 0.55
+
+            # 如果检测到任意 timing 信号 → 标记为短线上下文
+            if any(sig in signals for sig in ["timing_entry", "timing_exit",
+                                               "timing_discipline", "timing_risk"]):
+                # 降低选股类信号权重（护城河/管理层在短线中不重要）
+                for key in ("quality_strong", "quality_weak", "has_exec_risks",
+                           "has_competition", "has_bottleneck"):
+                    if key in signals:
+                        signals[key] *= 0.5  # 降权选股信号
+
         return signals
 
     # ── 信号 → 加权搜索词 ──
@@ -405,6 +455,10 @@ class MentalModelMatcher:
             "cycle_trough": ["历史学与哲学", "投资学与金融学"],
             "earnings_strong": ["会计学", "投资学与金融学"],
             "earnings_weak": ["会计学", "管理学与商业"],
+            "timing_entry": ["投资学与金融学", "投资原则与品格", "心理学"],
+            "timing_exit": ["投资原则与品格", "心理学", "投资学与金融学"],
+            "timing_discipline": ["投资原则与品格", "心理学", "历史学与哲学"],
+            "timing_risk": ["心理学", "投资原则与品格", "复杂系统"],
         }
 
         for sig, discs in signal_to_disc.items():
@@ -453,6 +507,10 @@ class MentalModelMatcher:
             "macro_loose": "宏观宽松",
             "cycle_peak": "周期高位",
             "cycle_trough": "周期底部",
+            "timing_entry": "入场时机",
+            "timing_exit": "出场时机",
+            "timing_discipline": "时机纪律",
+            "timing_risk": "择时风险",
         }
 
         # 找到该模型实际匹配的关键词来源（按信号分组）
@@ -533,8 +591,17 @@ class MentalModelMatcher:
     def _has_exec_risks(report: Optional[object]) -> bool:
         if report is None:
             return False
-        if getattr(report, "executive_risks", None):
-            return True
+        risks = getattr(report, "executive_risks", None)
+        if risks:
+            # 过滤 "数据不可用" 类占位符 — 这不是真实风险，是数据缺口
+            real_risks = [
+                r for r in risks
+                if not _is_data_gap_risk(r)
+            ]
+            if real_risks:
+                return True
+            # 全部是数据缺口 → 不触发高管风险信号
+            return False
         exec_score = getattr(report, "executive_score", 50) or 50
         return exec_score < 35
 
@@ -570,3 +637,21 @@ class MentalModelMatcher:
                 getattr(report, "red_lines", None) or getattr(report, "warnings", None)
             )
         return portfolio
+
+
+# ── 模块级工具 ──
+
+
+def _is_data_gap_risk(risk_text: str) -> bool:
+    """判断风险文本是否实质上是数据缺口而非真实风险。
+
+    高管数据不可用 / 北向数据缺失 / 板块数据缺失 等都是数据源问题，
+    不应触发高管风险/竞争风险等实质信号。
+    """
+    gap_keywords = [
+        "数据不可用", "数据缺失", "数据暂缺", "暂无数据",
+        "无数据", "数据为空", "数据获取失败", "数据源",
+        "数据不足", "数据异常", "no data", "N/A",
+    ]
+    risk_lower = risk_text.lower()
+    return any(kw.lower() in risk_lower for kw in gap_keywords)

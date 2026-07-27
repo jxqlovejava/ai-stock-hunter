@@ -93,5 +93,6 @@ description: A 股财报分析 — 5 阶段全流程（数据收集→分析→�
 ## 引用
 
 - 详细流程: `references/a-share-workflow.md`
+- **财报拆解输出模板**: `references/earnings-breakdown-template.md` — 14 节固定格式，一手数据、自算核验、跨季度可比
 - 数据源: 东财 datacenter, 巨潮资讯网, 同花顺 iFinD
 - 依赖 Skill: `diagnosis`, `sector-research`
