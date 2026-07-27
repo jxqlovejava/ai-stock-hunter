@@ -772,6 +772,73 @@ class Orchestrator:
         else:
             result.data_gaps.append("[DATA_GAP] 美股隔夜数据不可用")
 
+        # ---- US sector → A股 sector 传导修正 (Stage 4.5) ----
+        # 美股板块层面的异动（如存储/半导体-5%）按传导系数映射到A股板块评分修正
+        try:
+            from src.data.us_sector_transmission import UsSectorTransmissionAdjuster
+            tx_adj = UsSectorTransmissionAdjuster()
+            us_changes = tx_adj.fetch_us_sector_data(_global_market)
+            if us_changes:
+                tx_result = tx_adj.compute(us_changes)
+                if tx_result.data_available:
+                    # 尝试定位该股所属行业
+                    sector_candidates: list[str] = []
+                    try:
+                        from src.industry.classifier import SectorClassifier
+                        sc_inst = SectorClassifier()
+                        sc_result = sc_inst.classify(symbol, name)
+                        sw1 = getattr(sc_result, "sw1_name", "") or ""
+                        if sw1 and sw1 != "未分类":
+                            sector_candidates.append(sw1)
+                    except Exception:
+                        pass
+
+                    # fallback: 名称关键词匹配
+                    if not sector_candidates:
+                        try:
+                            from src.data.us_sector_transmission import guess_sector_from_name
+                            sector_candidates = guess_sector_from_name(name)
+                        except Exception:
+                            pass
+
+                    # 找与该股板块匹配的修正
+                    macro_adjust = 0
+                    matched_reason = ""
+                    for adj_item in tx_result.adjustments:
+                        target = adj_item.sector
+                        matched = any(
+                            target in sc or sc in target
+                            for sc in sector_candidates
+                        ) if sector_candidates else False
+                        if matched:
+                            macro_adjust = adj_item.adjust
+                            matched_reason = adj_item.reason
+                            break
+
+                    enriched_macro["us_sector_transmission"] = {
+                        "macro_adjust": macro_adjust,
+                        "summary": tx_result.summary,
+                        "adjustments": [
+                            {"sector": a.sector, "adjust": a.adjust, "reason": a.reason}
+                            for a in tx_result.adjustments
+                        ],
+                        "signals": tx_result.active_signals,
+                    }
+
+                    sector_label = ",".join(sector_candidates) if sector_candidates else "未知"
+                    if macro_adjust != 0:
+                        result.data_gaps.append(
+                            f"[US传导] {tx_result.summary} → "
+                            f"该股板块({sector_label})修正{macro_adjust:+d} ({matched_reason})"
+                        )
+                    elif tx_result.summary:
+                        result.data_gaps.append(
+                            f"[US传导] {tx_result.summary} → "
+                            f"不匹配该股板块({sector_label}), 未触发修正"
+                        )
+        except Exception as e:
+            logger.debug("US sector transmission computation failed: %s", e)
+
         # ---- Phase 3+: 三大根本问题诊断 ----
         try:
             from src.routing.fundamental_diagnosis import FundamentalDiagnosisEngine

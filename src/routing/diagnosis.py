@@ -839,6 +839,13 @@ class DiagnosisEngine:
             if ns is not None and ns <= -2.5:
                 score -= 3
 
+        # ---- v5 US sector → A股 sector 传导修正 ----
+        us_st = macro.get("us_sector_transmission") if macro else None
+        if us_st:
+            adj_val = us_st.get("macro_adjust", 0)
+            if adj_val != 0:
+                score += adj_val
+
         return max(0, min(100, score))
 
     def _score_value(self, quote: dict, valuation_result: Optional[object] = None,

@@ -378,7 +378,25 @@ def run_briefing(cfg: ChannelConfig, kind: str = "close") -> str:
     if kind == "open":
         us_line = _us_overnight_line()
         if us_line:
-            lines.append(f"美股隔夜：{us_line}")
+            lines.append(f"🌙 隔夜美股：{us_line}")
+
+        # US sector 传导信号（自选+持仓的板块受美股波及时提示）
+        all_syms = list(symbols)  # 先从持仓取
+        if cfg.enable_watchlist:
+            try:
+                wl = _load_watchlist(cfg.watchlist_path)
+                for s in wl:
+                    ws = str(s.get("symbol", ""))
+                    wn = str(s.get("name", ""))
+                    if ws and ws not in all_syms:
+                        all_syms.append(ws)
+                        if wn and ws not in names:
+                            names[ws] = wn
+            except Exception:
+                pass
+        tx_lines = _us_sector_transmission_lines(all_syms, names)
+        if tx_lines:
+            lines.extend(tx_lines)
 
     if pos:
         lines.append("持仓：")
@@ -392,9 +410,10 @@ def run_briefing(cfg: ChannelConfig, kind: str = "close") -> str:
                     if stop and stop > 0 and q.price > 0
                     else None
                 )
+                prefix = "昨收" if kind == "open" else "今日"
                 bit = (
-                    f"· {name or sym}({sym}) {q.price:.2f}"
-                    f"（今日{q.change_pct:+.1f}%"
+                    f"· {name or sym}({sym}) {prefix} {q.price:.2f}元"
+                    f"（{prefix}{q.change_pct:+.1f}%"
                 )
                 if pnl is not None:
                     bit += f"，浮盈{pnl:+.1f}%"
@@ -433,9 +452,9 @@ def run_briefing(cfg: ChannelConfig, kind: str = "close") -> str:
             pass
 
     if kind == "open":
-        lines.append("建议：先定今日纪律（止损/是否允许加仓），勿被集合竞价情绪带节奏。")
+        lines.append("💡 开盘前提醒：先想好今天的止损位和加仓纪律，别被集合竞价带节奏。")
     else:
-        lines.append("建议：复盘是否触发纪律；有破位先执行，再谈故事。")
+        lines.append("💡 收盘提醒：检查是否触发了止损/止盈，破了位先执行再复盘。")
 
     store.set_cooling(cool_key, cfg.cool_briefing, now)
     # 日 key 再锁到次日 6 点左右
@@ -460,6 +479,73 @@ def _pos_cost_stop(path: Path, symbol: str) -> tuple[float, Optional[float]]:
     entry = float(d.get("entry_price") or 0)
     stop = d.get("stop_price")
     return entry, float(stop) if stop not in (None, "") else None
+
+
+def _is_before_open() -> bool:
+    """当前是否为盘前（9:30 之前）。"""
+    try:
+        from datetime import datetime
+        now = datetime.now()
+        return now.hour < 9 or (now.hour == 9 and now.minute < 30)
+    except Exception:
+        return True
+
+
+def _us_sector_transmission_lines(stock_symbols: list[str], stock_names: dict[str, str]) -> list[str]:
+    """对给定股票列表，计算 US sector 传导信号，输出人话描述。
+
+    配合 US sector → A股板块 传导修正器，找出哪些股票的板块
+    昨晚被美股板块异动波及。
+    """
+    try:
+        from src.data.us_sector_transmission import (
+            UsSectorTransmissionAdjuster, guess_sector_from_name,
+        )
+        tx_adj = UsSectorTransmissionAdjuster()
+        us_changes = tx_adj.fetch_us_sector_data()
+        if not us_changes:
+            return []
+        result = tx_adj.compute(us_changes)
+        if not result.data_available or not result.adjustments:
+            return []
+
+        # 汇总所有触发的信号（按板块方向）
+        bearish: list[str] = []
+        bullish: list[str] = []
+        for sig in result.active_signals:
+            label = sig["us_label"]
+            chg = sig["change_pct"]
+            if chg < -2:
+                bearish.append(f"{label}{chg:.1f}%")
+            elif chg > 2:
+                bullish.append(f"{label}{chg:+.1f}%")
+
+        if not bearish and not bullish:
+            return []
+
+        # 找受波及的自选股
+        affected_stocks: list[str] = []
+        for sym in stock_symbols:
+            n = stock_names.get(sym, "")
+            sectors = guess_sector_from_name(n)
+            for a in result.adjustments:
+                if any(a.sector in s or s in a.sector for s in sectors):
+                    if abs(a.adjust) >= 3:
+                        affected_stocks.append(f"{n or sym}")
+                        break
+
+        lines: list[str] = []
+        if bearish:
+            lines.append(f"⚠️ 昨晚美股拖累：{'，'.join(bearish)}")
+            lines.append(f"   这些板块今天可能要承压")
+        if bullish:
+            lines.append(f"✅ 昨晚美股利好：{'，'.join(bullish)}")
+        if affected_stocks:
+            lines.append(f"   影响你自选：{'、'.join(affected_stocks[:3])}")
+        return lines
+    except Exception as e:
+        logger.debug("us_sector_transmission_lines failed: %s", e)
+        return []
 
 
 def _us_overnight_line() -> str:
@@ -489,8 +575,9 @@ def _watchlist_quick_hits(cfg: ChannelConfig) -> list[str]:
             continue
         chg = q.change_pct or 0
         if chg <= -3 or chg >= 5:
+            prefix = "昨收" if _is_before_open() else "现"
             hits.append(
-                f"{names.get(sym, sym)} {chg:+.1f}% @ {q.price:.2f}"
+                f"{names.get(sym, sym)}（{prefix}{q.price:.2f}元，{prefix}{chg:+.1f}%）"
             )
     return hits
 
