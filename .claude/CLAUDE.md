@@ -316,6 +316,7 @@ python -m src tactics <code> --no-t0    # 盘后跳过 T+0
 | 11 | free-stockdb | 本地+GitHub | 本地数据引擎 / 增量同步 / LevelDB 缓存 / 查询时复权 / 自实现 MCP | [分析](docs/reference/free-stockdb-analysis.md) |
 | 12 | TradingView Lightweight Charts | 本地+GitHub | K 线图渲染引擎 / Model-View-Renderer 三层分离 / 插件扩展体系 / Scale 坐标映射 / Canvas 性能优化 | [分析](docs/reference/tradingview-lightweight-charts-analysis.md) |
 | 13 | Kronos | GitHub | Foundation Model / BSQ Tokenizer / K 线语言建模 / 多粒度时序预训练 / Qlib A 股集成管道 | [分析](docs/reference/kronos-analysis.md) |
+| 14 | adata | GitHub | 纯 Python A 股数据 SDK / 多数据源自动融合 / 概念板块双源交叉验证 / 统一异常层次 / 代理 IP 池 / 分笔成交(Tick) / 龙虎榜 / 北向-分时 / ETF+可转债 | [分析](docs/reference/adata-analysis.md) |
 
 ## 开发工作流
 
