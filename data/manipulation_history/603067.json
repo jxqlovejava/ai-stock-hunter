@@ -1,0 +1,36 @@
+[
+  {
+    "record_id": "923a04ad4a51402b9678d39a805707a2",
+    "symbol": "603067",
+    "name": "振华股份",
+    "date": "2026-07-22",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 31.98,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-07-22T14:02:36.821139"
+  },
+  {
+    "record_id": "6f3e6e8f18d14c1288e7df15bd796097",
+    "symbol": "603067",
+    "name": "振华股份",
+    "date": "2026-07-22",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 31.61,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-07-22T14:22:28.088450"
+  }
+]

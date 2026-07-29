@@ -202,12 +202,15 @@ class DoctrineChecker:
         if rule.id == "r035":
             return ctx.get("price_below_wma200_week", False)
 
-        # 200 周均线站回不足 4 周 — 趋势未确认
+        # 200 周均线站回不足 N 周 — 趋势未确认
+        # 使用替代 MA 时阈值提高至 8 周（替代 MA 信号更弱，需更多确认）
         if rule.id == "r036":
             weeks = ctx.get("weeks_above_wma200", 999)
             if weeks is None:
                 return False
-            return weeks < 4
+            penalty = ctx.get("wma_confidence_penalty", 1.0)
+            threshold = 8 if penalty < 1.0 else 4
+            return weeks < threshold
 
         # 默认不触发
         return False

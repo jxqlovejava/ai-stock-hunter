@@ -2249,11 +2249,14 @@ class Orchestrator:
         """注入 200 周均线数据到军规上下文。
 
         计算:
-          - price_below_wma200_week: bool — 当前价是否低于 200 周均线
-          - weeks_above_wma200: int — 站回 200 周均线上方的周数（若在下方则为 0）
+          - price_below_wma200_week: bool — 当前价是否低于均线
+          - weeks_above_wma200: int — 站回均线上方的周数（若在下方则为 0）
+          - wma_data_gap: str | None — 数据不足时的说明
+          - wma_confidence_penalty: float — 数据质量折扣（1.0=无折扣）
 
-        需要大约 250 周（≈5年）数据来获得稳定 200 周均线。
-        数据不足时两字段保持缺失，对应军规默认不触发。
+        降级策略（数据 < 200 周时）：
+          - ≥50周且<200周：使用 N 周 MA 替代，标注 [DATA_GAP]，置信度打折
+          - <50周：数据不足以做任何有意义的周线 MA 判断，不设置判定字段
         """
         try:
             from src.data.aggregator import DataAggregator
@@ -2265,22 +2268,48 @@ class Orchestrator:
             close_col = bars["close"] if "close" in bars.columns else None
             if close_col is None and "收盘" in bars.columns:
                 close_col = bars["收盘"]
-            if close_col is None or len(close_col) < 200:
-                return  # 数据不足以计算 200 周均线
+            if close_col is None:
+                return
 
-            wma200 = close_col.rolling(200).mean()
-            latest_wma200 = wma200.iloc[-1]
+            n_weeks = len(close_col)
+
+            # < 50 周：数据不足以做任何有意义的周线 MA 判断
+            if n_weeks < 50:
+                ctx["wma_data_gap"] = f"仅{n_weeks}周数据，不足以计算周线均线"
+                return
+
+            # 根据可用数据量选择有效周期
+            if n_weeks >= 200:
+                effective_period = 200
+                confidence_penalty = 1.0
+            elif n_weeks >= 100:
+                effective_period = n_weeks
+                confidence_penalty = 0.7
+                ctx["wma_data_gap"] = (
+                    f"仅{n_weeks}周数据，使用{n_weeks}周MA替代200周MA"
+                )
+            else:  # 50 <= n_weeks < 100
+                effective_period = n_weeks
+                confidence_penalty = 0.5
+                ctx["wma_data_gap"] = (
+                    f"仅{n_weeks}周数据，使用{n_weeks}周MA替代200周MA，置信度降级"
+                )
+
+            wma = close_col.rolling(effective_period).mean()
+            latest_wma = wma.iloc[-1]
             latest_price = float(close_col.iloc[-1])
 
-            if latest_wma200 is None or latest_wma200 != latest_wma200:
+            if latest_wma is None or latest_wma != latest_wma:
                 return  # NaN guard
 
-            ctx["price_below_wma200_week"] = bool(latest_price < latest_wma200)
+            ctx["price_below_wma200_week"] = bool(latest_price < latest_wma)
+            ctx["wma_confidence_penalty"] = confidence_penalty
+            ctx["wma_effective_period"] = effective_period
 
-            # 计算站回 200 周均线上方的周数
+            # 计算站回均线上方的周数
             above_weeks = 0
             for i in range(len(close_col) - 1, -1, -1):
-                ma = wma200.iloc[i]
+                ma = wma.iloc[i]
                 px = float(close_col.iloc[i])
                 if ma is None or ma != ma:
                     break
