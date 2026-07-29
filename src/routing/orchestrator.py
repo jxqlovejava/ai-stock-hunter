@@ -512,7 +512,7 @@ class Orchestrator:
                 logger.debug("Failed to resolve investor preferences: %s", e)
 
         # Step 1: 军规门禁
-        step_start(2, "军规门禁 (31条规则)")
+        step_start(2, "军规门禁 (41条规则)")
         ctx = {"stock_name": name, **(portfolio or {})}
         if investor is not None:
             ctx["tier"] = investor.tier.value
@@ -544,6 +544,9 @@ class Orchestrator:
 
         # 从 Phase 0 缓存注入财务军规上下文 (避免 _inject_financial_doctrine_ctx 重复拉取)
         _inject_financial_doctrine_from_cache(_fin_cache, ctx)
+
+        # 注入 200 周均线数据供 r035/r036 军规检查
+        self._inject_wma200_week_data(symbol, ctx)
 
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
@@ -2240,6 +2243,55 @@ class Orchestrator:
             logger.debug("MA calculation skipped for %s", symbol)
             quote_dict["ma20"] = quote_dict["ma60"] = None
             quote_dict["close_series"] = []
+
+    @staticmethod
+    def _inject_wma200_week_data(symbol: str, ctx: dict) -> None:
+        """注入 200 周均线数据到军规上下文。
+
+        计算:
+          - price_below_wma200_week: bool — 当前价是否低于 200 周均线
+          - weeks_above_wma200: int — 站回 200 周均线上方的周数（若在下方则为 0）
+
+        需要大约 250 周（≈5年）数据来获得稳定 200 周均线。
+        数据不足时两字段保持缺失，对应军规默认不触发。
+        """
+        try:
+            from src.data.aggregator import DataAggregator
+            agg = DataAggregator()
+            bars = agg.get_history(symbol, start_date="2015-01-01", period="weekly")
+            if bars is None or bars.empty:
+                return
+
+            close_col = bars["close"] if "close" in bars.columns else None
+            if close_col is None and "收盘" in bars.columns:
+                close_col = bars["收盘"]
+            if close_col is None or len(close_col) < 200:
+                return  # 数据不足以计算 200 周均线
+
+            wma200 = close_col.rolling(200).mean()
+            latest_wma200 = wma200.iloc[-1]
+            latest_price = float(close_col.iloc[-1])
+
+            if latest_wma200 is None or latest_wma200 != latest_wma200:
+                return  # NaN guard
+
+            ctx["price_below_wma200_week"] = bool(latest_price < latest_wma200)
+
+            # 计算站回 200 周均线上方的周数
+            above_weeks = 0
+            for i in range(len(close_col) - 1, -1, -1):
+                ma = wma200.iloc[i]
+                px = float(close_col.iloc[i])
+                if ma is None or ma != ma:
+                    break
+                if px > ma:
+                    above_weeks += 1
+                else:
+                    break
+            ctx["weeks_above_wma200"] = above_weeks
+
+        except Exception:
+            logger.debug("200-week MA injection skipped for %s", symbol)
 
     @staticmethod
     def _quote_from_cache(symbol: str, market: str = "SH") -> Optional[Quote]:

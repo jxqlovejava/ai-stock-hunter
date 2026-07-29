@@ -824,7 +824,7 @@ def run_tactics(
 
     step_done(
         ("⚠️" if _doctrine_warnings else "✅"),
-        f"31条: 阻断0 警告{len(_doctrine_warnings)}"
+        f"{len(MILITARY_RULES)}条: 阻断0 警告{len(_doctrine_warnings)}"
     )
     try:
         print_doctrine(_doctrine_full)

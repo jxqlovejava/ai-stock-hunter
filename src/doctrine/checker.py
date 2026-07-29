@@ -198,6 +198,17 @@ class DoctrineChecker:
                 return False  # 亏损公司不触发分红警告（属于更严重的 r032 范畴）
             return (dividend / np_) <= 0.30
 
+        # 200 周均线跌破 — 无条件红牌
+        if rule.id == "r035":
+            return ctx.get("price_below_wma200_week", False)
+
+        # 200 周均线站回不足 4 周 — 趋势未确认
+        if rule.id == "r036":
+            weeks = ctx.get("weeks_above_wma200", 999)
+            if weeks is None:
+                return False
+            return weeks < 4
+
         # 默认不触发
         return False
 
