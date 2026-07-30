@@ -713,21 +713,26 @@ def run_entry_signal_channel(cfg: ChannelConfig) -> str:
         sym = str(s.get("symbol") or "")
         name = str(s.get("name") or sym)
         es = s.get("entry_signals") or {}
-        reasons: list[str] = []
+        lines: list[str] = []
 
-        # ① 融资余额止跌回升
+        # ① 20 周均线对比（始终显示）
+        wma20_line = _check_wma20_week(sym, name)
+        if wma20_line:
+            lines.append(wma20_line)
+
+        # ② 融资余额止跌回升
         if es.get("margin_reversal"):
             mr = _check_margin_reversal(sym, name)
             if mr:
-                reasons.append(mr)
+                lines.append(mr)
 
-        # ② 日线下影线 + 缩量
+        # ③ 日线下影线 + 缩量
         if es.get("hammer_volume_contract"):
             hv = _check_hammer_volume(sym, name, cfg)
             if hv:
-                reasons.append(hv)
+                lines.append(hv)
 
-        if not reasons:
+        if not lines:
             continue
 
         ck = f"entry_signal:{sym}:{day}"
@@ -739,7 +744,7 @@ def run_entry_signal_channel(cfg: ChannelConfig) -> str:
         q = quotes.get(sym)
         price_str = f" @ {q.price:.2f}" if q and q.price > 0 else ""
         hits.append(
-            f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {r}" for r in reasons)
+            f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {l}" for l in lines)
         )
 
     store.prune_cooling(now)
@@ -967,6 +972,39 @@ def run_monitor_group_channel(
     )
 
 
+def _check_wma20_week(symbol: str, name: str) -> str | None:
+    """计算 20 周均线对比，返回人话描述或 None（数据不足时）。"""
+    try:
+        from src.data.aggregator import DataAggregator
+        agg = DataAggregator()
+        bars = agg.get_history(symbol, start_date="2020-01-01", period="weekly")
+        if bars is None or bars.empty:
+            return None
+
+        close_col = bars["close"] if "close" in bars.columns else None
+        if close_col is None and "收盘" in bars.columns:
+            close_col = bars["收盘"]
+        if close_col is None or len(close_col) < 20:
+            return None
+
+        wma20 = close_col.rolling(20).mean()
+        latest_wma = wma20.iloc[-1]
+        latest_price = float(close_col.iloc[-1])
+
+        if latest_wma is None or latest_wma != latest_wma:
+            return None
+
+        diff_pct = (latest_price - latest_wma) / latest_wma * 100
+        direction = "站上" if latest_price >= latest_wma else "跌破"
+        return (
+            f"20周均线对比: 现价 {latest_price:.2f} {direction} 20周MA {latest_wma:.2f} "
+            f"({diff_pct:+.1f}%)"
+        )
+    except Exception:
+        logger.debug("20-week MA check skipped for %s", symbol)
+        return None
+
+
 def _check_core_entry_signals(
     core: dict,
     cfg: ChannelConfig,
@@ -980,27 +1018,32 @@ def _check_core_entry_signals(
     alpha_signals = core.get("alpha_signals") or []
     sig_map = {s.get("id"): s for s in alpha_signals}
 
-    reasons: list[str] = []
+    lines: list[str] = []
 
-    # 融资余额止跌回升
+    # 0. 20 周均线对比（始终显示）
+    wma20_line = _check_wma20_week(sym, name)
+    if wma20_line:
+        lines.append(wma20_line)
+
+    # 1. 融资余额止跌回升
     if sig_map.get("margin_reversal", {}).get("trigger"):
         mr = _check_margin_reversal(sym, name)
         if mr:
-            reasons.append(mr)
+            lines.append(mr)
 
-    # 下影线+缩量
+    # 2. 下影线+缩量
     if sig_map.get("hammer_volume_contract", {}).get("trigger"):
         hv = _check_hammer_volume(sym, name, cfg)
         if hv:
-            reasons.append(hv)
+            lines.append(hv)
 
-    if not reasons:
+    if not lines:
         return ""
 
     quotes, _ = fetch_quotes([sym], names={sym: name})
     q = quotes.get(sym)
     price_str = f" @ {q.price:.2f}" if q and q.price > 0 else ""
-    return f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {r}" for r in reasons)
+    return f"{name}({sym}){price_str}\n" + "\n".join(f"  ✓ {l}" for l in lines)
 
 
 def _check_alpha_verification(
