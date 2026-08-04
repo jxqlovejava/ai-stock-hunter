@@ -569,6 +569,10 @@ class DataAggregator:
         """
         t0 = self.speed_monitor.time_event("history_fetch")
         try:
+            if not start_date:
+                # 空调用方（如 Phase 0 预拉取 start_date=""）回退默认起点，
+                # 否则腾讯源遇空日期直接 ValueError → K线0根
+                start_date = "2015-01-01"
             if not end_date:
                 now = datetime.now()
                 if as_of:

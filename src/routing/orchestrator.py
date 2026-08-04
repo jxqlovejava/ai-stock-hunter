@@ -548,6 +548,16 @@ class Orchestrator:
         # 注入 200 周均线数据供 r035/r036 军规检查
         self._inject_wma200_week_data(symbol, ctx)
 
+        # 环境变量排除指定军规（如 DOCTRINE_EXCLUDE_RULES=r035,r036 跳过 200 周均线门禁）
+        import os
+        _excluded_rules = {r.strip() for r in os.environ.get("DOCTRINE_EXCLUDE_RULES", "").split(",") if r.strip()}
+        if _excluded_rules:
+            from src.doctrine.rules import MILITARY_RULES as _ALL_RULES
+            if enabled_rules is None:
+                enabled_rules = {r.id for r in _ALL_RULES}
+            enabled_rules -= _excluded_rules
+            print(f"⚠️  军规排除生效: {', '.join(sorted(_excluded_rules))} (DOCTRINE_EXCLUDE_RULES)")
+
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             result.passed = False
@@ -2264,6 +2274,34 @@ class Orchestrator:
             bars = agg.get_history(symbol, start_date="2015-01-01", period="weekly")
             if bars is None or bars.empty:
                 return
+
+            # 防线：降级源可能静默返回日线（如 akshare 腾讯降级），
+            # 日线 rolling(200) ≠ 200周均线，会导致 r035 误判 BLOCK。
+            # 检测实际间隔，若为日线则聚合为真周线再判定。
+            date_col = None
+            for c in ("date", "datetime", "日期"):
+                if c in bars.columns:
+                    date_col = c
+                    break
+            if date_col is not None and len(bars) > 10:
+                import pandas as pd
+                _dates = pd.to_datetime(bars[date_col])
+                _median_gap = _dates.sort_values().diff().dropna().dt.days.median()
+                if _median_gap is not None and _median_gap == _median_gap and _median_gap < 3:
+                    agg_spec = {
+                        c: fn
+                        for c, fn in (
+                            ("open", "first"), ("high", "max"), ("low", "min"),
+                            ("close", "last"), ("volume", "sum"), ("收盘", "last"),
+                        )
+                        if c in bars.columns
+                    }
+                    bars = (
+                        bars.assign(**{date_col: _dates})
+                        .set_index(date_col).sort_index()
+                        .resample("W-FRI").agg(agg_spec)
+                        .dropna().reset_index()
+                    )
 
             close_col = bars["close"] if "close" in bars.columns else None
             if close_col is None and "收盘" in bars.columns:

@@ -153,7 +153,8 @@ if _PUSH2_UNAVAILABLE:
             # 统一列名：amount → volume
             if "amount" in df.columns:
                 df = df.rename(columns={"amount": "volume"})
-            return df
+            # 腾讯源仅日线 — weekly/monthly 必须聚合，防止上游把日线误当周线
+            return _resample_tx_daily(df, period)
         except Exception:
             logger.debug("stock_zh_a_hist_tx also failed for %s", symbol, exc_info=True)
             return pd.DataFrame()
@@ -178,6 +179,30 @@ def _to_tx_symbol(symbol: str) -> str:
     elif first in ("4", "8"):
         return f"bj{code}"
     return f"sz{code}"  # 默认深交所
+
+
+def _resample_tx_daily(df: pd.DataFrame, period: str) -> pd.DataFrame:
+    """腾讯源 stock_zh_a_hist_tx 仅返回日线 — weekly/monthly 请求需聚合到目标周期。
+
+    不聚合会让上游把日线误当周线（如 200 周均线军规 rolling(200) 变成 200 日线，导致误判）。
+    """
+    if period not in ("weekly", "week", "monthly", "month") or df.empty or "date" not in df.columns:
+        return df
+    rule = "W-FRI" if period.startswith("w") else "ME"
+    agg_spec = {
+        col: fn
+        for col, fn in (
+            ("open", "first"), ("high", "max"), ("low", "min"),
+            ("close", "last"), ("volume", "sum"),
+        )
+        if col in df.columns
+    }
+    return (
+        df.assign(date=pd.to_datetime(df["date"]))
+        .set_index("date").sort_index()
+        .resample(rule).agg(agg_spec)
+        .dropna().reset_index()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +523,9 @@ class AKShareProvider(DataProvider):
 
         push2.eastmoney.com 不可用时跳过东财源，直接使用腾讯源。
         """
+        # aggregator 标准化链会传入 "day"/"week"/"month"，akshare 东财接口
+        # 只认 daily/weekly/monthly — 归一化避免 KeyError 白异常
+        period = {"day": "daily", "week": "weekly", "month": "monthly"}.get(period, period)
         # push2 CDN 被阻断时直接走腾讯源，避免 60s 超时等待
         if not _PUSH2_UNAVAILABLE:
             try:
@@ -516,7 +544,8 @@ class AKShareProvider(DataProvider):
             # 腾讯源列名: date/open/close/high/low/amount → 统一为 volume
             if "amount" in df.columns:
                 df = df.rename(columns={"amount": "volume"})
-            return df
+            # 腾讯源仅日线 — weekly/monthly 必须聚合，防止上游把日线误当周线
+            return _resample_tx_daily(df, period)
         except Exception:
             logger.debug("stock_zh_a_hist_tx failed for %s", symbol, exc_info=True)
             return pd.DataFrame()

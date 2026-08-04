@@ -75,7 +75,8 @@ class MiaoXiangAdapter:
         data_script = _SCRIPT_PATHS.get("mx-data")
         if data_script and data_script.exists():
             return True
-        logger.warning("mx-data 脚本未找到: %s", data_script)
+        # 可选增强组件，未安装属正常降级 — 不刷 WARNING 噪音
+        logger.debug("mx-data 脚本未找到（可选组件未安装）: %s", data_script)
         return False
 
     @property

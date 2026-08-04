@@ -112,9 +112,15 @@ class SentimentDataFetcher:
         try:
             import akshare as ak
             from src.data.akshare import _akshare_call
-            df = _akshare_call(ak.stock_zh_a_spot_em)
+            src_name = "akshare/东方财富"
+            try:
+                df = _akshare_call(ak.stock_zh_a_spot_em)
+            except Exception:
+                # 东财不可达时降级新浪全市场快照（列名兼容：涨跌幅/成交量）
+                df = _akshare_call(ak.stock_zh_a_spot)
+                src_name = "akshare/新浪"
             if df is None or len(df) == 0:
-                return {"error": "A 股实时行情返回空数据", "source": "akshare/东财"}
+                return {"error": "A 股实时行情返回空数据", "source": src_name}
 
             # 过滤有效数据（排除停牌、无成交）
             valid = df[df['成交量'] > 0] if '成交量' in df.columns else df
@@ -133,7 +139,7 @@ class SentimentDataFetcher:
                 "total_stocks": len(valid),
                 "limit_up": limit_up,
                 "limit_down": limit_down,
-                "source": "akshare/东方财富",
+                "source": src_name,
                 "error": None,
             }
         except ImportError:
@@ -207,9 +213,17 @@ class SentimentDataFetcher:
         try:
             import akshare as ak
             from src.data.akshare import _akshare_call
-            df = _akshare_call(ak.stock_zh_index_daily_em, symbol="sh000001")  # 上证指数
+            src_name = "akshare/东方财富"
+            try:
+                df = _akshare_call(ak.stock_zh_index_daily_em, symbol="sh000001")  # 上证指数
+            except Exception:
+                # 东财不可达时降级腾讯指数日线（列名 amount → volume）
+                df = _akshare_call(ak.stock_zh_index_daily_tx, symbol="sh000001")
+                src_name = "akshare/腾讯"
+                if df is not None and "amount" in df.columns and "volume" not in df.columns:
+                    df = df.rename(columns={"amount": "volume"})
             if df is None or len(df) < 21:
-                return {"error": "上证指数数据不足", "source": "akshare/东方财富"}
+                return {"error": "上证指数数据不足", "source": src_name}
 
             latest = df.iloc[-1]
             avg_20 = df['volume'].tail(21).head(20).mean()
@@ -219,7 +233,7 @@ class SentimentDataFetcher:
                 "volume_ratio": round(ratio, 2),
                 "latest_volume": int(latest['volume']),
                 "avg_20d_volume": int(avg_20),
-                "source": "akshare/东方财富",
+                "source": src_name,
                 "error": None,
             }
         except ImportError:
