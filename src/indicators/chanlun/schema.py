@@ -45,6 +45,7 @@ class ZhongShu:
     start_dt: Any
     end_dt: Any
     state: str                    # "形成"/"延伸"/"上移"/"下移"
+    bi_indexes: tuple = ()        # 构成中枢的笔 index（Task 7 三买/三卖扫笔用）
 
 
 @dataclass(frozen=True)
