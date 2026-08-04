@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from src.indicators.chanlun.core.fractal import detect_fractals
-from src.indicators.chanlun.core.merge import merge_bars
+from src.indicators.chanlun.core.merge import merge_bars, MergedBar
 import pandas as pd
 
 
@@ -31,6 +31,16 @@ def test_flat_middle_no_fractal():
     merged = _merged([(8, 10, 7, 9), (9, 10, 8, 9.5), (9.5, 11, 8.5, 10)])
     fs = detect_fractals(merged)
     assert len(fs) == 0
+
+
+def test_flat_middle_no_fractal_direct():
+    # 绕过 merge_bars 直接构造等高中间根的 merged 列表，真正覆盖"平盘不误判"严格比较分支
+    merged = [
+        MergedBar(0, pd.Timestamp("2026-01-01"), 10.0, 7.0, "up"),
+        MergedBar(1, pd.Timestamp("2026-01-02"), 10.0, 8.0, "up"),   # 中间 high 与左等高
+        MergedBar(2, pd.Timestamp("2026-01-03"), 10.0, 8.5, "up"),   # 与右也等高
+    ]
+    assert detect_fractals(merged) == []
 
 
 def test_insufficient_bars():
