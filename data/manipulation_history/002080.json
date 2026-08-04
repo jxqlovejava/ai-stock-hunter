@@ -1,0 +1,36 @@
+[
+  {
+    "record_id": "2ca9565a7ecd4d558412ab975163fb44",
+    "symbol": "002080",
+    "name": "中材科技",
+    "date": "2026-08-04",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.85,
+    "risk_score": 76.5,
+    "price_at_detection": 44.37,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-04T13:47:56.962296"
+  },
+  {
+    "record_id": "32619ee12aa24ebdbc9a8c3df605bdb0",
+    "symbol": "002080",
+    "name": "中材科技",
+    "date": "2026-08-04",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.85,
+    "risk_score": 76.5,
+    "price_at_detection": 44.37,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-04T13:53:38.737097"
+  }
+]
