@@ -27,9 +27,9 @@ def test_first_buy_and_second_buy():
     ]
     zss = detect_zhongshus(bis)
     points = detect_points(bis, zss, {4: {"type": "bottom", "bi_index": 4}})
-    kinds = [p.kind for p in points]
-    assert "一买" in kinds and "二买" in kinds
-    assert any(p.kind == "二买" and p.price == 25.0 for p in points)
+    assert {(p.kind, p.price) for p in points} == {
+        ("一买", 24.0), ("二买", 25.0), ("三卖", 30.0),
+    }
 
 
 def test_third_buy_after_breakout():
@@ -54,5 +54,20 @@ def test_first_sell_and_second_sell_mirror():
     ]
     zss = detect_zhongshus(bis)
     points = detect_points(bis, zss, {4: {"type": "top", "bi_index": 4}})
-    kinds = [p.kind for p in points]
-    assert "一卖" in kinds and "二卖" in kinds
+    assert {(p.kind, p.price) for p in points} == {
+        ("一卖", 28.0), ("二卖", 27.0), ("三买", 18.0),
+    }
+
+
+def test_ancient_zhongshu_no_misfire():
+    # 3 中枢；远古中枢A存在"回调低点>其zg"假触发。zss[-2:] 应排除 A。
+    bis = [
+        _bi("up", 20, 10), _bi("down", 18, 12), _bi("up", 22, 15),      # 中枢A [15,18] bi0-2
+        _bi("up", 30, 19), _bi("down", 28, 21), _bi("up", 32, 24),      # 中枢B [24,28] bi3-5
+        _bi("up", 40, 29), _bi("down", 38, 27), _bi("up", 42, 34),      # 中枢C [34,38] bi6-8
+        _bi("down", 25, 20),                                            # 假触发: low20>中枢A.zg18 但<B.zg28且<C.zg38
+    ]
+    zss = detect_zhongshus(bis)
+    assert len(zss) == 3
+    points = detect_points(bis, zss, {})
+    assert points == []
