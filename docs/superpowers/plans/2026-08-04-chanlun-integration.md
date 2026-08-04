@@ -263,6 +263,13 @@ def test_no_containment_keeps_all_bars():
 def test_empty_df_returns_empty():
     df = _make_df([])
     assert merge_bars(df) == []
+
+
+def test_partial_overlap_not_merged():
+    # 前根 [10,12], 当前 [7,9] → 当前整体低于前根, 非包含 → 不合并（回归 Bug1）
+    df = _make_df([(10, 12, 9, 10.5), (8, 9, 7, 8)])
+    merged = merge_bars(df)
+    assert len(merged) == 2
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -313,7 +320,7 @@ def merge_bars(df) -> list[MergedBar]:
         prev = merged[-1]
         hi, lo = highs[i], lows[i]
         contains = (hi >= prev.high and lo <= prev.low) or \
-                   (prev.high >= hi and prev.low >= lo)
+                   (prev.high >= hi and prev.low <= lo)
         if contains:
             if prev.direction == "up":
                 new_hi, new_lo, direction = max(hi, prev.high), max(lo, prev.low), "up"
@@ -335,7 +342,25 @@ def merge_bars(df) -> list[MergedBar]:
 - [ ] **Step 4: 运行确认通过**
 
 Run: `.venv/bin/python -m pytest tests/indicators/test_chanlun_merge.py -v`
-Expected: PASS (4 passed)
+Expected: PASS (5 passed)
+
+- [ ] **Step 4b: 真实数据验证（强趋势标的 300476）— 必须执行，回归 Bug1**
+
+Run:
+```bash
+.venv/bin/python - <<'PY'
+import pandas as pd
+from src.data.aggregator import DataAggregator
+from src.indicators.chanlun.core.merge import merge_bars
+agg = DataAggregator()
+df = agg.get_history("300476")
+col_map = {"开盘":"open","收盘":"close","最高":"high","最低":"low","成交量":"volume"}
+df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
+merged = merge_bars(df)
+print(f"raw={len(df)} merged={len(merged)} ratio={len(merged)/max(1,len(df)):.2f}")
+PY
+```
+Expected: `merged` 与 `raw` 数量级相近（ratio 通常 >0.5，下跌回调K线不被错误合并）。若 `ratio < 0.1`（如 2704→72）说明包含判定仍错，不得提交。
 
 - [ ] **Step 5: 提交**
 
@@ -503,6 +528,17 @@ def test_bi_high_low_from_endpoints():
     bis = build_bis(fs, min_len=4)
     assert bis[0].high == 20.0 and bis[0].low == 10.0
     assert bis[0].start_fx.mark == "D" and bis[0].end_fx.mark == "G"
+
+
+def test_no_consecutive_same_direction_after_swallow():
+    # 回归 Bug2: 旧顶 G(20)@5 被新高 G(30)@12 吞没（中间小回调 D(15)@7 与两者过近）。
+    # 贪心版会产出 [D→G(20), D→G(30)] 两根同向上行笔；迭代版应吸收为 1 根且严格交替。
+    fs = [_fx("D", 0, 10), _fx("G", 5, 20), _fx("D", 7, 15), _fx("G", 12, 30)]
+    bis = build_bis(fs, min_len=4)
+    dirs = [b.direction for b in bis]
+    assert len(dirs) >= 1
+    assert all(dirs[i] != dirs[i + 1] for i in range(len(dirs) - 1))   # 严格交替
+    assert bis[-1].end_fx.fx == 30.0                                   # 新高被保留为端点
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -536,55 +572,106 @@ def _purge_fractals(fractals: list[Fractal]) -> list[Fractal]:
 
 
 def build_bis(fractals: list[Fractal], min_len: int = 4) -> list[Bi]:
-    """从分型序列构建笔列表。
+    """从分型序列构建笔列表（迭代吸收小波动版，修正贪心折叠 Bug2）。
+
+    迭代规则:
+      1. 连续同向分型 → 保留更极端
+      2. 相邻异向分型 gap < min_len → 吸收较小波动（保留更极端那侧）
+      收敛后连接相邻分型。
 
     Args:
         fractals: 顶底分型（升序）。
         min_len: 相邻分型最小间隔（去包含K线数），默认 4。
 
     Returns:
-        笔列表，方向交替，`macd_area` 初始为 0.0（由 analyzer 回填）。
+        笔列表，方向严格交替，`macd_area` 初始为 0.0（由 analyzer 回填）。
+        注意：周线用迭代版易过度合并（~150 根→2 笔），周线调用方应调大 min_len。
     """
     fs = _purge_fractals(fractals)
-    bis: list[Bi] = []
-    i = 0
-    while i < len(fs):
-        start = fs[i]
-        next_i: int | None = None
-        for j in range(i + 1, len(fs)):
-            end = fs[j]
-            if end.mark == start.mark:
-                continue
-            gap = end.index - start.index
-            ok_price = (start.mark == "D" and end.fx > start.fx) or \
-                       (start.mark == "G" and end.fx < start.fx)
-            if gap >= min_len and ok_price:
-                bis.append(Bi(
-                    direction="up" if start.mark == "D" else "down",
-                    start_fx=start, end_fx=end,
-                    high=max(start.fx, end.fx), low=min(start.fx, end.fx),
-                    length=gap, macd_area=0.0,
-                    start_dt=start.dt, end_dt=end.dt,
-                ))
-                next_i = j
+    while True:
+        merged: list[Fractal] = []
+        changed = False
+        i = 0
+        n = len(fs)
+        while i < n:
+            if i + 1 >= n:
+                merged.append(fs[i])
                 break
-        if next_i is not None:
-            i = next_i
-        else:
-            i += 1
+            a, b = fs[i], fs[i + 1]
+            if a.mark == b.mark:
+                keep = a if ((a.mark == "G" and a.fx >= b.fx) or
+                             (a.mark == "D" and a.fx <= b.fx)) else b
+                merged.append(keep)
+                changed = True
+                i += 2
+            elif b.index - a.index < min_len:
+                if (a.mark == "G" and a.fx >= b.fx) or \
+                   (a.mark == "D" and a.fx <= b.fx):
+                    merged.append(a)
+                else:
+                    merged.append(b)
+                changed = True
+                i += 2
+            else:
+                merged.append(a)
+                i += 1
+        fs = merged
+        if not changed:
+            break
+
+    bis: list[Bi] = []
+    for k in range(len(fs) - 1):
+        a, b = fs[k], fs[k + 1]
+        if a.mark == b.mark:
+            continue
+        gap = b.index - a.index
+        ok_price = (a.mark == "D" and b.fx > a.fx) or \
+                   (a.mark == "G" and b.fx < a.fx)
+        if gap >= min_len and ok_price:
+            bis.append(Bi(
+                direction="up" if a.mark == "D" else "down",
+                start_fx=a, end_fx=b,
+                high=max(a.fx, b.fx), low=min(a.fx, b.fx),
+                length=gap, macd_area=0.0,
+                start_dt=a.dt, end_dt=b.dt,
+            ))
     return bis
 ```
 
 - [ ] **Step 4: 运行确认通过**
 
 Run: `.venv/bin/python -m pytest tests/indicators/test_chanlun_bi.py -v`
-Expected: PASS (4 passed)
+Expected: PASS (5 passed)
+
+- [ ] **Step 4b: 真实数据验证（300476）— 必须执行，回归 Bug2**
+
+Run:
+```bash
+.venv/bin/python - <<'PY'
+import pandas as pd
+from src.data.aggregator import DataAggregator
+from src.indicators.chanlun.core.merge import merge_bars
+from src.indicators.chanlun.core.fractal import detect_fractals
+from src.indicators.chanlun.core.bi import build_bis
+agg = DataAggregator()
+df = agg.get_history("300476")
+col_map = {"开盘":"open","收盘":"close","最高":"high","最低":"low","成交量":"volume"}
+df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
+merged = merge_bars(df)
+fs = detect_fractals(merged)
+bis = build_bis(fs)
+dirs = [b.direction for b in bis]
+alt = all(dirs[i] != dirs[i+1] for i in range(len(dirs)-1))
+print(f"K线{len(df)} 去包含{len(merged)} 分型{len(fs)} 笔{len(bis)} 交替={alt}")
+PY
+```
+Expected: `len(bis)` 合理（数十根量级，远多于 2 且远少于 merged），`交替=True`（无同向连续笔）。若 `交替=False` 或 `len(bis) < 3`，说明笔构建仍错，不得提交。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 git add src/indicators/chanlun/core/bi.py tests/indicators/test_chanlun_bi.py
-git commit -m "feat(chanlun): 笔构建（方向交替+最小长度+极值去重）"
+git commit -m "feat(chanlun): 笔构建（迭代吸收小波动版，方向严格交替）"
 ```
 
 ---
@@ -593,11 +680,14 @@ git commit -m "feat(chanlun): 笔构建（方向交替+最小长度+极值去重
 
 **Files:**
 - Create: `src/indicators/chanlun/core/zhongshu.py`
+- Modify: `src/indicators/chanlun/schema.py`（ZhongShu 加 `bi_indexes` 字段）
 - Test: `tests/indicators/test_chanlun_zhongshu.py`
 
 **Interfaces:**
 - Consumes: `list[Bi]`（Task 4）
-- Produces: `detect_zhongshus(bis) -> list[ZhongShu]`（含延伸合并、上移/下移状态）。Task 6/7 消费 `zss`。
+- Produces: `detect_zhongshus(bis) -> list[ZhongShu]`（含 `bi_indexes`、延伸合并、上移/下移状态）。Task 6/7 消费 `zss`。
+
+> 说明：`bi_indexes` 是中枢构成笔的 index 元组，Task 7 用它限制三买/三卖只扫中枢之后的笔（避免远古中枢误触发）。在 Task 5 内一并修改 Task 1 建的 schema.py。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -653,6 +743,21 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写实现**
 
+先修改 Task 1 建的 `src/indicators/chanlun/schema.py`，给 `ZhongShu` 加字段：
+```python
+@dataclass(frozen=True)
+class ZhongShu:
+    zg: float
+    zd: float
+    zz: float
+    gg: float
+    dd: float
+    start_dt: Any
+    end_dt: Any
+    state: str                    # "形成"/"延伸"/"上移"/"下移"
+    bi_indexes: tuple = ()        # 构成中枢的笔 index（Task 7 三买/三卖扫笔用）
+```
+
 ```python
 # src/indicators/chanlun/core/zhongshu.py
 # -*- coding: utf-8 -*-
@@ -690,7 +795,7 @@ def detect_zhongshus(bis: list[Bi]) -> list[ZhongShu]:
                 gg=max(b.high for b in three),
                 dd=min(b.low for b in three),
                 start_dt=three[0].start_dt, end_dt=three[2].end_dt,
-                state="形成",
+                state="形成", bi_indexes=tuple(range(i, i + 3)),
             ))
             i += 3
         else:
@@ -707,6 +812,7 @@ def detect_zhongshus(bis: list[Bi]) -> list[ZhongShu]:
                 prev, zg=zg, zd=zd, zz=(zg + zd) / 2.0,
                 gg=max(prev.gg, zs.gg), dd=min(prev.dd, zs.dd),
                 end_dt=zs.end_dt, state="延伸",
+                bi_indexes=prev.bi_indexes + zs.bi_indexes,
             )
         else:
             merged.append(zs)
@@ -880,7 +986,7 @@ def test_first_buy_and_second_buy():
         _bi("down", 27, 25, area=30.0),   # 低点25>24 不破一买低点 → 二买@25
     ]
     zss = detect_zhongshus(bis)
-    points = detect_points(bis, zss, {2: {"type": "bottom", "bi_index": 2}})
+    points = detect_points(bis, zss, {4: {"type": "bottom", "bi_index": 4}})
     kinds = [p.kind for p in points]
     assert "一买" in kinds and "二买" in kinds
     assert any(p.kind == "二买" and p.price == 25.0 for p in points)
@@ -973,8 +1079,9 @@ def detect_points(bis: list[Bi], zss: list[ZhongShu],
                 add("二卖", b, b.high, 0.75, "一卖后反弹不破一卖高点, 顶分型确认")
                 break
 
-    for zs in zss:
-        for j in range(3, n):
+    for zs in zss[-2:]:                  # 只看最近 2 个中枢（当前结构相关，避免远古中枢误触发）
+        last_bi = max(zs.bi_indexes) if zs.bi_indexes else 0
+        for j in range(last_bi + 1, n):
             b = bis[j]
             if b.direction == "down" and b.low > zs.zg:
                 add("三买", b, b.low, 0.8, f"突破中枢ZG={zs.zg:.2f}后回抽不进入中枢")
@@ -1073,7 +1180,7 @@ def test_to_signal_long_only():
            _bi("up", 34, 33, 20.0), _bi("down", 30, 24, 40.0), _bi("up", 30, 26, 20.0),
            _bi("down", 27, 25, 30.0)]
     zss = detect_zhongshus(bis)
-    points = detect_points(bis, zss, {2: {"type": "bottom", "bi_index": 2}})
+    points = detect_points(bis, zss, {4: {"type": "bottom", "bi_index": 4}})
     signals = ChanlunAnalyzer.to_signal(points)
     assert any("一买" in s["kind"] for s in signals["entry"])
     assert any("二买" in s["kind"] for s in signals["entry"])
@@ -1635,7 +1742,7 @@ def test_chanlun_score_mapping():
            _bi("up", 34, 33, 20.0), _bi("down", 30, 24, 40.0), _bi("up", 30, 26, 20.0),
            _bi("down", 27, 25, 30.0)]
     zss = detect_zhongshus(bis)
-    pts = detect_points(bis, zss, {2: {"type": "bottom", "bi_index": 2}})
+    pts = detect_points(bis, zss, {4: {"type": "bottom", "bi_index": 4}})
     assert any(p.kind in ("一买", "二买", "三买") for p in pts)
 ```
 
@@ -1961,3 +2068,12 @@ git commit -m "chore: 缠论模块集成验证（chanlun 单测 + tactics/diagno
 - **Spec 覆盖**：CLI(Task10) / tactics(Task11) / diagnose(Task12) / 军规(Task13) / 自研核心+适配器(Task8) / 日+周(Task10 `--freq W`) / 决策 A(Task11 独立维度不动 composite) / 测试计划(Task1-14) / 错误处理(analyzer `_empty_result`+DATA_GAP) 全覆盖。
 - **占位符扫描**：除 Task 8 的 czsc import 明确标注需用真实 import 行替换（因 czsc 可能未安装无法静态验证）外，无 TBD/TODO。
 - **类型一致性**：`ChanlunResult.to_summary_dict()` 的 `signals`/`current_state`/`last_zs` 字段名在 Task 8/10/11/12 中一致使用；`detect_*` 函数签名与 DTO 字段名跨 task 对齐。
+
+## 2026-08-04 算法修正（基于 300476 胜宏科技真实数据手动验证）
+
+在实现前用真实强趋势数据（300476）验证设计时发现并修正两个算法 bug（详见 memory `chanlun-design-doc-bugs`，修正版 `/tmp/chan_analysis.py`）：
+
+- **Bug 1（merge.py 包含判定）**：`contains` 第二分支误写 `prev.low >= lo`，正确应为 `prev.low <= lo`（前根包含当前）。原写法把下跌回调K线全合并（2704→72），已修正 + 新增 `test_partial_overlap_not_merged` 回归 + Task 2 Step 4b 真实数据验证。
+- **Bug 2（build_bis 贪心折叠）**：贪心版无法处理"新高吞没旧顶"，产生同向连续笔或整段折叠。改为**迭代吸收小波动版**（连续同向留极端 + 相邻异向 gap<min_len 吸收 + 收敛连接），新增 `test_no_consecutive_same_direction_after_swallow` 回归 + Task 4 Step 4b 真实数据验证。
+- **配套修正**：ZhongShu 加 `bi_indexes` 字段（Task 5 一并改 schema）；detect_points 三买/三卖只扫 `zss[-2:]` 且从 `last_bi` 之后开始（避免远古中枢误触发）；Task 7/8/11 测试 divergence 索引 `{2:...}`→`{4:...}` 与一买实际位置一致。
+- **周线提示**：迭代版周线易过度合并（~150 根→2 笔），周线调用方（Task 8/10）应调大 `min_len`。
