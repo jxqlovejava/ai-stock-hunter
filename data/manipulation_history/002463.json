@@ -1,0 +1,36 @@
+[
+  {
+    "record_id": "8ae1a339aef843dcb42d7c1e8dc6e3f5",
+    "symbol": "002463",
+    "name": "沪电股份",
+    "date": "2026-08-04",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 70.0,
+    "price_at_detection": 111.77,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-04T14:18:58.761577"
+  },
+  {
+    "record_id": "c1d6544a5cb84987a64e632bb65952a6",
+    "symbol": "002463",
+    "name": "沪电股份",
+    "date": "2026-08-04",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 70.0,
+    "price_at_detection": 111.76,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-04T14:26:08.973166"
+  }
+]

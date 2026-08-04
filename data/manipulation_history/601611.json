@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "bdd3b63d5a9549e39b870f0cb078bb8b",
+    "symbol": "601611",
+    "name": "中国核建",
+    "date": "2026-08-04",
+    "manipulation_type": "连阳出货",
+    "source": "daily",
+    "confidence": 0.5,
+    "risk_score": 100,
+    "price_at_detection": 12.12,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-04T17:32:52.311382"
+  }
+]
