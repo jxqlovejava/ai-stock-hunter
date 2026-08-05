@@ -1225,6 +1225,13 @@ class Orchestrator:
         except Exception:
             logger.debug("guba sentiment fetch failed for %s", symbol)
 
+        # 日线 K 线（缠论结构用，可空 → diagnosis 内降级）
+        bars_df = None
+        try:
+            bars_df = self.data.get_history(symbol)
+        except Exception:
+            logger.debug("bars fetch failed for chanlun %s", symbol)
+
         report = self.diagnosis.analyze(
             symbol, name,
             quote_dict, fin_list,
@@ -1242,6 +1249,7 @@ class Orchestrator:
             manipulation_scan=manipulation_scan,        # Phase 11: 反操纵扫描
             sector_flow=sector_flow,
             guba_sentiment=guba_sentiment,
+            bars_df=bars_df,
         )
         result.report = report
         result.market_sentiment = sentiment_dict

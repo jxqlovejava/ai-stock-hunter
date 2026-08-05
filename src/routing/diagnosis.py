@@ -87,6 +87,10 @@ class DiagnosisReport:
     divergence_consensus_score: float = 50.0        # 0-100
     divergence_consensus_state: str = ""             # DIVERGENCE / FORMING_CONSENSUS / CONSENSUS / CONSENSUS_BREAKING
     divergence_consensus: Optional[object] = None    # DivergenceConsensusResult
+
+    # ── 🥋 缠论结构（只读摘要，保守微调动量 ±10%）──
+    chanlun: Optional[dict] = None       # 缠论结构摘要（只读）
+    chanlun_score: float = 50.0          # 0-100
     # Phase 12: 大宗交易机构资金
     block_trade_score: float = 50.0          # 大宗交易信号评分 0-100
     block_trade_signal: str = "neutral"      # "bullish" / "bearish" / "neutral"
@@ -164,6 +168,7 @@ class DiagnosisEngine:
         block_trade_profile: Optional[object] = None,  # Phase 12: BlockTradeProfile
         sector_flow: Optional[object] = None,          # 行业板块资金流向
         guba_sentiment: Optional[object] = None,       # 股吧情绪快照 (GubaSentiment)
+        bars_df: Optional[object] = None,              # 日线 DataFrame（缠论用，可空）
     ) -> DiagnosisReport:
         report = DiagnosisReport(symbol=symbol, name=name)
 
@@ -383,6 +388,16 @@ class DiagnosisEngine:
                 0.85 + 0.15 * (report.bottom_structure_score / 100.0),
             )
 
+        # Phase 12c: 缠论结构（保守微调动量 ±10%）
+        chanlun_ctx = self._detect_chanlun(symbol, name, bars_df)
+        if chanlun_ctx is not None:
+            report.chanlun = chanlun_ctx["summary"]
+            report.chanlun_score = chanlun_ctx["score"]
+            weight = 0.90 + 0.10 * (report.chanlun_score / 100.0)
+            report.momentum_score = self._apply_weight(report.momentum_score, weight)
+            if chanlun_ctx["summary"].get("sell_signal"):
+                report.data_gaps.append("[WARN 缠论] 结构转弱(买卖点转空)，动量小幅降权")
+
         # Phase 13: 分歧/一致状态检测
         dc = self._detect_divergence_consensus(quote)
         report.divergence_consensus = dc
@@ -472,6 +487,38 @@ class DiagnosisEngine:
                 "回调检测跳过 [%s]: 依赖模块不可用或数据不足", symbol
             )
             return 50.0, None, True
+
+    @staticmethod
+    def _detect_chanlun(symbol: str, name: str, bars_df):
+        """缠论结构 → (summary, score)。无日线/异常返回 None（降级）。
+
+        独立维度，仅保守微调动量（见调用方 weight = 0.90+0.10×score/100）。
+        """
+        if bars_df is None or getattr(bars_df, "empty", True):
+            return None
+        try:
+            from src.indicators.chanlun.analyzer import ChanlunAnalyzer
+            res = ChanlunAnalyzer(freq="D").analyze(bars_df, symbol, name)
+            if not res.bis and not res.zhongshus:
+                return None
+            summary = res.to_summary_dict()
+            score = 50.0
+            for p in res.points:
+                if p.kind in ("一买", "二买", "三买"):
+                    score = max(score, 55.0 + 15.0 * p.confidence)
+                else:
+                    score = min(score, 45.0 - 10.0 * p.confidence)
+            pos = res.current_state.get("position", "未知")
+            if pos == "中枢下方":
+                score -= 8.0
+            elif pos == "中枢上方":
+                score += 6.0
+            score = round(max(0.0, min(100.0, score)), 1)
+            summary["sell_signal"] = any(p.kind in ("一卖", "二卖", "三卖") for p in res.points)
+            summary["buy_signal"] = any(p.kind in ("一买", "二买", "三买") for p in res.points)
+            return {"summary": summary, "score": score}
+        except Exception:
+            return None
 
     @staticmethod
     def _detect_bottom_structure(quote: dict | None) -> object | None:
