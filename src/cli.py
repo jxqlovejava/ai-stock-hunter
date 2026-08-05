@@ -969,13 +969,7 @@ def cmd_chanlun(args: list[str]):
         print(f"❌ {symbol} 无数据")
         return
 
-    col_map = {"开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
-               "成交量": "volume", "成交额": "amount",
-               "open": "open", "close": "close", "high": "high",
-               "low": "low", "volume": "volume"}
-    if hasattr(df, "rename"):
-        df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
-
+    # 中文列名（开盘/收盘/最高/最低）由 ChanlunAnalyzer.analyze 入口统一标准化
     result = ChanlunAnalyzer(freq=parsed.freq).analyze(df, symbol, name)
     _render_chanlun(result)
 

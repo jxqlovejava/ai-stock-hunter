@@ -88,6 +88,29 @@ def _build_report(result: Any) -> list[str]:
         synthesis = getattr(report, "dimension_synthesis", "")
         if synthesis:
             lines.append(f"\n{synthesis}")
+
+    # 🥋 缠论结构
+    if report:
+        _ch = getattr(report, "chanlun", None)
+        if _ch and isinstance(_ch, dict):
+            _cs = _ch.get("current_state", {}) or {}
+            _score = getattr(report, "chanlun_score", 50.0)
+            lines.append("")
+            lines.append("## 🥋 缠论结构")
+            lines.append(f"- 周期: {'周线' if _ch.get('freq') == 'W' else '日线'} | 后端 {_ch.get('backend','?')} | 结构分 {_score:.0f}/100")
+            lines.append(f"- 笔 {_ch.get('bi_count',0)} | 中枢 {_ch.get('zhongshu_count',0)} | 买卖点 {len(_ch.get('points',[]) or [])}")
+            _lzs = _ch.get("last_zs")
+            if _lzs:
+                lines.append(f"- 最近中枢: ZZ={_lzs.get('zz')} ZG={_lzs.get('zg')} ZD={_lzs.get('zd')} [{_lzs.get('state')}]")
+            lines.append(f"- 现价 {_cs.get('last_close')} 位于 {_cs.get('position','未知')}")
+            _lp = _cs.get("last_point") or {}
+            if _lp.get("kind"):
+                lines.append(f"- 最近信号: {_lp['kind']} @{_lp.get('price')} ({_lp.get('dt')})")
+            _sig = _ch.get("signals", {}) or {}
+            n_entry = len(_sig.get("entry", []) or [])
+            n_exit = len(_sig.get("exit", []) or [])
+            if n_entry or n_exit:
+                lines.append(f"- 信号统计: 入场{n_entry} 出场{n_exit}")
     lines.append("")
 
     # 军规审查

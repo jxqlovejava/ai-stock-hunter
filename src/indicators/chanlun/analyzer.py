@@ -43,6 +43,24 @@ def _ensure_datetime_index(df) -> pd.DataFrame:
     return df
 
 
+# 部分数据源（get_history 等）返回中文列名（开盘/收盘/最高/最低/成交量/成交额），
+# 下游 merge_bars/_assign_macd_area/current_state 依赖英文列名 open/high/low/close，
+# 统一在 analyze 入口映射，避免 KeyError 静默降级为空结果。
+_CN_COL_MAP = {
+    "开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
+    "成交量": "volume", "成交额": "amount",
+}
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return df
+    rename = {c: _CN_COL_MAP[c] for c in df.columns if c in _CN_COL_MAP}
+    if rename:
+        df = df.rename(columns=rename)
+    return df
+
+
 def _assign_macd_area(bis: list[Bi], df: pd.DataFrame) -> list[Bi]:
     """按笔区间回填 MACD 柱面积。"""
     close = df["close"].values.astype(float)
@@ -116,6 +134,7 @@ class ChanlunAnalyzer:
     def analyze(self, df, symbol: str, name: str = "", freq: str | None = None) -> ChanlunResult:
         f = freq or self.freq
         df = _ensure_datetime_index(df)
+        df = _normalize_columns(df)
         if df is None or len(df) < 30:
             return self._empty_result(symbol, name, f, reason="[DATA_GAP] 缠论: 数据不足30根")
         try:
@@ -179,8 +198,10 @@ class ChanlunAnalyzer:
             else:
                 state["position"] = "中枢内"
         if points:
-            lp = points[-1]
-            state["last_point"] = {"kind": lp.kind, "dt": str(lp.dt), "price": lp.price}
+            # detect_points 按笔序生成，points 不保证时间有序；
+            # last_point 必须取时间最新的买卖点，否则最近信号失真（tactics/diagnose 消费）
+            lp = max(points, key=lambda p: pd.to_datetime(p.dt))
+            state["last_point"] = {"kind": lp.kind, "dt": str(lp.dt), "price": float(lp.price)}
         return state
 
     @staticmethod

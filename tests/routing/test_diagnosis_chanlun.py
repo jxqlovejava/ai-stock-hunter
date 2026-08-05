@@ -35,16 +35,16 @@ def test_detect_chanlun_with_bars():
         assert isinstance(ctx["summary"]["sell_signal"], bool)
 
 
-def test_detect_chanlun_sell_signal_flags_warn():
-    from src.indicators.chanlun.schema import ChanlunPoint
-    # 直接构造带三卖的 summary 语义：sell_signal 应反映空头买卖点
+def test_detect_chanlun_sell_signal_reflects_latest_point():
+    """sell_signal 只反映最近一个买卖点（last_point），不被历史买卖点误触。"""
     ctx = DiagnosisEngine._detect_chanlun("000001", "测试", _make_df(200, seed=42))
     if ctx is not None:
-        any_sell = any(
-            p.get("kind") in ("一卖", "二卖", "三卖")
-            for p in ctx["summary"].get("points", [])
+        last_kind = (
+            ctx["summary"].get("current_state", {})
+            .get("last_point", {}).get("kind", "")
         )
-        assert ctx["summary"]["sell_signal"] == any_sell
+        assert ctx["summary"]["sell_signal"] == (last_kind in ("一卖", "二卖", "三卖"))
+        assert ctx["summary"]["buy_signal"] == (last_kind in ("一买", "二买", "三买"))
 
 
 def test_report_has_chanlun_fields():

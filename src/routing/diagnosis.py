@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
@@ -514,10 +515,14 @@ class DiagnosisEngine:
             elif pos == "中枢上方":
                 score += 6.0
             score = round(max(0.0, min(100.0, score)), 1)
-            summary["sell_signal"] = any(p.kind in ("一卖", "二卖", "三卖") for p in res.points)
-            summary["buy_signal"] = any(p.kind in ("一买", "二买", "三买") for p in res.points)
+            # 信号只看最近一个买卖点（current_state.last_point 按时间取最新），
+            # 避免历史上任意一次买卖点导致 sell_signal/buy_signal 永久触发
+            last_kind = res.current_state.get("last_point", {}).get("kind", "")
+            summary["sell_signal"] = last_kind in ("一卖", "二卖", "三卖")
+            summary["buy_signal"] = last_kind in ("一买", "二买", "三买")
             return {"summary": summary, "score": score}
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).debug("缠论检测降级 [%s]: %s", symbol, exc)
             return None
 
     @staticmethod

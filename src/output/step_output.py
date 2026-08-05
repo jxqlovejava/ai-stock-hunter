@@ -280,6 +280,47 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
         if checks:
             print(f"  ✅ 下一步核验: {'; '.join(checks[:3])}")
 
+    # 🥋 缠论结构摘要（只读展示；评分已在 diagnosis Phase 12c 微调动量 ±10%）
+    print_chanlun(report)
+
+
+def print_chanlun(report: Any) -> None:
+    """输出缠论结构摘要（笔/中枢/买卖点/现价位置）。无结果时静默跳过。
+
+    数据来自 diagnosis Report.chanlun（ChanlunResult.to_summary_dict()），
+    该结构在 diagnosis Phase 12c 已用于保守微调动量 ±10%。
+    """
+    ch = getattr(report, "chanlun", None)
+    if not ch or not isinstance(ch, dict):
+        return
+    cs = ch.get("current_state", {}) or {}
+    score = getattr(report, "chanlun_score", 50.0)
+    bar = "▓" * int(score / 5) + "░" * (20 - int(score / 5))
+    freq = "周线" if ch.get("freq") == "W" else "日线"
+
+    print(f"\n  🥋 缠论结构  [{freq}/{ch.get('backend', '?')}] 分{score:.0f} {bar}")
+    print(f"     笔 {ch.get('bi_count', 0)} | 中枢 {ch.get('zhongshu_count', 0)} | 买卖点 {len(ch.get('points', []) or [])}")
+
+    lzs = ch.get("last_zs")
+    if lzs:
+        print(f"     最近中枢: ZZ={lzs.get('zz')} ZG={lzs.get('zg')} ZD={lzs.get('zd')} [{lzs.get('state')}]")
+
+    pos = cs.get("position", "未知")
+    pos_icon = {"中枢上方": "🟢", "中枢下方": "🔴", "中枢内": "🟡"}.get(pos, "⚪")
+    print(f"     现价 {cs.get('last_close')} 位于 {pos_icon}{pos}")
+
+    lp = cs.get("last_point") or {}
+    if lp.get("kind"):
+        kind = lp["kind"]
+        sig_icon = "🟢" if "买" in kind else "🔴"
+        print(f"     最近信号: {sig_icon}{kind} @{lp.get('price')} ({lp.get('dt')})")
+
+    sig = ch.get("signals", {}) or {}
+    n_entry = len(sig.get("entry", []) or [])
+    n_exit = len(sig.get("exit", []) or [])
+    if n_entry or n_exit:
+        print(f"     信号统计: 入场{n_entry} 出场{n_exit}")
+
 
 # ── Step 4: 四大师辩论 ───────────────────────────────────────────────
 
