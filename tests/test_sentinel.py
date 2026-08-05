@@ -555,3 +555,111 @@ def test_briefing_open_once_per_day(tmp_path, monkeypatch):
     cfg.force = False
     m2 = run_briefing(cfg, "open")
     assert m2 == ""
+
+
+# ── 入场信号增强：缠论买点 + 板块资金流入 ─────────────────────────────
+
+def _fake_chanlun_analyzer(monkeypatch, last_point_kind, last_point_price="14.91"):
+    import pandas as pd
+    from types import SimpleNamespace
+
+    class _FakeAgg:
+        def get_history(self, symbol, **kwargs):
+            return pd.DataFrame({"close": [1.0, 2.0, 3.0]})
+
+    class _FakeRes:
+        current_state = {
+            "last_point": {
+                "kind": last_point_kind,
+                "price": last_point_price,
+                "dt": "2026-07-20",
+            }
+        }
+
+    class _FakeAnalyzer:
+        def __init__(self, freq="D"):
+            pass
+
+        def analyze(self, bars, symbol, name):
+            return _FakeRes()
+
+    monkeypatch.setattr("src.data.aggregator.DataAggregator", _FakeAgg)
+    monkeypatch.setattr(
+        "src.indicators.chanlun.analyzer.ChanlunAnalyzer", _FakeAnalyzer
+    )
+
+
+def test_chanlun_buy_signal_triggers_on_buy(monkeypatch):
+    from src.sentinel.channels import _check_chanlun_buy_signal
+
+    _fake_chanlun_analyzer(monkeypatch, "一买")
+    out = _check_chanlun_buy_signal("002130", "沃尔核材")
+    assert out is not None
+    assert "缠论买点" in out
+    assert "一买" in out
+    assert "14.91" in out
+
+
+def test_chanlun_buy_signal_none_on_sell(monkeypatch):
+    from src.sentinel.channels import _check_chanlun_buy_signal
+
+    _fake_chanlun_analyzer(monkeypatch, "一卖")
+    assert _check_chanlun_buy_signal("002130", "沃尔核材") is None
+
+
+def test_chanlun_buy_signal_none_no_data(monkeypatch):
+    import pandas as pd
+    from src.sentinel.channels import _check_chanlun_buy_signal
+
+    class _EmptyAgg:
+        def get_history(self, symbol, **kwargs):
+            return pd.DataFrame()
+
+    monkeypatch.setattr("src.data.aggregator.DataAggregator", _EmptyAgg)
+    assert _check_chanlun_buy_signal("002130", "沃尔核材") is None
+
+
+def _fake_sector_flow_agg(monkeypatch, industry, sectors):
+    from types import SimpleNamespace
+
+    class _FakeAgg:
+        def get_stock_industry(self, symbol):
+            return industry
+
+        def get_sector_capital_flow(self, indicator="今日"):
+            return SimpleNamespace(sectors=sectors)
+
+    monkeypatch.setattr("src.data.aggregator.DataAggregator", _FakeAgg)
+
+
+def _sf(name, net):
+    from types import SimpleNamespace
+    return SimpleNamespace(sector_name=name, main_net=net)
+
+
+def test_sector_flow_positive_triggers(monkeypatch):
+    from src.sentinel.channels import _check_sector_flow
+
+    _fake_sector_flow_agg(
+        monkeypatch, "电子", [_sf("电子", 301.5e8), _sf("银行", -50.0e8)]
+    )
+    out = _check_sector_flow("002130", "沃尔核材")
+    assert out is not None
+    assert "板块资金流入" in out
+    assert "电子" in out
+
+
+def test_sector_flow_negative_returns_none(monkeypatch):
+    from src.sentinel.channels import _check_sector_flow
+
+    _fake_sector_flow_agg(
+        monkeypatch, "银行", [_sf("电子", 301.5e8), _sf("银行", -50.0e8)]
+    )
+    assert _check_sector_flow("002130", "沃尔核材") is None
+
+
+def test_sector_flow_no_industry_returns_none(monkeypatch):
+    from src.sentinel.channels import _check_sector_flow
+
+    _fake_sector_flow_agg(monkeypatch, "", [_sf("电子", 301.5e8)])
+    assert _check_sector_flow("002130", "沃尔核材") is None

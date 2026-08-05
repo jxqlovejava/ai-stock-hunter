@@ -732,6 +732,16 @@ def run_entry_signal_channel(cfg: ChannelConfig) -> str:
             if hv:
                 lines.append(hv)
 
+        # ④ 缠论买点信号（最近买卖点为一买/二买/三买）
+        cl = _check_chanlun_buy_signal(sym, name)
+        if cl:
+            lines.append(cl)
+
+        # ⑤ 板块资金流入（所属板块主力净流入为正）
+        sf = _check_sector_flow(sym, name)
+        if sf:
+            lines.append(sf)
+
         if not lines:
             continue
 
@@ -970,6 +980,68 @@ def run_monitor_group_channel(
         "下游异动=需求端先行指标；设备商=供给端风险。"
         "\n⚠️ 信号仅作参考，不构成买卖建议。入场前请确认管道诊断通过+止损已设。"
     )
+
+
+def _check_chanlun_buy_signal(symbol: str, name: str) -> str | None:
+    """检测缠论最近买卖点是否为买点（一买/二买/三买）。
+
+    复用 ChanlunAnalyzer 日线分析；最近信号为卖点或数据不可用时返回 None。
+    """
+    try:
+        from src.data.aggregator import DataAggregator
+        from src.indicators.chanlun.analyzer import ChanlunAnalyzer
+
+        agg = DataAggregator()
+        bars = agg.get_history(symbol)
+        if bars is None or getattr(bars, "empty", True):
+            return None
+        res = ChanlunAnalyzer(freq="D").analyze(bars, symbol, name)
+        lp = (res.current_state or {}).get("last_point")
+        if not lp or not lp.get("kind"):
+            return None
+        kind = lp["kind"]
+        if kind not in ("一买", "二买", "三买"):
+            return None
+        return (
+            f"🥋 缠论买点: 最近信号 {kind} @{lp.get('price')} ({lp.get('dt')})"
+            " — 缠论买点确认"
+        )
+    except Exception:
+        logger.debug("缠论买点检查跳过 %s", symbol)
+        return None
+
+
+def _check_sector_flow(symbol: str, name: str) -> str | None:
+    """检测个股所属板块主力资金净流入是否为正。
+
+    复用 diagnosis 的行业匹配（东财 f127 → 板块资金流），净流入为负/数据缺失返回 None。
+    """
+    try:
+        from src.data.aggregator import DataAggregator
+        from src.routing.diagnosis import DiagnosisEngine
+
+        agg = DataAggregator()
+        industry = agg.get_stock_industry(symbol) or ""
+        if not industry:
+            return None
+        snap = agg.get_sector_capital_flow("今日")
+        sectors = getattr(snap, "sectors", None) or []
+        if not sectors:
+            return None
+        matched = DiagnosisEngine._match_sector(snap, name, industry)
+        if matched is None:
+            return None
+        main_net = float(getattr(matched, "main_net", 0.0) or 0.0)
+        if main_net <= 0:
+            return None
+        _, rank_pct, _ = DiagnosisEngine._rank_of(snap, matched)
+        return (
+            f"💰 板块资金流入: {getattr(matched, 'sector_name', '')} "
+            f"主力净流入 {main_net/1e8:+.1f}亿 (排名 {rank_pct:.0f}%)"
+        )
+    except Exception:
+        logger.debug("板块资金检查跳过 %s", symbol)
+        return None
 
 
 def _check_wma20_week(symbol: str, name: str) -> str | None:
