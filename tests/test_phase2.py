@@ -9,9 +9,9 @@ import pytest
 # ── Doctrine ──
 
 class TestDoctrine:
-    def test_all_41_rules(self):
+    def test_all_rules_count(self):
         from src.doctrine.rules import MILITARY_RULES
-        assert len(MILITARY_RULES) == 41
+        assert len(MILITARY_RULES) == 43   # 41 基础 + r037/r038 缠论军规
 
     def test_rule_categories(self):
         from src.doctrine.rules import MILITARY_RULES, Severity
