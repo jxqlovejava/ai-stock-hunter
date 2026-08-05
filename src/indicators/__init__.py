@@ -176,6 +176,16 @@ from .structure import (
     ZigZagPoint,
 )
 
+# ── Chanlun ────────────────────────────────────────────────────────
+from .chanlun import (
+    Bi,
+    ChanlunPoint,
+    ChanlunResult,
+    Fractal,
+    ZhongShu,
+)
+from .chanlun.analyzer import ChanlunAnalyzer
+
 
 __all__ = [
     # Base
@@ -232,4 +242,7 @@ __all__ = [
     "ChoppinessIndex", "ForceIndex", "ChaikinMoneyFlow",
     # Structure
     "HurstExponent", "ZigZag", "ZigZagPoint",
+    # Chanlun
+    "ChanlunAnalyzer", "ChanlunResult",
+    "Fractal", "Bi", "ZhongShu", "ChanlunPoint",
 ]
