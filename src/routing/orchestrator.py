@@ -312,6 +312,8 @@ class Orchestrator:
         quote_dict["_source"] = quote.source
         quote_dict["cross_validated"] = cross_validated
         quote_dict["dispute"] = dispute
+        # 个股所属行业（板块资金流向分析定位板块用；东财 f127，失败返回空串）
+        quote_dict["sector_name"] = self.data.get_stock_industry(symbol)
 
         # ── Phase 0: 并行预拉取 K线/财务/宏观/北向/板块/大宗/盈利修正/全球市场/情绪 ──
         # 消除重复网络调用 (修复前: K线×3, 财务×2, 行情×2, 各阶段串行IO)

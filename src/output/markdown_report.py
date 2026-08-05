@@ -71,6 +71,22 @@ def _build_report(result: Any) -> list[str]:
         for label, score, nature in rows:
             lines.append(f"| {label} | {score:.0f} | [{nature}] |")
         lines.append("")
+        # 板块资金流向（个股所属板块 + 当日 Top 板块）
+        sf_detail = getattr(report, "sector_flow_detail", None)
+        if sf_detail:
+            _main = float(sf_detail.get("main_net", 0.0) or 0.0)
+            _main_pct = float(sf_detail.get("main_net_pct", 0.0) or 0.0)
+            lines.append(
+                f"- 🏭 所属板块: {sf_detail.get('sector_name','')} 主力净流入 "
+                f"{_main/1e8:+.1f}亿 ({_main_pct:+.1f}%) 排名 {sf_detail.get('rank')}/{sf_detail.get('total_sectors')}"
+            )
+        sf_top = getattr(report, "sector_flow_top", None) or []
+        if sf_top:
+            top_txt = ", ".join(
+                f"{t.get('sector_name','')}({float(t.get('main_net',0.0) or 0.0)/1e8:+.1f}亿)"
+                for t in sf_top[:3]
+            )
+            lines.append(f"- 📊 当日净流入Top: {top_txt}")
         # 价格数据（事实性数据，非投资论点）
         _daily = getattr(report, "change_pct_1d", 0.0)
         _5day = getattr(report, "change_pct_5d", None)

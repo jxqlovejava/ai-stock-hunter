@@ -1272,6 +1272,25 @@ class DataAggregator:
             sectors=sectors,
         )
 
+    def get_stock_industry(self, symbol: str) -> str:
+        """获取个股所属行业（东财 push2 f127）。失败/无数据返回 ""。
+
+        供板块资金流向分析定位个股所属板块；空串也缓存避免重复请求。
+        """
+        cache_key = f"stock_industry:{symbol}"
+        cached = self._cache_get(cache_key, ttl=timedelta(hours=24))
+        if cached is not None:
+            return cached or ""
+        industry = ""
+        try:
+            from .eastmoney_fallback import fetch_em_stock_industry
+            industry = fetch_em_stock_industry(symbol) or ""
+        except Exception as exc:
+            logger.debug("get_stock_industry(%s) 失败: %s", symbol, exc)
+            industry = ""
+        self._cache_set(cache_key, industry)
+        return industry
+
     def get_industry_pe_pb(
         self, symbol: str, market: str = "SH"
     ) -> tuple[Optional[float], Optional[float]]:

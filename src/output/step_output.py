@@ -194,6 +194,22 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
     sector_flow_rank = getattr(report, "sector_flow_rank", None)
     if sector_flow_rank is not None:
         print(f"  板块资金排名 {sector_flow_rank}% (净流入越靠前排名越高) [📊事实]")
+    sf_detail = getattr(report, "sector_flow_detail", None)
+    if sf_detail:
+        _sname = sf_detail.get("sector_name", "")
+        _main = float(sf_detail.get("main_net", 0.0) or 0.0)
+        _main_pct = float(sf_detail.get("main_net_pct", 0.0) or 0.0)
+        print(
+            f"  🏭 所属板块: {_sname} 主力净流入 {_main/1e8:+.1f}亿 ({_main_pct:+.1f}%) "
+            f"排名 {sf_detail.get('rank')}/{sf_detail.get('total_sectors')}"
+        )
+    sf_top = getattr(report, "sector_flow_top", None) or []
+    if sf_top:
+        top_txt = "  ".join(
+            f"{t.get('sector_name','')} {float(t.get('main_net',0.0) or 0.0)/1e8:+.1f}亿"
+            for t in sf_top[:3]
+        )
+        print(f"  📊 当日净流入Top: {top_txt}")
 
     print(f"  置信度 {getattr(report, 'confidence', 0):.0%}  数据 {getattr(report, 'data_freshness', '?')}")
 

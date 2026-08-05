@@ -99,6 +99,8 @@ class DiagnosisReport:
     # 板块资金流向
     sector_flow_score: float = 50.0          # 行业资金流向排名分 0-100
     sector_flow_rank: int = 50               # 行业净流入排名百分位 0-100
+    sector_flow_detail: Optional[dict] = None      # 所属板块详情 {sector_name, main_net, main_net_pct, rank, total_sectors}
+    sector_flow_top: list = field(default_factory=list)  # 当日净流入 Top 板块 [{sector_name, main_net}]
     # 主题驱动检测
     sector_warnings: list[str] = field(default_factory=list)  # 行业级风险提示
     is_theme_driven: bool = False            # 是否处于主题驱动阶段
@@ -117,36 +119,73 @@ class DiagnosisEngine:
         return max(0.0, min(100.0, score * weight))
 
     @staticmethod
-    def _compute_sector_flow_score(sector_flow, stock_name: str) -> tuple[float, int]:
+    def _match_sector(sector_flow, stock_name: str, industry: str = ""):
+        """定位个股所属板块。
+
+        优先级: 行业名精确匹配 → 行业名模糊匹配(包含，取更长) → 股票名包含板块名。
+        都失败返回 None（调用方降级为中位默认值）。
+        """
+        sectors = getattr(sector_flow, "sectors", None) or []
+        cand = [s for s in sectors if getattr(s, "sector_name", "").strip()]
+        if not cand:
+            return None
+        if industry:
+            for s in cand:
+                if s.sector_name == industry:
+                    return s
+            hits = [
+                s for s in cand
+                if industry in s.sector_name or s.sector_name in industry
+            ]
+            if hits:
+                return max(hits, key=lambda s: len(s.sector_name))
+        for s in cand:
+            if s.sector_name in stock_name:
+                return s
+        return None
+
+    @staticmethod
+    def _rank_of(sector_flow, matched) -> tuple[float, int, int]:
+        """由已匹配板块计算 (score, rank_percentile, rank_index)。
+
+        rank_index 为序数（1 = 净流入最大）；rank_percentile 为 0-100 百分位
+        （数值越大表示净流入排名越靠前）。未匹配/无数据返回 (50.0, 50, 0)。
+        """
+        sectors = getattr(sector_flow, "sectors", None) or []
+        if not sectors or matched is None:
+            return 50.0, 50, 0
+        total = len(sectors)
+        # 按主力净流入排序，idx=1 为净流入最大
+        sorted_sectors = sorted(
+            sectors, key=lambda s: getattr(s, "main_net", 0.0), reverse=True
+        )
+        for idx, s in enumerate(sorted_sectors, start=1):
+            if s is matched:
+                denom = max(1, total - 1)
+                rank_pct = max(0, min(100, int((1 - (idx - 1) / denom) * 100)))
+                return float(rank_pct), rank_pct, idx
+        return 50.0, 50, 0
+
+    @staticmethod
+    def _compute_sector_flow_score(
+        sector_flow, stock_name: str, industry: str = ""
+    ) -> tuple[float, int]:
         """计算个股所在行业的板块资金流向排名分。
 
         Args:
             sector_flow: SectorCapitalFlowSnapshot
-            stock_name: 股票名称，用于模糊匹配所属行业
+            stock_name: 股票名称（兜底模糊匹配用）
+            industry: 个股所属行业（东财 f127，优先于股票名匹配）
 
         Returns:
             (score, rank_percentile): score 0-100，rank_percentile 0-100
                 （数值越大表示行业净流入排名越靠前）
         """
-        sectors = getattr(sector_flow, "sectors", None)
-        if not sectors:
+        if not getattr(sector_flow, "sectors", None):
             return 50.0, 50
-
-        total = len(sectors)
-        # 按主力净流入排序，rank=1 为净流入最大
-        sorted_sectors = sorted(sectors, key=lambda s: getattr(s, "main_net", 0.0), reverse=True)
-
-        # 用股票名称中的行业关键词匹配板块名
-        for idx, s in enumerate(sorted_sectors, start=1):
-            sector_name = getattr(s, "sector_name", "").strip()
-            if sector_name and sector_name in stock_name:
-                # idx=1（净流入最大）→ 100；idx=total（净流入最小）→ 0
-                denom = max(1, total - 1)
-                rank_pct = max(0, min(100, int((1 - (idx - 1) / denom) * 100)))
-                return float(rank_pct), rank_pct
-
-        # 未匹配到具体行业：返回中位数
-        return 50.0, 50
+        matched = DiagnosisEngine._match_sector(sector_flow, stock_name, industry)
+        score, rank_pct, _ = DiagnosisEngine._rank_of(sector_flow, matched)
+        return score, rank_pct
 
     def analyze(
         self,
@@ -208,16 +247,40 @@ class DiagnosisEngine:
 
         # 板块资金流向微调动量评分
         if sector_flow is not None and hasattr(sector_flow, "sectors"):
-            flow_score, flow_rank = self._compute_sector_flow_score(
-                sector_flow, quote.get("name", name) if quote else name
-            )
+            if not sector_flow.sectors:
+                _sf_gap = getattr(sector_flow, "data_gap_reason", None)
+                if _sf_gap:
+                    report.data_gaps.append(_sf_gap)
+            stock_name = quote.get("name", name) if quote else name
+            industry = (quote.get("sector_name") or "") if quote else ""
+            matched = self._match_sector(sector_flow, stock_name, industry)
+            flow_score, flow_rank, flow_idx = self._rank_of(sector_flow, matched)
             report.sector_flow_score = flow_score
             report.sector_flow_rank = flow_rank
+            if matched is not None:
+                report.sector_flow_detail = {
+                    "sector_name": getattr(matched, "sector_name", ""),
+                    "main_net": getattr(matched, "main_net", 0.0),
+                    "main_net_pct": getattr(matched, "main_net_pct", 0.0),
+                    "rank": flow_idx,  # 序数：1 = 净流入最大
+                    "total_sectors": len(sector_flow.sectors),
+                }
+            try:
+                report.sector_flow_top = [
+                    {"sector_name": s.sector_name, "main_net": s.main_net}
+                    for s in sorted(
+                        sector_flow.sectors,
+                        key=lambda s: getattr(s, "main_net", 0.0), reverse=True,
+                    )[:3]
+                ]
+            except Exception as exc:
+                logging.getLogger(__name__).debug("板块资金 Top 构建失败: %s", exc)
             if report.momentum_score is not None:
-                # 行业净流入前 20% → 动量 +5%；净流出前 20% → 动量 -5%
-                if flow_rank <= 20:
+                # rank_pct 越大 = 行业净流入越靠前（idx=1 → 100）
+                # 净流入前 20%（>=80）→ 动量 +5%；净流出前 20%（<=20）→ 动量 -5%
+                if flow_rank >= 80:
                     report.momentum_score = self._apply_weight(report.momentum_score, 1.05)
-                elif flow_rank >= 80:
+                elif flow_rank <= 20:
                     report.momentum_score = self._apply_weight(report.momentum_score, 0.95)
 
         # Phase 5: 估值评分（独立于 value_score）

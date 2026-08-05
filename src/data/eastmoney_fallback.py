@@ -344,6 +344,24 @@ def fetch_em_executive_trades(
 # ══════════════════════════════════════════════════════════════════════
 
 
+def fetch_em_stock_industry(symbol: str) -> str:
+    """东财 push2 个股详情 → 所属行业 (f127)。失败/无数据返回 ""。
+
+    secid 前缀: 6/9 开头为沪市(1)，其余为深市(0)。
+    """
+    market = "1" if symbol.startswith(("6", "9")) else "0"
+    params = {"secid": f"{market}.{symbol}", "fields": "f57,f127"}
+    headers = {"Referer": "https://quote.eastmoney.com/"}
+    try:
+        r = _em_get(PUSH2_URL, params=params, headers=headers, timeout=10)
+        d = r.json()
+        data = d.get("data") or {}
+        return str(data.get("f127", "")).strip()
+    except Exception as e:
+        logger.debug("东财个股行业获取失败 %s: %s", symbol, e)
+        return ""
+
+
 def fetch_em_industry_list() -> list[dict]:
     """东财 push2 行业板块排名 (m:90+t:2, 零鉴权)。
 
