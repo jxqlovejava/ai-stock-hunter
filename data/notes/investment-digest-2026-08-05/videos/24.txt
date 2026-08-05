@@ -1,0 +1,828 @@
+- 好的 - 作為兒子,你還好在學校嗎?
+學校是一件很自然的事,就是...
+對,很自然的事,我永遠喜歡它
+我喜歡研究,我喜歡繼續分辨兩件事
+雖然我到了1024年的時候,還是什麼都沒了
+但是,我喜歡學校
+我找到一位很年輕的兒子,可能是四個
+叫做"Zeno's Paradox"
+你有沒有聽過"Zeno's Paradox"?
+我父親告訴我
+是車子可以跑出來的
+我沒有想過會受到傷害
+但是我卻想,它應該不會跑出來
+它可以用一半的東西
+然後用一半的東西,然後用一半的東西
+然後它會一直跑出來,所以它不會跑出來
+所以它沒有發生過,但它不會跑得很遠
+但是,在基本上,你沒有用一半的東西
+是一種很深刻的想法
+你是一位很年輕的學生嗎?
+你總是有很好的學生嗎?
+我是一位很年輕的學生
+我曾經覺得自己很聰明
+另一邊,我是很丟臉的
+所以我經常做了一個很快的歷史測試
+但是我喜歡每一件事都很重要,我喜歡每一件事都很重要,我愛學習
+4/3的"PiR"和"Cubed"的學習,4/3的"Volume"和"Sphere"的學習,我愛學習的學習
+我上了高校,我們開始了,例如,《 plane geometry proofs and theorems》
+那是我真的受到的,我真的愛那些
+我愛在一些問題上,比較難處理,我喜歡做那些事
+我從來沒有做過最快的一種學習,但我會用它來解決這件事的問題
+我只喜歡這個
+你覺得這就是你的 career was going to take you?
+你像是另一男人,你夢想要成為一個基礎學者?
+不不不,我只想到一件事,就是,我會作為一個學者, whatever exactly that meant, I didn't know quite what it meant, except that mathematics was the only subject I really liked. Science was okay, but it wasn't very well taught, where I went to high school, at least I don't think so. And history, English, I love to read, but I wasn't a good writer. I read a lot.
+When I went to MIT, I majored in mathematics, of course, and skipped the first year because I had some of those courses in high school. And I even took a graduate course in my freshman year of a second semester in math, because it said no prerequisites required.
+No, no prerequisites, I'll take that course. Had a very hard time getting my arms around that course. I finished it okay, but I was very puzzled by some of the concepts. However, that summer, I got another book. I got a book on, this was algebra, but it's not algebra like solving equations, it was abstract algebra.
+And then in a week, everything came together for me. I understood, I was no longer puzzled, I understood why they did everything. Other parts of math got me stymied for a while, but typically it would take some time for me to sort of grasp what they were trying to do, and then it would go very smoothly.
+So I graduated early from MIT in three years.
+But it was mathematics that I wanted to major in, and I could see quickly that well, that's the way. If you're going to do that, you're going to be a professor somewhere and a professor.
+You've also talked about this week of algebra, where everything sort of fell into place. Is that a common thing? Is there like, is this a thing that always happens? There's this moment where all the cogs move into place, and it's like, oh, I get it now.
+I think, yeah, there are moments like that. Sometimes you're introduced to a new concept, and it's, you wonder, why? Why are they talking about this? Why is this concept interesting?
+And then you're thinking you see some examples, and they say, oh, yeah, okay, this is really good. A lot in mathematics is making definitions. You'll see things that really could come together under one aegis.
+And you can define this set of notions, and sometimes just a structure which follows all these notions. And that's a great way that mathematics has advanced.
+Because when you put a lot of things together that have similar characteristics, then you can try to prove theorems about the general set of things, rather than some particular example.
+And that turns out to be a very powerful approach. So making a good definition is a good thing.
+They wanted me to go to Berkeley and get away from MIT, meet some new faculty, because I was quite close to the MIT faculty.
+And they thought, I think they didn't want to get rid of me so much as they thought I was probably pretty good, so I should get exposed to a certain guy named Churn, who was just coming to Berkeley that year.
+And I got this very nice fellowship, and I went there. I was very eager to work with Churn, meet Churn, except he wasn't there.
+He celebrated his first year at Berkeley. He had just come to Berkeley, and he celebrated that first year by taking a sabbatical, so he wasn't there.
+So I worked with another guy, which was fine. And by the time Churn came in the second year, I was already pretty far along with the thesis project.
+I was giving a seminar at the beginning of my second year at Berkeley, and I walked this tall Chinese guy, and I said to the guy next to me, "Who's that?"
+I said, "That's Churn." I said, "That's Churn." I didn't know he was Chinese. I thought Churn was probably short for Churnowski or something, or he was probably some Polish guy who had shortened his name to Churn.
+If it had been Chan or Chan, I would have known it was Chinese, but Churn with the R, I didn't know. But anyway, so I met Churn then, and we became friends.
+Of course, I was much younger than he, but we became friends, and later collaborators.
+Can you give some idea about what your area of specialization is at this point? What are you zeroing in mathematically on?
+Well, at that point, and pretty much thereafter, the field that I worked in was called differential geometry.
+D differential geometry is geometry, but it's the geometry of curved spaces. It's not flat things in the plane.
+It's any shape or form, but typically with some distance function, so that you knew how far apart things were.
+And the basic object to study is what's called a manifold, and a manifold is a lot of pieces of space glued together.
+So, for example, the surface of a sphere is a manifold.Now, you can't just take one little sheet of paper and make a sphere out of that,
+but you could glue a bunch of pieces of paper together and make a sphere.
+So, a manifold is something that locally in your neighborhood looks like it's just regular space, maybe it's curved a little bit.
+But globally, it could be quite different.So, and the surface of a tire of a donut, for example, is fundamentally different from the surface of a sphere.
+You can't deform one into the other.
+What really got me onto it is a certain theorem, which is called Stokes theorem.
+Now, Stokes theorem is the ultimate, I think, generalization of what was originally called the fundamental theorem of calculus.
+Now, I don't know if you studied calculus, but the basic theorem is if you integrate the derivative of a function.
+So, you take a function, you take its derivative, first derivative, and then you integrate that, let's say, from A to B.
+Well, that gets you back the original function.
+The answer when you integrate the derivative is of F.It's, well, it's F of B minus F of A.
+That's the answer.If you integrate the derivative of a function, you get back the value of the function.
+Well, that was the fundamental theorem of calculus, presumably Newton knew that.
+Now, that had been generalized into higher dimensions, so there were other things you could integrate and differentiate and go from boundaries to interiors and so on.
+And the general statement of that theorem was, to me, almost breathtaking.
+It was so beautiful, that theorem.
+And that's one of the basic theorems in differential geometry.
+It's about integrating something over the boundary.
+And that's the same as integrating something else over the interior, something related to it.
+It's derivative in effect.It's called its differential.
+So, there's a whole calculus of things called differential forms and integration and all of that.
+And that takes place in manifolds in general and anything that looks like pieces of space.
+So, I love that theorem and that's what got me into differential geometry.
+So, was it a beauty or an elegance you saw, or was it a trophy and a prize you saw that could be chased?
+No, it was just a beauty.It was just a beauty of it.I just liked it.
+I had learned a fair amount of algebra and that was fine, but it didn't grab me.
+But the geometry did.So, that's what I specialized in.
+And when I got to Berkeley,I was fooling around and started...
+I'd made some observations and I mentioned them to my thesis advisor, the guy I was going to work with.
+And he said, "Oh, that's interesting.That makes me think about such and such a problem."
+There was a problem floating around that people had been trying and failing to solve.
+But I thought, "Oh, that's very interesting."
+So, I started working on that.And he advised me not to because so-and-so had tried it and so-and-so had tried it.
+And those were big shots and I was just a little shot.
+But I didn't pay much attention to him.And I solved it.
+And just worked through it and worked through it.
+And had a little help along the way for people.
+But basically, I drove that.
+I had done some other mathematics after my thesis.
+Work on something called minimal varieties.
+And it was kind of a fundamental paper.It took me six years to write that paper.
+People were, I think, thought, "How could I take six years?"
+But anyway, it did.And that turned out to be a very good paper.
+That was where I was coming from.
+And roughly that time frame or a year or two afterwards,
+I went when I was 30 to Stony Brook to be chair of their math department.
+Stony Brook University was a very new university.
+They had a rather poor math department.
+In fact, it was very bad.
+But an excellent physics department.
+They offered me this job as being chairman.
+And I thought that would be a lot of fun.
+In that time frame,I had decided to try to learn something
+about an area of topology,which is related to geometry.
+It's the kind of handmaidens of each other called characteristic classes,
+whatever that might be.
+And I thought,I'm going to just learn these characteristic classes
+because I didn't really know it.
+And it was important.
+And I wanted to learn about it.
+So I kind of started from the beginning and worked my way up.
+And I was trying to solve a problem,as I later discovered,
+had intrigued many people.
+And it's never been solved satisfactorily.
+So since I say that,I didn't solve it either.
+But in the course of trying to do that,certain terms came up.
+Certain functions of a sort that began to look just very interesting to me.
+And I saw,well,so there were a pesky term that I couldn't get rid of.
+I needed to get rid of that termin order to make this formula that I wanted.
+But the term seemed to have a life of its own.
+And one thing led to another.
+I wanted to find a certain invariant of a three-dimensional manifold
+and use that to prove what's called immersion theorems,whatever those are.
+This was a very handy thing.
+And I showed it to Churn.
+I said,oh,look at these results in three dimensions.
+And he looked at it and said,oh,well,we could do this in all the dimensions.
+Because it was an area that he really knew about.
+But the results that I had gotten,but the whole,the general area.
+So we worked together.
+And we came up with,well,these results,this whole structure.
+In fact,that's the slides of the presentation that Churn made
+at the International Congress in the early '70s.
+It was very nice geometry.
+I pushed on with it,and we defined some things called differential characters,
+which was another chapter,working with a guy named Cheeger.
+But the term sounds very interesting.
+Simon's invariance, about ten years later, the physicists got ahold of it and it seemed to be very good for what ailed them, or whatever it might have ailed them and so, and it wasn't just string theory, as I subsequently developed, it was kind of all areas of physics, including condensed matter theory, even some astronomers seem to want to look at those terms.
+So, it's really what's great about basic science, in this case mathematics, I mean, I didn't know any physics, it didn't occur to me that this material that Cher and I had developed would find use somewhere else altogether.
+This happens in basic science all the time, that one guy's discovery leads to someone else's invention and leads to another guy's machine or whatever it is.
+So, basic science is at the, it's the seed corn of our knowledge of the world.
+What did it feel like at the time you were coming up with it? Did it just feel obscure and just like a little diversion and then ten years later it felt special?
+Well, it never felt like a little diversion, I really liked the results, I loved the subject, but I liked it for itself, I wasn't thinking of applications.
+You know, I mentioned to C.N. Yang, who was at Stony Brook at the time, who was a Nobel Prize winning physicist of great renown.
+So, I got these things, maybe they'd be useful in physics because I knew the physicists were looking in the same places using certain mathematical structures, but he didn't bite and I didn't know how it would be useful.
+So, I just left it alone, but I was very pleased with the math and then it led to another set of definitions and some math that I did with this guy, Jeff Chieger, which started as sort of a mini-field, although I didn't realize it at the time.
+It's now called differential cohomology and so that's a fair amount of people working in that area.
+So, does that make you feel, does it become like vindication or what I did was more useful than I thought?
+What do you think when it gets used to ten years later or by then are you divorced from it and you're like do what you want with it?
+It's always made me feel very good, of course, naturally, you like to think that something you did had far-reaching ramifications.
+It was nice, but it wasn't. I didn't go to bed dreaming about,ah, now I've revolutionized physics, but first of all, I didn't revolutionize physics, but did some stuff there.
+But sure, it made me feel good.
+Actually, in the middle of my mathematics career, which ended when I was about 37 or 38, was that I spent four years at a place called the Institute for Defense Analysis down in Princeton, which was a super-secret government-based,
+national security agency-based place for code-cracking, trying to break the enemies, whoever it was, Russia, I guess, code machines and cipher machines.
+I spent four years there in Princeton. During that time, I was working on this. Remember, I said I took me six years to work through all this stuff and minimal varieties.
+I did a lot of it while I was there, but I also learned about computers and algorithms in the code-cracking field.
+I was no good as a programmer, terrible, but I was pretty good at coming up with algorithms and trying to, you know, and I found that very exciting to think, oh, this might help crack this code.
+Here's an algorithm which could work. Someone else would program it up. Then it would run on a computer, and maybe it would work, and maybe it wouldn't.
+And I did one thing there that was quite good, because I can't tell you what it was. It's all classified.
+So I had a good career there, both doing mathematics and learning about the fun of computer modeling, let's say.
+-Was that specialization that you'd had during your PhD, the manifolds and the topology? Was that related to the algorithms?
+-No, completely so.
+-Why were you drafted in for that in the first place then?
+-They paid money. I was getting kind of bored, simply being an academic.
+And also, this work, this six-year project was maybe making me feel, gosh, other guys are publishing papers, and I'm not.
+But I wasn't thrilled with being an academic, and this place hired mathematicians, a handful.
+You could do mathematics half your time, and the other half of your time, you were supposed to work on their stuff.
+There was no teaching, so it was like, "Oh, I could do as much mathematics as I was doing anyway."
+And they paid better.
+And I thought this would be interesting and a nice change, and it was.
+And I enjoyed it.
+I did a lot of good math, but I thought it was good, and did a good work for them.
+But that ended after four years, because I got fired.
+-Oh, you can't just leave it at that. You got fired.
+-I got fired.
+-Why did you get fired?
+-Well, I got fired, because this was in the middle of the Vietnam War, which I didn't like the war.
+Not that we were doing anything to support the war in this particular organization,
+unless I just didn't like it.And then the head of the organization, he was down in Washington.
+He was a big shot named Maxwell Taylor, General Maxwell Taylor.
+He wrote an article in the New York Times magazine section, a Sunday magazine,
+a cover story,how we're really winning the war in Vietnam.
+We just have to stay the course, and it's all going to be great.
+And I thought that's a lot of bologna.
+So I wrote a letter to the Times saying not everyone who works for General Taylor supports his views.
+And in my opinion, blah, blah, blah.It was a good letter.
+And they published it right away, of course, because it was unusual that someone would write such a letter in his situation.
+I didn't hear a peep.No one said anything at the company.
+They didn't say you shouldn't have done that.
+But I was clearly on the watch list.
+When you wrote it,did you know you were doing something reckless?
+No.I didn't really think it was reckless because it was my opinion.
+And it really didn't have anything to do with my work.
+But then,about three or four months later,a guy from Newsweek magazine came to see me.
+And he said he's doing an article about people who work for the Defense Department,
+who are opposed to the war.
+And he says,I have a lot of trouble finding such people.
+But could I interview you?
+Well,I was 29 years old.No one ever asked to interview me before.
+It sounded like,hey,maybe I'll be interviewed.
+Okay,you can interview me.
+So we asked this and that,but he really wanted to know.
+So what is your policy?
+So I sort of made up a policy,although it was pretty much true.
+I said,well,you know,here at IDA,you have to spendat least 50% of your time on their stuff.
+In those days,it was secret that it was even codes and ciphers,so I just said their stuff.
+But you could spend 50% of your time in mathematics.
+And so my algorithm now is,until the Vietnam war is over,I will spend all my time on mathematics.
+And then after it's over,I'll spend all my time on their stuff until the two things match up again.
+And that was kind of largely true.
+I was doing mostly mathematics,but I was doing a little of their stuff.
+So then it occurred to me to tell my local boss that I gave this interview.
+He said,well,why'd you tell him?
+I said,well,I told him what I just said to you.
+He said,well,I'd better call Taylor,his boss.
+And he called Taylor,and I came back into his office.
+And he said,you're fired.He said,I'm fired.
+He said,you're fired.Taylor fired you.Taylor told me to fire you.
+So,well,I was fired.
+I said,you know,I don't know how you can fire me.
+Taylor,is a permanent member,which was.
+I started as a temporary member,and then I became a permanent member.
+And the boss was very funny.He said,well,here's the difference between a temporary member and a permanent member.
+A temporary member has a contract.Permanent member doesn't.
+I had no contract,so I was out of there.
+And it was amusing.I had solved this big math problem that I told you about this six-year thing.
+I knew I was going to get a job very easily,so I wasn't really worried about that.
+You've honed your skills with algorithms,and you've learned a lot about computers.
+So I'm seeing the writing on the wall here for where things go next.
+How do we progress to you?
+So,at a certain point,now,I went to Stony Brook,after this,it was a chair,and did this work with churn,and did some work with chigger.
+And we got stuck.We were trying to prove something,mathematical thing,and it was very,very frustrating.
+Worked on it for about two years.We got nowhere.
+I mean,it's okay to work for a long time if you feel you're getting somewhere,but we got absolutely nowhere on this problem.
+And my father had made a little bit of money,and I had the opportunity to try investing it.
+And that was interesting.
+And I thought,you know,I'm going to try another career altogether.
+And so I went into the money management business,so to speak.
+So you started with some of your dad's money,and that got you a taste for an interest in that.
+Yeah,some family money.And then some other people put up some money.
+And I did that.No models.No models for the first two years.
+So what were you doing then?You were just using cunning and,you know,just normal people do.
+Like,normal people do.And I brought in a couple of people to work with me.
+And we were extremely successful.
+I think it was just plain good luck,but nonetheless,we were very successful.
+But I could see,but this was a very gut-wrenching business.
+You know,you come in one morning,you think you're a genius,the markets are for you.
+We were trading currencies and commodities and financial instruments and so on,not stocks,but those kinds of things.
+And then the next morning you come and you feel like a jerk,the markets against you.
+It was very gut-wrenching.
+And in looking at the patterns of prices,I could see that there was something we could study here.
+That there may be some ways to predict prices mathematically or statistically.
+And I started working on that and then brought in some other people and gradually built models.
+And the models got better and better and finally the models replaced the fundamental stuff.
+So it took a while.
+I would have thought with your background and mathematician this would have almost occurred to you immediately.
+Like,you would have straight away seen this.
+What was the two-year delay?
+Well,two things.I saw it pretty early.
+But,and I brought in a guy who was a wonderful guy also from the code-cracking place.
+And he was,I thought together we'll stop building models.
+That was fairly early,but it wasn't right away.
+But he got more interested in the fundamental stuff.
+And he says the models aren't going to be very strong and so on and so forth.
+So we didn't get very far.
+But I knew there were models to be made.
+Then I brought in another mathematician and a couple more and a better computer guy.
+And then we started making models which really worked.
+So the general,there's something called the efficient market theory,which says that there's nothing in the data,let's say price data,which will indicate anything about the future.
+Because the price is sort of always right.
+The price is always right in some sense.
+But that's just not true.
+So there are anomalies in the data,even in the price history data.
+There's something,commodities especially used to trend,not dramatically trend,but trend.
+So if you could get the trend right,you'd bet on the trend.
+And you'd make money more often than you wouldn't,whether it was going down or going up.
+That was an anomaly in the data.
+But gradually we found more and more and more and more and more anomalies.
+None of them is so overwhelming that you're going to clean up on a particular anomaly.
+Because if they were,other people would have seen them.
+So they have to be subtle things.
+And you put together a collection of these subtle anomalies.
+And you begin to get something that will predict pretty well.
+How elaborate are these things?
+Because in my head,I'm imagining some equation like Pythagoras equation.
+You put a few numbers in and something spits out.
+But are these giant beasts of equations and algorithms?
+Or are they simple things?
+Well,the system as it is today is extraordinarily elaborate.
+But it's not a whole lot.
+It's what's called machine learning.
+So you find things that are predictive.
+You might guess,oh,such and such should be predictive,might be predictive.
+And you test it out on the computer and maybe it isn't,maybe it isn't.
+You test it out on long term historical data and price data and other things.
+And then you add to the system this if it works and if it doesn't,you throw it out.
+So there aren't elaborate equations,at least none.
+不是想要計算的部分,但計算部分是不只的部分,你必須知道你的財產,你會租購市場,現在大部分人會買200塊,但不租購市場,因為太小,但如果要買200塊,你會租購市場,你會租購市場,你會租購市場嗎?
+你會租購市場的財產,你會租購市場,你不會租購市場,因為你租購市場,你必須知道你的財產,這是重要的,你必須知道你的財產,這是重要的,你必須知道你的財產,這是重要的,你必須知道你的財產,這是重要的,你必須知道你的財產,是重要的
+所以你必須做到,那最後一部分,用不上學術的學術,不只是學術,但卻是學術學術的學術
+什麼學術的學術,或者學術,是 multi-disciplinary, 還是我們在說什麼?
+它是最多的學術,它是最多的學術,還有一些可能性的學術,但我無法解釋,
+什麼東西我們必須使用
+什麼東西我們不必使用
+我們能夠達到
+各種東西能夠達到
+能夠變得更好
+所以我們很
+一般的
+我們沒有任何
+但是
+這是一個大機構的模式
+一件事
+它有一個能力
+是一個大機構的模式
+它可以擁有一個安全的模式
+即使是比較大的
+但它不能擁有大機構的模式
+因為你擁有
+你會把市場推進去太多了
+所以它是一個很好的地方
+不管如何是值得擁有的
+所以它不會再進入一些極大的
+讓大家拿出所有的東西
+你只會擁有一個遊戲
+當然你只會擁有一個遊戲
+那你也不會擁有一個遊戲
+至少有些限制的方式
+我們看到的方式
+但是我們一直在改變它
+我們有100個學生在做這個行動的方式
+那你怎麼開始想到這件事?
+我們只是藏人的方式
+我的方式是一直在改變的
+我們藏人的方式是一樣的
+你給他們很多自由
+建立一個空間
+讓大家能夠跟別人說話
+他們不只是藏人的方式
+他們都會跟別人說話
+你提供最佳的資料
+最佳的電腦公司
+讓大家能夠跟別人在一起
+讓大家能夠跟別人在一起
+這就是我們利用的模式
+在Renaissance
+我們會帶來 smart folks
+他們並沒有什麼知識 about finance
+但是他們還沒學習
+如果他們有什麼工作規則
+如果他們有什麼知識 about finance
+他們有什麼看法?
+他們有一個學生在醫學
+他有五年前出生
+他有寫了幾個好的文章
+他當然是個 smart guy
+或是在astronomy
+或是在mathematics
+或是在statistics
+有人做了 science
+做得很好
+他在他的心裡 他的心裡 尤其是他的心裡
+在模擬市場 做錢
+但是他很好的一個人
+我已經六年前離開了公司
+所以我沒有再去做了
+但是我正在社會上的總裁
+我去到一個月份的社會議題
+我覺得Mirals is very good
+The spirit is good
+是一個很好的方式
+Scientifically to work
+是一個很大的一份努力
+每個人都很開心
+看到別人來做好事
+因為他 第一人
+會在那裡分享
+因為每個人都在市場分享
+所以你應該希望是你
+為了表現你很 smart
+但不論如何
+他做了好事 我會把錢交給他
+我會想像很多人
+想要成功的資料
+當然很多人想要
+我猜
+很多人是在mathematics
+知道很多書籍
+在你身上 我想想
+為什麼你做了
+為什麼沒有別人做
+我不知道
+首先 其他人都做過
+我覺得我們公司做得更好
+但不論如何
+我還不太確定
+但不論如何
+其他人都做了一些很好的模式
+所以我們不僅僅
+但是不容易做
+還有一個很大的方式
+例如
+大量的資料
+我們花了很多年
+我們做的方式是很容易
+去測試的方式
+資料是非常好
+所以我們都做得很好
+我們花了很多年來學習如何做
+人們不離開我們的公司
+如果他們離開的話
+我們就做了其他東西
+每個人都在永遠不斷地
+不斷地公司和這樣
+因為我們很聰明
+我們做的事
+因為我們不能不斷地公司
+或是公司公司
+因為每個人都會看見它
+有人會在那裡工作
+說那些公司不太好
+我說我做了這個動作
+那一段時間 它是不同的
+所以我們不能…
+我們要有的就是
+你的意識和意識
+所以我們要保持自己的意識
+所以
+我們很成功的
+繼續做
+因為我告訴你 還有其他人
+但是非常少的 investment operations
+是100%的
+因為這是100%的模式
+不是90% 還是80%的
+有些人有模式
+是為了提出的
+所以我告訴你
+我忘記了
+我不想給你注意
+所以
+Renaissance is 100% model driven
+No trade is ever made
+because someone walks into the trading room
+and says hey let's buy IBM
+It's a sure winner
+or anything like that
+We got too much Google
+We got a short…
+Nobody does that
+Maybe that we had too much Google
+But nonetheless
+He might have been right
+But it's just what the model says
+And that religious sticking to the model
+is the only way you can run such a business
+Because you cannot simulate
+that guy who walked in and said
+Hey Google is too high
+Let's sell it
+How can you simulate that
+You don't know what might have happened
+But you can simulate
+You can come up with a model
+Or a new predictor
+And you can simulate it in the past
+See how did it do
+So you have to stick to it
+I know you guys made the model
+So you do have the ownership of it
+And feel proud of it
+But is it hard to follow the model religiously
+Like is it hard for your ego
+To think all the success is because of the computer
+Like and I just sat there and watched
+No, the computer is just a tool
+That we use to
+I mean, it's a good cabinet maker
+Doesn't say it's all because of my wonderful chisel
+You know, you may have great film equipment
+But that's not why you're a success
+At doing what you're doing
+You're working with good equipment
+But another guy would make a mess of it
+With the same equipment
+So no, we don't feel
+Oh, the computer is doing everything
+The computer does what you tell it to do
+Mathematics is very collaborative
+And things that are learned
+Are built upon by sharing
+Are you learning things
+Behind the locked doors at Renaissance
+That could help mathematics
+But you're not sharing
+Because you want to keep them a secret
+To help the business
+No, there's nothing
+That we're learning behind locked doors
+And Renaissance
+That would help the general field of mathematics
+Or the general field of science
+As far as I can tell
+Do you think there's something about your personality
+That made you able to do it
+Or is it just luck
+Well, I think a lot of it's luck
+I probably have a good personality
+For running a group of people
+But there are other people
+Who maybe even have a better personality
+For doing that
+We underestimate the role of luck
+It's typical
+That if someone fails at something
+He'll say I had bad luck
+And if he makes a success
+He'll say I was a smart guy
+And oh, I was just lucky
+People don't usually say that
+If they make a big success
+And of course
+Obviously not everyone can make a big success
+But I think luck played a role
+I was in the right place at the right time
+But I really
+I think what I'm good at is
+Getting good people to work together
+So it was more
+You would think it would
+More your managerial ability
+Then your mathematical genius
+That resulted in the business
+Definitely wasn't my mathematical genius
+I think I'm a pretty smart guy
+I can understand this stuff
+So but I wasn't
+And I did come up
+With a few predictive algorithms
+So that was fine
+But many people did
+I knew I wasn't going to come up with all of them
+So that's why we have all these folks
+So it wasn't my mathematical genius
+But I think people respected me
+Because I was a good scientist
+So they, well
+He may act stupid
+But we know he's really smart
+So
+You had a few runs on the board
+They would say
+Given that you will put some of it down to luck
+What are you more proud of
+All of this and the business
+Or the mathematics
+From that first half of your career
+Oh
+To the extent that I'm proud
+I think I'm proud of both
+I think
+You know I've done some mathematics
+And some of it had a positive effect
+And I guess I'm proud of that
+And I've built a nice business
+And I'm proud of that
+I don't say I'm prouder of one than the other
+And now for the last number of years
+I've been working with my wife
+On this foundation
+Which she started actually in '94
+With my money
+But nonetheless she started the foundation
+Then I joined
+I got more and more involved with the foundation
+As time went on
+And now that's my main thing
+And I'm pretty proud of the foundation
+Let me focus your
+Focus you more on which
+The mathematics versus the business then
+Would you trade any of your
+Any or all of your business success for
+Being the man who cracked
+The Riemann Hypothesis
+Or something like that
+No, that's a good question
+Would I trade that for
+Well, I probably would trade some of it
+I mean for the Riemann Hypothesis
+It would certainly
+I guess be a thrill to
+Solve the Riemann Hypothesis
+I'm pleased mostly with what
+The way my career has gone
+So would I trade part of it for something
+I don't know
+I've never looked back
+And said I wish
+At least in business
+I wish I hadn't done that
+Or I wish I had done this
+And not that whatever it is
+I've never looked back that way
+I guess the thing I'm getting at
+Is what do you define yourself as
+A businessman or a mathematician
+Well
+I would not be very good
+At running an ordinary business
+If I had to run
+A big manufacturing business
+Or something like that
+I don't think I'd be very good at
+There's a level of detail
+That I would find tedious
+I'm not the best organized person
+In the world
+And frankly
+I would be bored
+So I'm not your typical business man
+The kind of business that I did run
+Was very natural to me
+So in that sense
+But I like business sort of
+I always say
+What's the important mathematics skill
+In business is subtraction
+You have to understand
+When your revenues are going to
+Exceed your costs
+Some people
+They would just look at revenues
+They were growing
+Yeah but you're losing money every day
+Well that'll take care of itself
+After a while
+So but
+I don't think I'd be
+I once had to
+For about six months
+Run a small business
+In the computer area
+A business that we had started
+Invested in and then
+Wasn't going well
+And we had to get rid of the head
+And find someone new
+And I found myself running it
+For about three to six months
+Commuting to Philadelphia
+And I came to the conclusion
+I'm doing a better job
+ Than the guy was there before
+But I'm not doing a very good job
+And I found myself in business meetings
+Like with the distributor
+From St. Louis at some
+And I remember saying
+What am I doing
+Spending my time with some
+Distributor from St. Louis
+I mean this is not the way
+I want to run my life
+Finally we got someone in
+He really knew how to run a business
+And that was his
+That kind of a business
+The foundation is focused
+On support of scientific research
+Primarily basic science
+But not completely
+Because we have a large
+Autism project
+Which involves a lot of basic science
+But the treatments are a goal
+But the rest is support
+Mathematics, physics, computer science
+Biology of all sorts
+Neuroscience, genetics
+We support basic science
+And that's what we like to do
+There's a certain
+我們有一個數量的外資,我們花了10-15%的外資,但85%是基本的學習,是用資料來做的。
+基本的學習,你不懂它們的位置,你會扣錢在地上,或是怎樣,你會怎樣?
+對,我們有研究學生,給學生們學生,學生們,學生們,學生們,學生們,他們都會用錢,用錢做負擔,這樣做,他們會幫忙,我們不懂他們的工作,我們知道他們做的事,
+這些學生們都很努力,他們是最好的人,他們在幫忙他們的工作,他們都會做的事。
+我們也有研究學生,我們支持他們的工作。
+那裡有一個目標,但它可以是一個 rather vague goal, like one is origins of life. Well, we'd like to know how we all got here, how did life originate, outside, inside, what was the path to life.
+So there's, I don't know, 40 or 50 people working on that, and it's a very exciting project, we're making some progress. So there's a goal, but do I think that in the next five years, we're going to know everything about the origin?
+No, I don't think so, but we'll learn more about this path that started with primitive organic molecules and ended up with an interview like this one.
+So there is a goal, but it's a relatively vague goal.
+This model of philanthropy of supporting the basic research and not knowing where it's going to end up almost seems the opposite of what you were talking about with your business.
+Totally.
+You were talking about with business, you know, revenues and costs and making sure.
+Yeah, well, yes and no, when we would bring smart guys into renaissance, we didn't know what they were going to do.
+We hoped that they'd come up with some good ideas to make the firm better, but I didn't say, oh, this guy is going to discover, I want this guy to discover this thing.
+I don't know what he's going to discover, but it's of course very focused on a narrow set of outcomes, whereas the other basic science, anything goes, is very different from that.
+What's your attitude to risk?
+You almost have created a business that's based on removing risk.
+Reducing it.
+Reducing risk, and yet you took a risk by leaving tenure to go and start business.
+Are you a risk taker, or are you a risk minimizer, or were you?
+You probably don't need to worry about it.
+Well, I suppose as we get older, we get a little less, a little more risk averse, I don't know.
+I'd always been something of a risk taker, I think, but I've had good taste, and especially again, as I say in people, and I've pretty much always partnered up with people, so that cuts the risk.
+So, but I did, I certainly, when I started the company, I had to finance it myself, and I didn't know whether it would succeed or not, and I was pretty sure it would, but I didn't know.
+You put a lot of money into mathematics, so you've got some right to comment on it.
+How are you feeling about it?
+Oh, I think mathematics is really going quite well worldwide, the research end of it.
+A lot of new ideas are coming up, new fields sort of are flourishing.
+It feels like a pretty healthy enterprise to me.
+What's not healthy is the state of mathematics education in our country.
+That's very unhealthy for young people.
+That's why we have, we started this thing called Math for America, so on.
+But we don't have enough teachers of mathematics who know it, who know the subject, and even of science, and that's for a simple reason.
+30,40 years ago, if you knew some mathematics enough to teach, let's say in high school, there weren't a million other things you could do with that knowledge.
+Oh yeah, maybe you could become a professor, but let's suppose you're not quite at that level, but you were good at math and so on.
+Being a math teacher was a nice job.
+But today, if you know that much mathematics, you could get a job at Google, you could get a job at IBM, you could get a job at Goldman Sachs.
+I mean, there's plenty of opportunities that are going to pay more than being a high school teacher, right?
+There weren't so many when I was going to high school, such things.
+So the quality of high school teachers in math has declined, simply because if you know enough to teach in high school, you know enough to work for Google.
+And well, they're not going to pay that much in high school.
+So how do you redress that?
+How do we redress that as a country?
+Well, so we work, a person works for a combination of financial reward and respect, right?
+So a guy becomes supreme court justice, he's not doing it because he's going to make a fortune.
+He'll be well paid, I suppose, but supreme court justice, everyone says.
+That's a big deal, you have a lot of respect, and you respect yourself, presumably.
+So you can't pay, let's say, high school teachers of math as much as they would get at Google,
+but you can give them a bump, pay them more.
+We give people $15,000 a year more than they would make their regular salary.
+But we also create a community of math and science teachers which they love and it makes them feel important and they are important.
+They interact with each other, they're not forlorn, you know, stuck in some high school no one to talk to.
+So we've created a community with a greatest breed of core, and these people don't walk out of the field.
+The turnover is very, very low, whereas ordinarily the turnover is quite high.
+So in Finland, for example, which has very good mathematics teaching, those are real professionals,
+and they have a lot of status, societal status, a teacher in Finland.
+Here in the United States, teachers don't have such good societal status,and of course the whole thing of getting rid of these bad teachers,
+get them out,and so on and so forth.
+Ok,maybe we have some bad teachers.
+But there's nothing said about let's reward and recognize the really good ones.
+So if you're running a business,you want to get rid of the dead wood if there are people who just aren't doing a job.
+But most more important is to recognize the people who are doing a good job and reward them and extol them and make them feel good in one way or another.
+We don't do that at all with teachers,we're just bashing them and bashing them and bashing them.
+Why has that happened in the United States but not in Finland?
+Well,it hasn't happened in most of the European countries.
+Well,for one thing,we have teachers' unions,but that shouldn't be the reason,because Finland probably has unions too,I don't know.
+There's been a shift,and it's maybe started about ten years ago,that we have to measure these students.
+Measure these teachers by outcomes.
+All right,fair enough.
+Well,what outcomes?
+Oh,well,we're going to give their students standardized tests.
+If they have value added and so on,then they're good,and if they don't have value.
+Well,it turns out,judging people on student standardized tests is a disaster.
+It's a very,very weak statistic.
+It's not very highly correlated with how they're going to do the next year by the same measure.
+But somehow,the theory is,we have to measure these people,and if they're not doing a good job,we have to get rid of them.
+Somehow or other,we have to get these people out of the schools.
+Well,there's an old saying in the British Navy,flogging will continue until morale improves.
+And that's kind of what this is.
+We're just beating these people up.
+So,how did it start?I don't know.
+Someone got the idea that we can measure output,but we can't.
+Or at least,we've imposed a system which stinks for measuring output.
+And the longer we stick with this system of rating teachers and performance of those students on standardized tests,the worse it's going to get.
+And the solution is,you've put it sounds to me like,just respect them a bit more and make them feel good about themselves.
+Yeah.And recognize and reward the very best ones.
+And that encourages people to say,hey,I could get that.Maybe I could rise up and get one of those become a master teacher or whatever.
+And someone could even come into the field and say,hey,my cousin is a master teacher there.He's having a good life.
+So,yes,but it's going to take us.
+We're doing it in New York pretty successfully,but it needs to be all around the country.
+And it needs to be bigger than it is in New York,too.
+You seem to be a believer in markets and that though.
+Is this not something that would correct itself?
+Like over time,like if the teaching drops and then the Google can't get the mathematicians and they have to improve the teacher.
+Will this not take care of itself?Does it need fair parties?
+Here's how we're taking care of it now.We're importing people,H1 visas.
+And we're bringing in guys from other countries who do have this knowledge.
+And all the technology companies only want more and more H1 visas.
+Because they can't get enough homegrown talent,the talent that they need.
+So,now that's okay for a while,but about 12 or 13 years ago,for example,of the graduates from the Indian Institute of Technology.
+I,whatever they call it,Indian,IIT.
+About 80% of them left India,and would come to Europe and United States to get jobs.
+Now it's 20% because India is doing much better.
+There's plenty of technical jobs in India,so hey,I can stay home.
+I don't have to run to England or I don't have to run to United States to work.
+So,well,there are people from other countries who are coming and we're taking advantage of that.
+But they will come when we just won't have enough people here of our own folks who know.
+Enough to do this work.
+Basic research is,as I have said,the wellspring of human knowledge,knowledge about our world.
+But the federal funding for basic research has become restricted.
+For one thing,federal funding for science has come down anyway overall.
+And second of all,there's increasing tendency for these agencies to fund what's called translational research rather than basic research.
+Translational means,okay,you're working on cancer,great,you know,we're going to have a cure for this in three years.
+Okay,fine,we'll give you money.You're working on how the basic cell is working.
+Well,you know,the applications are too far away.
+So,there's less,the Congress pushes the NIH and the NSF to probably to,hey,you know,we want to see some return on this money.
+We want to see results.
+So,they're more conservative,wild ideas less often get funded because,you know.
+So,the government's not doing such a good job at supporting basic science.
+And so,there's a role for philanthropy,an increasingly important role for philanthropy.
+Do you give your money to basic research because you feel somehow indebted to it for your own success?
+Do you do it just out of like a belief or do you feel like you're giving something back to us to what gave something to you?
+That's an interesting question.
+I do it because it feels good.I like science.I like to see it flourish.
+I like to be around scientists.I like to learn some new things.
+My wife feels the same way.She loves science.
+So,we're very happy to do this.
+So,I'm giving back,not especially.You know,I could give back in a lot of ways.
+There's a lot of things I could do besides support science.
+Do you have a favorite number?
+Seven.Next question.
+Do you have a favorite mathematician?
+Well,Archimedes and Euler are my current favorites.
+Maybe you met somebody.I'm very impressed with those two guys.
+Thank you so much for so much of your time.
