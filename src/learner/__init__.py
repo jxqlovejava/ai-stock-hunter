@@ -39,6 +39,9 @@ from .feedback import (
     FeedbackCollector,
     FeedbackSummary,
     FeedbackType,
+    MistakeType,
+    mistake_type_from_text,
+    validate_lesson_specificity,
 )
 from .preference.adapter import (
     resolve_competence_penalty,
@@ -187,6 +190,9 @@ __all__ = [
     "FeedbackSummary",
     "Feedback",
     "FeedbackType",
+    "MistakeType",
+    "mistake_type_from_text",
+    "validate_lesson_specificity",
     "RuleCalibrator",
     "FactorCalibrator",
     "RiskParamCalibrator",

@@ -319,6 +319,41 @@ def signal_from_verdict(
 
 
 # ---------------------------------------------------------------------------
+# P2-4: 置信度校准反哺入口（闭环节点）
+# ---------------------------------------------------------------------------
+
+
+def apply_calibration(
+    confidence: float,
+    calibrator=None,
+) -> float:
+    """将信号 confidence 交由校准器分桶校正（P2-4 置信度闭环）。
+
+    Args:
+        confidence: 原始置信度 0.0-1.0。
+        calibrator: 实现 ``apply(confidence) -> float`` 的校准器
+                    （如 ``src.learner.calibrator.Calibrator``）。
+                    None 或无 ``apply`` 方法 → 原样返回（向后兼容）。
+
+    Returns:
+        校正后 confidence；校准器缺失/数据不足时返回原始值。
+    """
+    if calibrator is None:
+        return confidence
+    apply = getattr(calibrator, "apply", None)
+    if not callable(apply):
+        return confidence
+    try:
+        adjusted = apply(confidence)
+    except Exception:
+        # 校准失败不应阻断信号流 — 回退原始 confidence
+        return confidence
+    if adjusted is None:
+        return confidence
+    return adjusted
+
+
+# ---------------------------------------------------------------------------
 # Helper: Signal → PortfolioTarget converter
 # ---------------------------------------------------------------------------
 
@@ -329,6 +364,7 @@ def target_from_signal(
     current_price: float,
     reason: Optional[str] = None,
     max_weight: float = 1.0,
+    calibrator=None,
 ) -> PortfolioTarget:
     """Convert a Signal into a concrete PortfolioTarget.
 
@@ -337,6 +373,11 @@ def target_from_signal(
     1. The signal's explicit ``weight`` hint (if set and within bounds).
     2. Otherwise, ``signal.weight = signal.confidence * 0.5`` as a sensible
        default (half the portfolio at full confidence).
+
+    When ``calibrator`` is provided and its calibration data is sufficient,
+    the effective confidence is first adjusted via
+    :func:`apply_calibration` before sizing (P2-4 闭环).  With no
+    calibrator (or no data) behaviour is unchanged.
 
     The quantity is then ``target_weight * portfolio_value / current_price``.
     A negative sign is applied when ``direction == DOWN``.
@@ -349,15 +390,20 @@ def target_from_signal(
         reason: Optional override for the reason text. Auto-generated when
                 None.
         max_weight: Maximum allowed allocation (0.0–1.0). Defaults to 1.0.
+        calibrator: Optional confidence calibrator (duck-typed ``apply``).
+                    Backward compatible — defaults to None.
 
     Returns:
         A PortfolioTarget ready for execution.
     """
+    # Effective confidence: calibration-adjusted when a calibrator is supplied
+    eff_confidence = apply_calibration(signal.confidence, calibrator=calibrator)
+
     # Resolve target weight
     if signal.weight is not None and 0.0 <= signal.weight <= max_weight:
         target_weight = signal.weight
     else:
-        target_weight = min(signal.confidence * 0.5, max_weight)
+        target_weight = min(eff_confidence * 0.5, max_weight)
 
     # Direction → quantity sign
     if signal.direction == Direction.UP:
@@ -370,9 +416,14 @@ def target_from_signal(
     quantity = quantity_sign * target_weight * portfolio_value / current_price if current_price else 0.0
 
     if reason is None:
+        conf_note = (
+            f" (calibrated {eff_confidence:.2f})"
+            if eff_confidence != signal.confidence
+            else ""
+        )
         reason = (
             f"{signal.source_model}: {signal.direction.value} "
-            f"(conf={signal.confidence:.2f}, weight={target_weight:.1%})"
+            f"(conf={signal.confidence:.2f}{conf_note}, weight={target_weight:.1%})"
         )
 
     return PortfolioTarget(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum, auto
 from typing import Callable, Optional
@@ -80,8 +81,9 @@ class RiskControlEngine:
       - 单笔最大亏损: 2% (短线用 ATR 止损)
       - 组合最大回撤: 15%
       - 双创折扣: ×0.8
-      - 黑天鹅熔断: 沪深300 单日 -5%
+      - 黑天鹅熔断: 沪深300 单日 -6%
       - 流动性上限: 持仓 < 日均成交额 5%
+      - 连亏冷却: 连续 3 次止损 → 暂停自动开仓 N 日 (P0-3)
 
     Phase 7 短线模式新增:
       - ATR 倍率止损 (替代固定 -2%)
@@ -104,7 +106,11 @@ class RiskControlEngine:
     SINGLE_SECTOR_CAP = Decimal("0.40")
     MAX_DRAWDOWN_PCT = 0.15  # 组合最大回撤比例，与 RiskGuard 保持一致
     SINGLE_STOP_LOSS = Decimal("-0.02")
-    BLACK_SWAN_THRESHOLD = Decimal("-0.05")
+    # P0-3: 单日黑天鹅熔断 5%→6%（沪深300 单日跌幅阈值，T+1 下跌停无法卖出故收紧前移）
+    BLACK_SWAN_THRESHOLD = Decimal("-0.06")
+    # P0-3: 连续止损冷却 — 连亏达阈值暂停自动开仓，冷却 N 日
+    CONSECUTIVE_STOP_THRESHOLD = 3        # 连亏次数阈值（军规 r017 同阈值）
+    CONSECUTIVE_STOP_COOLDOWN_DAYS = 3    # 冷却天数（自最近一次止损起算）
     # Phase 4: Alpha 衰减阈值
     ALPHA_DECAY_WARN_DAYS = 30          # Alpha 30 天未更新 → 警告
     ALPHA_CROWDED_WEIGHT_CUT = 0.5      # 拥挤时仓位减半
@@ -171,6 +177,54 @@ class RiskControlEngine:
         return self._state
 
     # ------------------------------------------------------------------
+    # 连续止损计数 & 冷却 (P0-3)
+    # ------------------------------------------------------------------
+    @property
+    def consecutive_stops(self) -> int:
+        """当前连续止损次数（军规 r017 / 冷却判据读取）。"""
+        return self._state.consecutive_stops
+
+    @property
+    def in_cooldown(self) -> bool:
+        """是否处于连亏冷却窗口内。"""
+        return self._state.in_cooldown()
+
+    def record_stop_loss(
+        self, cooldown_days: int | None = None, now: Optional[datetime] = None
+    ) -> RiskState:
+        """记录一笔止损平仓 → 连亏计数 +1，冷却窗口顺延。
+
+        Args:
+            cooldown_days: 冷却天数覆盖。None 用类常量 CONSECUTIVE_STOP_COOLDOWN_DAYS。
+            now: 显式时间戳（测试用）。
+        """
+        days = (
+            cooldown_days
+            if cooldown_days is not None
+            else self.CONSECUTIVE_STOP_COOLDOWN_DAYS
+        )
+        self._state = self._state.record_stop(now=now, cooldown_days=days)
+        self._safe_audit(
+            "consecutive_stop",
+            consecutive_stops=self._state.consecutive_stops,
+            threshold=self.CONSECUTIVE_STOP_THRESHOLD,
+            cooldown_until=(
+                self._state.cooling_until.isoformat()
+                if self._state.cooling_until
+                else None
+            ),
+        )
+        return self._state
+
+    def record_win(self) -> RiskState:
+        """记录一笔盈利平仓 → 连亏计数复位，冷却解除。"""
+        was_in_cooldown = self._state.in_cooldown()
+        self._state = self._state.record_win()
+        if was_in_cooldown:
+            self._safe_audit("consecutive_win_reset", consecutive_stops=0)
+        return self._state
+
+    # ------------------------------------------------------------------
     # 风控审查 (Phase 9: 三元裁决聚合)
     # ------------------------------------------------------------------
     def check(
@@ -200,6 +254,9 @@ class RiskControlEngine:
         market = market or {}
         weight = D(signal.target_weight)
 
+        # P0-3: 冷却窗口无新止损 → 连亏计数自动复位（先于各规则裁决）
+        self._state = self._state.advance_time()
+
         # -- 减仓/平仓判定: 这些操作永远不应被熔断/回撤规则阻拦 --
         is_reducing = signal.action in ("REDUCE", "CLOSE")
         is_reduce_only = getattr(signal, "reduce_only", False)
@@ -213,6 +270,7 @@ class RiskControlEngine:
             self._check_gross_exposure(weight, portfolio, position_limits),
             self._check_net_exposure(weight, signal, portfolio, position_limits),
             self._check_black_swan(signal, market, position_limits),
+            self._check_cooldown(signal, position_limits),  # P0-3: 连亏冷却
             self._check_drawdown(weight, signal, skip_risk, position_limits),
             self._check_stop_loss(weight, signal, portfolio, position_limits),
             self._check_alpha_decay(signal, portfolio),
@@ -432,7 +490,8 @@ class RiskControlEngine:
         market: dict,
         position_limits: dict | None,
     ) -> _RuleResult:
-        threshold = D(str((position_limits or {}).get("black_swan_threshold_pct", -0.05)))
+        # P0-3: 阈值 5%→6%。A 股 T+1 下跌停无法卖出，单日 6% 仍须前置拦截新开仓。
+        threshold = D(str((position_limits or {}).get("black_swan_threshold_pct", -0.06)))
         market_drop = D(market.get("hs300_change_pct", 0))
         if market_drop <= threshold:
             if signal.action in ("OPEN", "ADD"):
@@ -440,6 +499,37 @@ class RiskControlEngine:
                     RiskVerdict.REJECT,
                     ["黑天鹅熔断: T+1 禁开新仓"],
                 )
+        return _RuleResult(RiskVerdict.APPROVE, [])
+
+    # ------------------------------------------------------------------
+    # 规则 6b: 连续止损冷却 (P0-3 新增)
+    # ------------------------------------------------------------------
+    def _check_cooldown(
+        self,
+        signal: TradeSignal,
+        position_limits: dict | None,
+    ) -> _RuleResult:
+        """连续止损冷却 — 连亏达阈值后暂停自动开仓（冷却 N 日）。
+
+        判据: ``consecutive_stops >= threshold`` 且仍在冷却窗口内。
+        减仓/平仓永远放行。阈值与冷却天数可经 position_limits 覆盖。
+        """
+        if signal.action not in ("OPEN", "ADD"):
+            return _RuleResult(RiskVerdict.APPROVE, [])
+
+        threshold = (position_limits or {}).get(
+            "consecutive_stop_threshold", self.CONSECUTIVE_STOP_THRESHOLD
+        )
+        if (
+            self._state.consecutive_stops >= threshold
+            and self._state.in_cooldown()
+        ):
+            remaining = self._state.cooldown_remaining_days()
+            return _RuleResult(
+                RiskVerdict.REJECT,
+                [f"连续止损冷却: 连亏{self._state.consecutive_stops}次 >= {threshold}次, "
+                 f"冷却剩余{remaining:.1f}天"],
+            )
         return _RuleResult(RiskVerdict.APPROVE, [])
 
     # ------------------------------------------------------------------

@@ -25,9 +25,12 @@ from src.data.source_citation import (
     SourceCitation,
 )
 from src.routing.attribution_types import (
+    EVIDENCE_LEVEL_LABELS,
     AttributionDataPoint,
+    AttributionLayer,
     AttributionResult,
     DriverFactor,
+    LayerAttribution,
     QualitySummary,
 )
 
@@ -37,6 +40,214 @@ logger = logging.getLogger(__name__)
 NEWS_STALE_HOURS = 12  # 新闻事件过期时间
 POLICY_STALE_HOURS = 24  # 政策/主题过期时间
 FUNDAMENTAL_STALE_HOURS = 48  # 基本面数据过期时间
+
+# ────────────────────────────────────────────────────────
+# 三层归因分层: 执行层 / 配置层 / 投资逻辑层
+# 来源: 投资资讯精读 doc 29 (可信度 0.55)
+# 原则: 越往上 (LOGIC) 推翻所需证据越多;
+#       避免把执行问题升级成逻辑问题; 避免用短期回调掩盖逻辑破裂。
+# ────────────────────────────────────────────────────────
+
+# 操作执行问题 (买点差/追高/止损未执行)
+EXECUTION_KEYWORDS: tuple[str, ...] = (
+    "买点", "卖点", "买贵", "买高", "卖低", "追高", "追涨", "追板", "追进",
+    "抄底", "止损", "止盈", "挂单", "卖飞", "买飞", "打板", "入场", "离场",
+    "介入", "盘中", "日内", "高开", "低开", "冲高", "回落", "跳水", "换手",
+    "割肉", "套牢", "踏空", "追跌", "挂错", "操作失误", "操作不当", "时机",
+    "时点", "情绪化交易", "频繁交易", "卖出过早", "买入过早", "恐慌抛售",
+    "止盈未执行", "止损未执行", "止损过紧", "止损过宽", "一次性买入",
+    "分批卖出", "开盘买入", "尾盘卖出", "高抛", "低吸", "急跌接飞刀",
+)
+
+# 仓位排队/资金分配问题 (仓位过重/未分散/杠杆过高)
+CONFIGURATION_KEYWORDS: tuple[str, ...] = (
+    "仓位", "满仓", "空仓", "重仓", "轻仓", "半仓", "加仓", "减仓", "建仓",
+    "补仓", "调仓", "换仓", "分散", "集中持仓", "集中度", "杠杆", "融资",
+    "配资", "保证金", "资金分配", "资金排队", "排队", "持仓集中", "单一标的",
+    "单一行业", "仓位过重", "仓位过轻", "仓位过小", "定投", "现金比例",
+    "组合", "子弹", "弹药", "分批建仓", "补仓节奏", "重仓单一", "持仓结构",
+)
+
+# 核心假设/基本面逻辑问题 (假设被证伪/基本面恶化)
+LOGIC_KEYWORDS: tuple[str, ...] = (
+    "业绩", "盈利", "利润", "营收", "收入", "毛利率", "净利率", "现金流",
+    "估值", "市盈率", "市净率", "财报", "业绩预告", "业绩快报", "不及预期",
+    "超预期", "预期", "逻辑", "假设", "证伪", "基本面", "需求", "订单",
+    "景气", "行业", "政策", "监管", "竞争", "市占率", "市场份额", "减值",
+    "商誉", "扩产", "产能", "周期", "下行", "恶化", "逻辑破坏", "叙事",
+    "催化", "兑现", "盈利修正", "护城河", "稀缺性", "确定性", "成长性",
+    "渗透率", "景气拐点", "分红", "回购", "增持", "减持", "解禁",
+    "控股股东", "董事长", "管理层", "指引", "补贴", "关税", "制裁",
+)
+
+# raw_data_points category → 层 (Phase 2 各维度归类)
+CATEGORY_LAYER_MAP: dict[str, AttributionLayer] = {
+    "technical": AttributionLayer.EXECUTION,  # T+0 技术面 → 执行/操作
+    "sentiment": AttributionLayer.EXECUTION,  # 情绪化操作
+    "capital_flow": AttributionLayer.CONFIGURATION,  # 资金分配/拥挤度
+    "news": AttributionLayer.LOGIC,
+    "announcement": AttributionLayer.LOGIC,
+    "macro": AttributionLayer.LOGIC,
+    "sector": AttributionLayer.LOGIC,
+    "policy": AttributionLayer.LOGIC,
+    "topic": AttributionLayer.LOGIC,
+    "commodity": AttributionLayer.LOGIC,
+    "management_guidance": AttributionLayer.LOGIC,
+}
+
+# 兜底层: 中性 (既不是明确的逻辑破裂, 也不是明确的操作失误)
+DEFAULT_LAYER = AttributionLayer.CONFIGURATION
+
+
+def classify_layer(
+    driver_name: str,
+    category: str = "",
+    matched_point: AttributionDataPoint | None = None,
+) -> AttributionLayer:
+    """将单个驱动因素映射到三层归因之一 (执行/配置/逻辑)。
+
+    判定顺序 (逻辑 > 配置 > 执行 关键词优先, 防止用操作解读掩盖逻辑破裂):
+      1. 关键词匹配 (配置/逻辑/执行关键词表)
+      2. 数据点 category → 层 (technical→执行, capital_flow→配置, 基本面类→逻辑)
+      3. 兜底 → DEFAULT_LAYER (CONFIGURATION, 中性; 避免把执行问题升级成逻辑问题)
+
+    Args:
+        driver_name: 驱动因素名, 如 "Q2 业绩不及预期" / "追高买入致套牢"
+        category: 数据点 category (technical/capital_flow/news/...)
+        matched_point: 命中的 raw_data_points 数据点 (用于取 category)
+    """
+    text = driver_name or ""
+    # 逻辑层最高优先级: 明确的基本面/假设信号不可被操作解读掩盖
+    if any(k in text for k in LOGIC_KEYWORDS):
+        return AttributionLayer.LOGIC
+    if any(k in text for k in CONFIGURATION_KEYWORDS):
+        return AttributionLayer.CONFIGURATION
+    if any(k in text for k in EXECUTION_KEYWORDS):
+        return AttributionLayer.EXECUTION
+    if matched_point is not None and matched_point.category in CATEGORY_LAYER_MAP:
+        return CATEGORY_LAYER_MAP[matched_point.category]
+    if category in CATEGORY_LAYER_MAP:
+        return CATEGORY_LAYER_MAP[category]
+    return DEFAULT_LAYER
+
+
+def _find_matching_point(
+    result: AttributionResult, driver_name: str
+) -> AttributionDataPoint | None:
+    """在 raw_data_points 中查找与 driver_name 最匹配的数据点 (取 category/tier/证据)。"""
+    tokens = (driver_name or "")[:30].replace("，", " ").replace(",", " ").split()
+    if not tokens:
+        tokens = [(driver_name or "")[:30]]
+    best = None
+    best_score = 0
+    for p in result.raw_data_points:
+        desc = p.description or ""
+        score = sum(1 for t in tokens if t and t in desc)
+        if score > best_score:
+            best_score = score
+            best = p
+    return best if best_score > 0 else None
+
+
+def _build_evidence(
+    matched_point: AttributionDataPoint | None, driver: DriverFactor
+) -> str:
+    """为单条三层归因生成证据简述。"""
+    if matched_point is not None and matched_point.description:
+        return matched_point.description.strip()[:60]
+    if driver.description:
+        return driver.description.strip()[:60]
+    return f"驱动因素「{driver.name}」未命中具体数据点, 分层为启发式判定"
+
+
+def layerize_drivers(result: AttributionResult) -> list[LayerAttribution]:
+    """对 result.drivers 逐条做三层归因分层, 写入 result.layer_attributions。
+
+    从现有 Phase 2/3 归因数据 (drivers + raw_data_points) 映射到
+    执行层/配置层/投资逻辑层。返回 LayerAttribution 列表 (与 drivers 同序)。
+    """
+    if not result.drivers:
+        result.layer_attributions = []
+        return result.layer_attributions
+
+    layers: list[LayerAttribution] = []
+    for d in result.drivers:
+        matched = _find_matching_point(result, d.name)
+        layer = classify_layer(
+            d.name,
+            category=matched.category if matched is not None else "",
+            matched_point=matched,
+        )
+        # 置信度: 结合匹配点质量与主/次因权重
+        base_conf = (
+            matched.source_citation.quality_score
+            if matched is not None
+            else result.confidence
+        )
+        confidence = round(
+            min(1.0, max(0.05, base_conf * (0.9 if d.is_primary else 0.75))), 3
+        )
+        layers.append(
+            LayerAttribution(
+                layer=layer,
+                driver=d.name,
+                evidence=_build_evidence(matched, d),
+                confidence=confidence,
+                overturn_evidence_level=layer.overturn_evidence_level,
+                is_primary=d.is_primary,
+                evidence_note=EVIDENCE_LEVEL_LABELS.get(
+                    layer.overturn_evidence_level, ""
+                ),
+            )
+        )
+
+    result.layer_attributions = layers
+    return layers
+
+
+def dominant_layer(result: AttributionResult) -> AttributionLayer | None:
+    """三层归因中权重占比最大的层 (执行/配置/逻辑 主层)。
+
+    以各条 LayerAttribution.confidence 求和, 取最高者; 无归因时返回 None。
+    """
+    if not result.layer_attributions:
+        return None
+    totals: dict[AttributionLayer, float] = {}
+    for la in result.layer_attributions:
+        totals[la.layer] = totals.get(la.layer, 0.0) + la.confidence
+    if not totals:
+        return None
+    return max(totals, key=totals.get)
+
+
+def format_layer_attributions(result: AttributionResult) -> str:
+    """渲染三层归因分层块 (执行/配置/逻辑)。
+
+    供 attribution_formatter.format_attribution_result / CLI 消费。
+    本文件提供该格式化辅助函数, 不改动 attribution_formatter.py 本身。
+    """
+    if not result.layer_attributions:
+        return "🧭 三层归因分层: (未计算 — 需先运行 layerize_drivers 或 build_driver_factors)"
+
+    lines = ["🧭 三层归因分层 (执行→配置→逻辑, 越往上推翻所需证据越多)"]
+    lines.append("| 层 | 主要驱动 | 证据 | 置信度 | 推翻所需证据级别 | 主因 |")
+    lines.append("|----|---------|------|--------|----------------|------|")
+    for la in result.layer_attributions:
+        ev_level = la.effective_overturn_level()
+        ev_label = EVIDENCE_LEVEL_LABELS.get(ev_level, f"级别 {ev_level}")
+        primary = "主因" if la.is_primary else ""
+        lines.append(
+            f"| {la.layer.label[:16]:<18} | {la.driver[:22]:<24} "
+            f"| {la.evidence[:36]:<38} | {la.confidence:.2f} "
+            f"| {ev_label[:30]:<32} | {primary} |"
+        )
+    dom = dominant_layer(result)
+    if dom is not None:
+        lines.append(
+            f"\n  主导层: {dom.label}"
+            f" — {EVIDENCE_LEVEL_LABELS.get(dom.overturn_evidence_level, '')}"
+        )
+    return "\n".join(lines)
 
 
 class AttributionEngine:
@@ -1077,5 +1288,8 @@ class AttributionEngine:
         result.noise_factors = noise
         result.causality_chain = causality_chain
         result.confidence = result.quality.overall_confidence
+
+        # 三层归因分层 (执行/配置/逻辑): 对每个驱动因素自动分层
+        layerize_drivers(result)
 
         return result

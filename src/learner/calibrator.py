@@ -24,6 +24,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+# 聚合运气评估复用 Alpha 归因模块的实现（learner→alpha 既有依赖方向）。
+# 避免反向依赖形成循环导入。
+from src.alpha.attribution import LuckAssessment, LuckBiasDetector
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -401,9 +405,23 @@ class RiskParamCalibrator:
 
 
 class Calibrator:
-    """置信度校准器（兼容 Phase 4 旧 API）。"""
+    """置信度校准器（兼容 Phase 4 旧 API）。
+
+    P2-4 闭环: 校准结果反哺信号 confidence ——
+    当样本充足时按 0.6-1.0 分桶实测准确率校正 confidence（过度自信 → 下调），
+    样本不足或桶内证据不足时原样返回（向后兼容）。
+    """
 
     MIN_SAMPLES = 20
+    MIN_BAND_SAMPLES = 5
+
+    # (band_label, low, high, midpoint_predicted)
+    BANDS = [
+        ("0.6-0.7", 0.6, 0.7, 0.65),
+        ("0.7-0.8", 0.7, 0.8, 0.75),
+        ("0.8-0.9", 0.8, 0.9, 0.85),
+        ("0.9-1.0", 0.9, 1.0, 0.95),
+    ]
 
     def __init__(self):
         self._predictions: list[dict] = []
@@ -415,6 +433,92 @@ class Calibrator:
             "correct": actual_outcome,
         })
 
+    # ------------------------------------------------------------------
+    # 分桶准确率（共享逻辑）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _classify(confidence: float) -> str:
+        """将 confidence 归入桶标签。"""
+        if confidence < 0.7:
+            return "0.6-0.7"
+        elif confidence < 0.8:
+            return "0.7-0.8"
+        elif confidence < 0.9:
+            return "0.8-0.9"
+        return "0.9-1.0"
+
+    def _band_of(self, confidence: float) -> tuple[str, float]:
+        """返回 (band_label, midpoint_predicted)。"""
+        label = self._classify(confidence)
+        for name, _, _, mid in self.BANDS:
+            if name == label:
+                return name, mid
+        return label, 0.75
+
+    def _compute_band_accuracy(self) -> dict[str, float]:
+        """按桶计算实测准确率 {band_label: accuracy}。样本不足返回空 dict。"""
+        if len(self._predictions) < self.MIN_SAMPLES:
+            return {}
+        bands: dict[str, list[dict]] = {name: [] for name, _, _, _ in self.BANDS}
+        for p in self._predictions:
+            bands[self._classify(p["confidence"])].append(p)
+        result: dict[str, float] = {}
+        for name, _, _, _ in self.BANDS:
+            preds = bands[name]
+            if preds:
+                result[name] = sum(1 for p in preds if p["correct"]) / len(preds)
+        return result
+
+    def band_accuracy(self, band: str) -> Optional[float]:
+        """某桶的实测准确率；无数据返回 None。"""
+        return self._compute_band_accuracy().get(band)
+
+    def band_lookup(self) -> dict[str, float]:
+        """完整分桶准确率（样本不足返回空 dict）。"""
+        return self._compute_band_accuracy()
+
+    @property
+    def adjustments_available(self) -> bool:
+        """是否有足够样本支持校正。"""
+        return len(self._predictions) >= self.MIN_SAMPLES
+
+    def apply(self, confidence: float) -> float:
+        """对单个 confidence 做分桶校正（P2-4 闭环入口）。
+
+        规则（保守，只下调不上调）:
+          - 样本 < MIN_SAMPLES → 原样返回
+          - 桶内样本 < MIN_BAND_SAMPLES → 原样返回（证据不足不调整）
+          - 实测准确率 < 桶预测中值（过度自信）→ 按 实际/预测 比例下调
+          - 否则 → 原样返回
+
+        Args:
+            confidence: 原始置信度 0.0-1.0
+
+        Returns:
+            校正后 confidence（0.0-1.0）；数据不足时返回原始值。
+        """
+        confidence = float(confidence)
+        if not self._predictions or not self.adjustments_available:
+            return confidence
+
+        band, pred_mid = self._band_of(confidence)
+        acc = self.band_accuracy(band)
+        if acc is None:
+            return confidence
+
+        band_count = sum(
+            1 for p in self._predictions if self._classify(p["confidence"]) == band
+        )
+        if band_count < self.MIN_BAND_SAMPLES:
+            return confidence
+
+        if acc < pred_mid:  # 过度自信 → 下调
+            adjusted = confidence * (acc / pred_mid)
+        else:
+            adjusted = confidence
+        return round(min(1.0, max(0.0, adjusted)), 4)
+
     def generate_report(self, period: str = "") -> CalibrationReport:
         """生成校准报告。仅当 N ≥ 20 时有意义。"""
         report = CalibrationReport(period=period)
@@ -424,23 +528,54 @@ class Calibrator:
         if not report.sample_sufficient:
             return report
 
-        bands = {"0.6-0.7": [], "0.7-0.8": [], "0.8-0.9": [], "0.9-1.0": []}
-        for p in self._predictions:
-            c = p["confidence"]
-            if c < 0.7:
-                bands["0.6-0.7"].append(p)
-            elif c < 0.8:
-                bands["0.7-0.8"].append(p)
-            elif c < 0.9:
-                bands["0.8-0.9"].append(p)
-            else:
-                bands["0.9-1.0"].append(p)
-
-        report.accuracy_by_band = {}
-        for band, preds in bands.items():
-            if preds:
-                report.accuracy_by_band[band] = (
-                    sum(1 for p in preds if p["correct"]) / len(preds)
-                )
-
+        report.accuracy_by_band = self._compute_band_accuracy()
         return report
+
+
+# ---------------------------------------------------------------------------
+# P2-5: 聚合运气 / 幸存者偏差校准
+# ---------------------------------------------------------------------------
+
+
+def survivorship_adjustment(
+    observed_avg_return: float,
+    observed_strategies: int,
+    total_strategies: int,
+    hidden_default_return: float = 0.0,
+) -> float:
+    """幸存者偏差校正。
+
+    观察样本只覆盖"幸存/存活"的策略（失败策略已从注册表移除或被回测门禁拦下），
+    直接使用观察均值会高估真实期望收益。校正公式（保守假设缺失策略收益为
+    ``hidden_default_return``）:
+
+        corrected = (observed_avg_return × observed + hidden_default × missing) / total
+
+    Args:
+        observed_avg_return: 幸存样本平均收益
+        observed_strategies: 幸存样本数
+        total_strategies: 全部策略数（含被淘汰者）
+        hidden_default_return: 缺失策略的保守收益假设（默认 0.0）
+
+    Returns:
+        校正后的期望收益。无缺失样本时原样返回。
+    """
+    missing = total_strategies - observed_strategies
+    if total_strategies <= 0 or missing <= 0:
+        return observed_avg_return
+    corrected = (
+        observed_avg_return * observed_strategies
+        + hidden_default_return * missing
+    ) / total_strategies
+    return corrected
+
+
+# 聚合运气识别（实现位于 src.alpha.attribution.LuckBiasDetector，
+# 此处 re-export，供 learner 校准层统一入口）。
+# 用法:
+#     detector = LuckBiasDetector()
+#     assessment = detector.assess(returns, strategy="MVP1")
+#     if assessment.flagged:
+#         # 收益集中少数几笔 → 高收益可能含运气成分，合入前需降权/验证
+#         ...
+__all__ = ["LuckAssessment", "LuckBiasDetector", "survivorship_adjustment"]

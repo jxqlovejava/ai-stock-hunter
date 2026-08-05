@@ -88,6 +88,484 @@ def _apply_chanlun_snapshot(snapshot: "TacticalSnapshot", chanlun_res) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 市场状态前置判定 / 跨周期过滤 / MM等距投影 (P1-1/P1-5/P1-6)
+# ═══════════════════════════════════════════════════════════════════
+
+# 趋势跟随类信号：RANGE 态 / 周线方向相反时降权。
+# 缠论买卖点信号(CHANLUN_*)、博弈/风控动作(REDUCE/CLOSE)不在此列 → 不受影响。
+_TREND_FOLLOW_SIGNALS = frozenset({
+    "MA_GOLDEN_CROSS", "BREAKOUT", "PULLBACK_SUPPORT",
+    "MA_BREAKDOWN",
+})
+
+
+def _map_regime_to_state(regime_value: str) -> str:
+    """MarketRegime 6 态 → 三态 (BULL_TRENDING/BEAR_TRENDING/RANGE)。
+
+    RISK_ON/RISK_OFF 是「宽度/风险偏好」驱动、无 MA 趋势强度确认的弱信号,
+    映射为 RANGE (保守降权) — 仅 BULL/BEAR_TRENDING 这类 MA 对齐+强度确认的
+    趋势态才启用金叉/均线突破等趋势跟随信号。
+    HIGH_VOL_CRISIS / LOW_VOL_DRIFT 同样 → RANGE。
+    """
+    if regime_value == "bull_trending":
+        return "BULL_TRENDING"
+    if regime_value == "bear_trending":
+        return "BEAR_TRENDING"
+    return "RANGE"  # risk_on / risk_off / low_vol_drift / high_vol_crisis / unknown
+
+
+def _trend_chop_signal(
+    prices: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    """Hurst + Choppiness 判定「趋势 vs 震荡」投票 (P1-1 第二票)。
+
+    Returns:
+        (h, choppiness, vote)  vote ∈ {BULL_TRENDING, BEAR_TRENDING, RANGE, None=弃权}
+    方向由 MA5 vs MA20 给出; 仅当 H/CI 给出强信号才投票, 否则弃权。
+    """
+    h: Optional[float] = None
+    chop: Optional[float] = None
+    try:
+        if prices and len(prices) >= 20:
+            from src.indicators.structure import HurstExponent
+            # max_window = 滑动窗口长度; 必须 ≤ 数据点数才会 ready
+            hwin = max(20, min(len(prices), 128))
+            hurst = HurstExponent(min_window=8, max_window=hwin)
+            for p in prices:
+                hurst.update(float(p))
+            h = float(hurst.current_value) if hurst.current_value is not None else None
+    except Exception:
+        h = None
+    try:
+        if (prices and len(prices) >= 16 and highs and lows
+                and len(highs) == len(prices) == len(lows)):
+            from src.indicators.volatility import ChoppinessIndex
+            ci = ChoppinessIndex(period=14)
+            for i in range(len(prices)):
+                o = float(prices[i - 1]) if i > 0 else float(prices[i])
+                ci.update((o, float(highs[i]), float(lows[i]), float(prices[i])))
+            chop = float(ci.current_value) if ci.current_value is not None else None
+    except Exception:
+        chop = None
+
+    range_like = (h is not None and h < 0.45) or (chop is not None and chop > 61.8)
+    trend_like = (h is not None and h > 0.55) and (chop is None or chop < 38.2)
+    if trend_like:
+        try:
+            ma5 = sum(prices[-5:]) / 5.0
+            ma20 = sum(prices[-20:]) / 20.0
+            return h, chop, ("BULL_TRENDING" if ma5 > ma20 else "BEAR_TRENDING")
+        except Exception:
+            return h, chop, None
+    if range_like:
+        return h, chop, "RANGE"
+    return h, chop, None
+
+
+def _classify_market_state(
+    index_closes: list[float] | None,
+    index_highs: list[float] | None,
+    index_lows: list[float] | None,
+    breadth: Optional[float],
+    stock_close_series: list[float],
+    chanlun_summary: Optional[dict],
+) -> dict:
+    """P1-1 市场状态前置判定 — 三态 BULL_TRENDING / BEAR_TRENDING / RANGE。
+
+    复用 RegimeClassifier 喂指数日线 (index_closes) → 三票:
+      A. RegimeClassifier 6 态 → 三态
+      B. Hurst + Choppiness 趋势/震荡 (方向由 MA5/MA20 给出)
+      C. 缠论日线中枢方向 (position / zhongshu_state)
+    指数数据缺失时降级用标的自身日线 (basis=stock)；两者皆缺 → RANGE。
+
+    Returns:
+        {state, confidence, regime, h, choppiness, zhongshu_state, basis, rationale}
+
+    判定规则 (RegimeClassifier 为主锚, Hurst/Choppiness 与缠论为辅助票):
+      - 主锚 BULL/BEAR_TRENDING → 保持, 仅当两个辅助票同时投 RANGE 才降级;
+      - 主锚 RANGE → 保持 RANGE (保守降权), 仅当两个辅助票一致指向同一
+        趋势方向才提升为趋势态;
+      - 辅助票仅调整 confidence (同向加分, 矛盾减分), 避免单一噪声信号推翻趋势。
+    """
+    prices = index_closes if index_closes else (stock_close_series or None)
+    basis = "index" if index_closes else ("stock" if stock_close_series else "none")
+
+    rationale: list[str] = []
+    regime = ""
+    h = chop = None
+    zs_state = ""
+    pos = "未知"
+
+    if not prices or len(prices) < 20:
+        return {
+            "state": "RANGE", "confidence": 0.3, "regime": "",
+            "h": None, "choppiness": None, "zhongshu_state": "",
+            "basis": basis, "rationale": ["[DATA_GAP] 日线不足20根 → 默认RANGE"],
+        }
+
+    # A. RegimeClassifier → 主锚
+    anchor = "RANGE"
+    try:
+        from src.macro.market_regime import RegimeClassifier
+        profile = RegimeClassifier().classify(
+            prices=prices, highs=index_highs, lows=index_lows, breadth=breadth,
+        )
+        regime = profile.regime.value
+        anchor = _map_regime_to_state(regime)
+        rationale.append(f"Regime:{regime}→{anchor} (conf {profile.confidence:.2f})")
+    except Exception as e:
+        rationale.append(f"Regime不可用:{e}")
+
+    # B. Hurst + Choppiness
+    h, chop, hv = _trend_chop_signal(prices, index_highs, index_lows)
+    if hv:
+        rationale.append(f"Hurst={h} Choppiness={chop} → {hv}")
+
+    # C. 缠论日线方向
+    cv: Optional[str] = None
+    if chanlun_summary:
+        cs = chanlun_summary.get("current_state", {})
+        zs_state = cs.get("zhongshu_state", "")
+        pos = cs.get("position", "未知")
+        if pos == "中枢上方" or zs_state == "上移":
+            cv = "BULL_TRENDING"
+        elif pos == "中枢下方" or zs_state == "下移":
+            cv = "BEAR_TRENDING"
+        elif pos == "中枢内" or zs_state in ("形成", "延伸"):
+            cv = "RANGE"
+        rationale.append(f"缠论:位置{pos} → {cv or '弃权'}")
+
+    votes_bull = sum(1 for v in (hv, cv) if v == "BULL_TRENDING")
+    votes_bear = sum(1 for v in (hv, cv) if v == "BEAR_TRENDING")
+    votes_range = sum(1 for v in (hv, cv) if v == "RANGE")
+
+    if anchor in ("BULL_TRENDING", "BEAR_TRENDING"):
+        state = anchor
+        if votes_range >= 2:
+            state = "RANGE"
+            rationale.append("两个辅助信号同时指向RANGE → 趋势存疑降级")
+    else:
+        if votes_bull >= 2 and votes_bear == 0:
+            state = "BULL_TRENDING"
+            rationale.append("辅助信号一致向上 → 自RANGE提升")
+        elif votes_bear >= 2 and votes_bull == 0:
+            state = "BEAR_TRENDING"
+            rationale.append("辅助信号一致向下 → 自RANGE提升")
+        else:
+            state = "RANGE"
+
+    agree = sum(1 for v in (hv, cv) if v == state)
+    contradict = sum(1 for v in (hv, cv)
+                     if v != state and v in ("RANGE", "BULL_TRENDING", "BEAR_TRENDING"))
+    confidence = round(max(0.3, min(0.9, 0.4 + 0.2 * agree - 0.15 * contradict)), 2)
+
+    return {
+        "state": state, "confidence": confidence, "regime": regime,
+        "h": h, "choppiness": chop, "zhongshu_state": zs_state,
+        "basis": basis, "rationale": rationale,
+    }
+
+
+def _apply_market_state_gate(snapshot: "TacticalSnapshot", market_state: str) -> None:
+    """P1-1 门控 — RANGE 态下趋势跟随信号降权(×0.5)并标注, 保留信号供展示。
+
+    BULL/BEAR_TRENDING 态不改变任何信号。REDUCE/CLOSE 等风控类动作由
+    _resolve_final_action / gt_advice 决定, 此处不动 → 不被破坏。
+    """
+    if market_state != "RANGE":
+        return
+    for sig in snapshot.entry_signals:
+        if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+            sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+            sig["market_gate"] = "RANGE"
+    for sig in snapshot.exit_signals:
+        if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+            sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+            sig["market_gate"] = "RANGE"
+    if snapshot.best_entry and snapshot.best_entry.get("type") in _TREND_FOLLOW_SIGNALS:
+        snapshot.best_entry["confidence"] = round(
+            float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3)
+        snapshot.best_entry["market_gate"] = "RANGE"
+    snapshot.notes.append("[P1-1] RANGE 态: 金叉/均线突破等趋势信号已降权")
+
+
+def _to_datetime_index(df) -> object:
+    """把 RangeIndex + 日期列归一为 DatetimeIndex (与缠论 analyzer 同一约定)。"""
+    import pandas as pd
+    if df is None or isinstance(getattr(df, "index", None), pd.DatetimeIndex):
+        return df
+    for col in ("date", "datetime", "日期", "trade_date", "Date", "time"):
+        if col in df.columns:
+            try:
+                parsed = pd.to_datetime(df[col], errors="coerce")
+                if parsed.notna().sum() < len(df) * 0.9:
+                    continue
+                out = df.copy()
+                out["_dt"] = parsed
+                return out.set_index("_dt").drop(columns=[col])
+            except Exception:
+                continue
+    return df
+
+
+def _weekly_direction(df) -> str:
+    """P1-5 周线方向过滤级信号 — ChanlunAnalyzer(freq='W') 优先, 周线均线兜底。
+
+    Returns: "BULL" / "BEAR" / "neutral"
+    """
+    if df is None or getattr(df, "empty", True) or len(df) < 40:
+        return "neutral"
+    import pandas as pd
+    d = _to_datetime_index(df)
+    if not isinstance(getattr(d, "index", None), pd.DatetimeIndex):
+        return "neutral"
+    try:
+        w = d.resample("W").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"})
+        w = w.dropna(subset=["close"])
+    except Exception:
+        return "neutral"
+    if len(w) < 30:
+        return "neutral"
+    try:
+        from src.indicators.chanlun.analyzer import ChanlunAnalyzer
+        res = ChanlunAnalyzer(freq="W").analyze(w, "", "")
+        cs = res.current_state
+        if cs.get("position") == "中枢上方" or cs.get("zhongshu_state") == "上移":
+            return "BULL"
+        if cs.get("position") == "中枢下方" or cs.get("zhongshu_state") == "下移":
+            return "BEAR"
+    except Exception:
+        pass
+    # 兜底: 周线 MA8 vs MA26
+    try:
+        closes = w["close"].astype(float)
+        if len(closes) < 26:
+            return "neutral"
+        ma8 = float(closes.rolling(8).mean().iloc[-1])
+        ma26 = float(closes.rolling(26).mean().iloc[-1])
+        if ma8 > ma26 * 1.01:
+            return "BULL"
+        if ma8 < ma26 * 0.99:
+            return "BEAR"
+    except Exception:
+        pass
+    return "neutral"
+
+
+def _apply_cross_period_filter(snapshot: "TacticalSnapshot", weekly_direction: str) -> None:
+    """P1-5 跨周期过滤 — 日线信号与周线方向相反时降权(×0.5)。
+
+    weekly BULL → 日线看空信号降权; weekly BEAR → 日线看多信号降权。
+    与 RANGE 门控独立, 叠加时置信度连乘(更保守)。
+    """
+    if weekly_direction not in ("BULL", "BEAR"):
+        return
+    tag = f"WEEKLY_{weekly_direction}_DIVERGE"
+    if weekly_direction == "BEAR":
+        for sig in snapshot.entry_signals:
+            if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+                sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+                sig.setdefault("market_gate", tag)
+        if snapshot.best_entry and snapshot.best_entry.get("type") in _TREND_FOLLOW_SIGNALS:
+            snapshot.best_entry["confidence"] = round(
+                float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3)
+            snapshot.best_entry.setdefault("market_gate", tag)
+        snapshot.notes.append(f"[P1-5] 周线{weekly_direction}, 日线买点降权")
+    else:  # BULL
+        for sig in snapshot.exit_signals:
+            if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+                sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+                sig.setdefault("market_gate", tag)
+        snapshot.notes.append(f"[P1-5] 周线{weekly_direction}, 日线卖点降权")
+
+
+def _mm_projected_target(lo: float, hi: float, direction: str) -> Optional[float]:
+    """MM 等距投影公式: 区间高度翻一倍投影到突破方向 (P1-6)。
+
+    上破: target = hi + (hi - lo) = 2*hi - lo
+    下破: target = lo - (hi - lo) = 2*lo - hi
+    """
+    if not (hi > lo > 0):
+        return None
+    h = hi - lo
+    if direction == "up":
+        return round(hi + h, 2)
+    if direction == "down":
+        return round(lo - h, 2)
+    return None
+
+
+def _compute_mm_projection(
+    chanlun_summary: Optional[dict],
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    current_price: float,
+    suggested_stop: float = 0.0,
+) -> Optional[dict]:
+    """P1-6 MM 等距投影止盈位 — 用缠论中枢(zg/zd)或近期高低点。
+
+    目标位 = 中枢/区间高度向上(或向下)翻一倍投影。含盈亏比≥1:1 校验。
+    写入 projected_target (新字段), 不覆盖既有 ATR/时间止损。
+
+    Returns:
+        {"target", "direction", "consolidation_low", "consolidation_high",
+         "height", "rr_ratio", "note", "source"} 或 None(无法计算)
+    """
+    lo = hi = None
+    direction: Optional[str] = None
+    source = ""
+    # 优先: 缠论最后一个中枢 (zg/zd)
+    if chanlun_summary:
+        lz = chanlun_summary.get("last_zs")
+        cs = chanlun_summary.get("current_state", {})
+        pos = cs.get("position", "未知")
+        if lz and lz.get("zd") and lz.get("zg") and float(lz["zg"]) > float(lz["zd"]) > 0:
+            lo, hi = float(lz["zd"]), float(lz["zg"])
+            source = "缠论中枢"
+            if pos == "中枢上方":
+                direction = "up"
+            elif pos == "中枢下方":
+                direction = "down"
+            else:
+                zz = float(lz.get("zz") or (lo + hi) / 2.0)
+                direction = "up" if current_price > zz else "down"
+    # 兜底: 近期 60 根高低点
+    if lo is None and closes and highs and lows and len(closes) >= 20:
+        look = min(len(closes), 60)
+        seg_c = closes[-look:]
+        seg_h = highs[-look:] if len(highs) >= look else highs
+        seg_l = lows[-look:] if len(lows) >= look else lows
+        hi = float(max(seg_h))
+        lo = float(min(seg_l))
+        if hi > lo > 0:
+            source = "近60根高低点"
+            ma5 = sum(seg_c[-5:]) / 5.0
+            ma20 = sum(seg_c[-20:]) / 20.0 if len(seg_c) >= 20 else ma5
+            direction = "up" if ma5 > ma20 else "down"
+    if lo is None or hi is None or direction is None:
+        return None
+
+    target = _mm_projected_target(lo, hi, direction)
+    if target is None:
+        return None
+    height = round(hi - lo, 2)
+
+    note = ""
+    rr_ratio: Optional[float] = None
+    if suggested_stop and suggested_stop > 0:
+        if direction == "up":
+            risk = current_price - suggested_stop
+            reward = target - current_price
+        else:
+            risk = suggested_stop - current_price
+            reward = current_price - target
+        if risk > 0 and reward > 0:
+            rr_ratio = round(reward / risk, 2)
+            if rr_ratio < 1.0:
+                note = f"盈亏比 {rr_ratio} < 1:1, 慎追"
+    return {
+        "target": target, "direction": direction,
+        "consolidation_low": round(lo, 2), "consolidation_high": round(hi, 2),
+        "height": height, "rr_ratio": rr_ratio, "note": note, "source": source,
+    }
+
+
+def _apply_projected_target(
+    snapshot: "TacticalSnapshot",
+    projection: Optional[dict],
+    current_price: float,
+) -> None:
+    """把 MM 投影写入 snapshot, 并触发「接近目标位不追单」标记。
+
+    不覆盖既有 suggested_stop / atr_stop / target_prices (兼容现有止损)。
+    """
+    if not projection or not projection.get("target"):
+        return
+    snapshot.projected_target = projection["target"]
+    if projection.get("note"):
+        snapshot.notes.append(f"[P1-6] {projection['note']}")
+    if current_price > 0:
+        dist = (projection["target"] - current_price) / current_price
+        if projection.get("direction") == "up" and dist <= 0.02:
+            snapshot.chase_blocked = True
+        elif projection.get("direction") == "down" and dist >= -0.02:
+            snapshot.chase_blocked = True
+
+
+def _annotate_t0_await_close(t0, minute_bars) -> None:
+    """P1-5 T+0 收线确认 — 最新分时K线未收线时, 提示待收线后再决策, 不提前进场。
+
+    doc 07: T+0 分时判断加「待分时 K 线收线后再决策」。
+    """
+    if not isinstance(t0, dict):
+        return
+    forming = False
+    if minute_bars:
+        try:
+            last_ts = minute_bars[-1].timestamp
+            now = datetime.now()
+            forming = (last_ts.year, last_ts.month, last_ts.day,
+                       last_ts.hour, last_ts.minute) == (
+                now.year, now.month, now.day, now.hour, now.minute)
+        except Exception:
+            forming = False
+    if forming:
+        note = "⏳ 当前分时K线未收线 — 待K线收线确认后再决策, 不提前进场"
+        notes = t0.setdefault("notes", [])
+        if note not in notes:
+            notes.append(note)
+        if str(t0.get("action", "")).upper() in ("BUY", "ENTER", "ADD"):
+            t0["advice"] = (t0.get("advice") or "") + "（待分时收线确认）"
+
+
+def _enhance_market_state(
+    snapshot: "TacticalSnapshot",
+    index_bars,
+    stock_close_series: list[float],
+    sentiment,
+) -> None:
+    """P1-1/P1-5 串行增强 — 市场状态分类 + 门控 + 跨周期过滤。
+
+    必须在四个维度并行计算完成后调用 (依赖技术面缠论 / 资金面 / 市场背景)。
+    """
+    index_closes = index_highs = index_lows = None
+    if index_bars is not None and not getattr(index_bars, "empty", True):
+        if "close" in index_bars.columns:
+            index_closes = [float(x) for x in index_bars["close"].tolist() if x is not None]
+        if "high" in index_bars.columns:
+            index_highs = [float(x) for x in index_bars["high"].tolist() if x is not None]
+        if "low" in index_bars.columns:
+            index_lows = [float(x) for x in index_bars["low"].tolist() if x is not None]
+
+    breadth: Optional[float] = None
+    if sentiment is not None:
+        up = getattr(sentiment, "up_count", 0) or 0
+        dn = getattr(sentiment, "down_count", 0) or 0
+        if up + dn > 0:
+            breadth = up / (up + dn) * 100.0
+
+    detail = _classify_market_state(
+        index_closes=index_closes, index_highs=index_highs, index_lows=index_lows,
+        breadth=breadth, stock_close_series=stock_close_series,
+        chanlun_summary=snapshot.chanlun_result,
+    )
+    snapshot.market_state = detail["state"]
+    snapshot.market_state_confidence = detail["confidence"]
+    snapshot.market_state_detail = detail
+
+    # P1-1 门控: RANGE 态下趋势跟随信号降权
+    _apply_market_state_gate(snapshot, detail["state"])
+
+    # P1-5 跨周期过滤: 周线方向相反时降权 (weekly_direction 在 _dim_technical 计算)
+    if snapshot.weekly_direction:
+        _apply_cross_period_filter(snapshot, snapshot.weekly_direction)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # DTO
 # ═══════════════════════════════════════════════════════════════════
 
@@ -134,6 +612,15 @@ class TacticalSnapshot:
     time_stop_days: int = 10
     macd_kdj: Optional[dict] = None
     technical_note: str = ""
+
+    # ── 🌐 市场状态前置判定 + 跨周期过滤 + MM等距投影 (P1-1/P1-5/P1-6) ──
+    market_state: str = "RANGE"            # BULL_TRENDING / BEAR_TRENDING / RANGE
+    market_state_confidence: float = 0.0
+    market_state_detail: Optional[dict] = None   # regime/h/choppiness/zhongshu/rationale
+    weekly_direction: str = "neutral"      # BULL / BEAR / neutral (周线过滤级信号)
+    projected_target: float = 0.0          # MM 等距投影止盈参考位 (不覆盖 target_prices)
+    chase_blocked: bool = False            # 现价接近投影目标位 → 不追单
+    notes: list[str] = field(default_factory=list)   # 门控/投影等辅助说明
 
     # ── 🥋 缠论结构（独立维度，不改 6 维 composite）──
     chanlun_score: float = 50.0
@@ -186,6 +673,11 @@ class TacticalSnapshot:
             "crowding_score": self.crowding_score,
             "gt_entry_allowed": self.gt_entry_allowed,
             "held": self.held, "position_loss_pct": self.position_loss_pct,
+            "market_state": self.market_state,
+            "market_state_confidence": self.market_state_confidence,
+            "weekly_direction": self.weekly_direction,
+            "projected_target": self.projected_target,
+            "chase_blocked": self.chase_blocked,
             "data_gaps": self.data_gaps,
         }
 
@@ -405,6 +897,37 @@ def run_tactics(
         except Exception as e:
             logger.debug("tactics minute bars: %s", e)
 
+    # --- 路 8: 上证指数日线 (市场状态前置判定 P1-1; 失败则用标的日线兜底) ---
+    _index_bars = None
+
+    def _io_index():
+        nonlocal _index_bars
+        try:
+            import urllib.request
+            url = ("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                   "?param=sh000001,day,,,120,qfq")
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            resp = urllib.request.urlopen(req, timeout=10)
+            raw = json.loads(resp.read().decode("utf-8"))
+            kdata = ((raw.get("data") or {}).get("sh000001", {}).get("qfqday")
+                     or (raw.get("data") or {}).get("sh000001", {}).get("day")
+                     or [])
+            # 腾讯格式: ["YYYY-MM-DD", 开盘, 收盘, 最高, 最低, 成交量]
+            rows = []
+            for row in kdata[-120:]:
+                try:
+                    ts = datetime.strptime(row[0], "%Y-%m-%d")
+                    rows.append((ts, float(row[2]), float(row[3]), float(row[4])))
+                except (ValueError, IndexError, TypeError):
+                    continue
+            if len(rows) >= 20:
+                import pandas as pd
+                _index_bars = pd.DataFrame(
+                    rows, columns=["date", "close", "high", "low"])
+        except Exception as e:
+            logger.debug("tactics index fetch: %s", e)
+
     # --- 并行执行 ---
     io_tasks = {
         "quote": _io_quote,
@@ -414,6 +937,7 @@ def run_tactics(
         "sentiment": _io_sentiment,
         "global_market": _io_global_market,
         "minute": _io_minute,
+        "index": _io_index,
     }
 
     with ThreadPoolExecutor(max_workers=len(io_tasks)) as pool:
@@ -437,6 +961,7 @@ def run_tactics(
     _io_parts.append("板块✅" if _sector_flow is not None else "板块❌")
     _io_parts.append("情绪✅" if _sentiment is not None else "情绪❌")
     _io_parts.append("全球✅" if _global_market is not None else "全球❌")
+    _io_parts.append("指数✅" if _index_bars is not None else "指数❌")
     if not skip_t0:
         _io_parts.append(f"日内{len(_minute_bars)}根" if _minute_bars else "日内❌")
     _info(f"  {' | '.join(_io_parts)}")
@@ -623,6 +1148,9 @@ def run_tactics(
             "volume": pd.DataFrame({symbol: v_col.values}, index=v_col.index),
         }
 
+        # 注入 17 个技术因子帧，使六维真实打分（修复 P0-1 空转：原 panel 仅 OHLCV）
+        _inject_technical_factors(panel, df, symbol)
+
         # 6维评分
         try:
             tech = TechnicalAnalyzer().analyze(symbol, name, panel)
@@ -687,6 +1215,29 @@ def run_tactics(
             _chanlun_state.update(_apply_chanlun_snapshot(snapshot, chanlun_res))
         except Exception:
             snapshot.data_gaps.append("[DATA_GAP] 缠论分析")
+
+        # 周线方向过滤级信号 (P1-5 跨周期过滤, 日线信号与周线相反时降权)
+        try:
+            snapshot.weekly_direction = _weekly_direction(df)
+        except Exception:
+            snapshot.weekly_direction = "neutral"
+
+        # MM 等距投影止盈位 (P1-6) — 缠论中枢/近期高低点等距投影, 不覆盖现有止损
+        try:
+            _apply_projected_target(
+                snapshot,
+                _compute_mm_projection(
+                    snapshot.chanlun_result,
+                    highs=[float(x) for x in h_col.tolist()],
+                    lows=[float(x) for x in l_col.tolist()],
+                    closes=[float(x) for x in c_col.tolist()],
+                    current_price=current_price,
+                    suggested_stop=snapshot.suggested_stop,
+                ),
+                current_price,
+            )
+        except Exception:
+            pass
 
         snapshot.technical_note = (
             f"综合{snapshot.technical_composite:.0f} "
@@ -805,6 +1356,13 @@ def run_tactics(
                 logger.debug("tactics dim %s: %s", label, e)
 
     result.snapshot = snapshot
+
+    # ── P1-1/P1-5: 市场状态前置判定 + 门控 + 跨周期过滤 (串行, 依赖各维度就绪) ──
+    try:
+        _enhance_market_state(snapshot, _index_bars, _close_series, _sentiment)
+    except Exception as e:
+        logger.debug("tactics market enhance: %s", e)
+
     phase1_elapsed = (datetime.now() - t1_tick).total_seconds()
 
     # Phase 1 step marker — after data computed, before detailed output
@@ -940,6 +1498,8 @@ def run_tactics(
             return
         try:
             _t0 = orch.run_t0(symbol, market, name)
+            # P1-5 T+0 收线确认: 最新分时K线未收线时, 提示待收线后再决策
+            _annotate_t0_await_close(_t0, _minute_bars)
         except Exception as e:
             logger.debug("tactics t0: %s", e)
 
@@ -1244,6 +1804,7 @@ def run_tactics(
     print(f"  情绪: {snapshot.sentiment_label} "
           f"军规: {'✅' if not _doctrine_warnings else '⚠️'+str(len(_doctrine_warnings))} | "
           f"裁决: {result.verdict_score:.0f}/100 {result.verdict_recommendation}")
+    print(f"  状态: {snapshot.market_state} (conf {snapshot.market_state_confidence:.0%})")
     print(f"  动作: {result.action} | 仓位: {result.signal_weight:.1%}"
           f"{' | '+kelly_info if kelly_info else ''}"
           f" | 风控: {'PASS' if result.risk_passed else '⚠️'}")
@@ -1257,6 +1818,9 @@ def run_tactics(
             print(f" | 目标: {snapshot.target_prices[0]:.2f}/{snapshot.target_prices[1]:.2f}")
         else:
             print()
+    if snapshot.projected_target > 0:
+        print(f"  投影止盈: {snapshot.projected_target:.2f}"
+              + (" (接近目标不追单)" if snapshot.chase_blocked else ""))
     if snapshot.macd_kdj:
         print(f"  KDJ: {snapshot.macd_kdj.get('action')} "
               f"c={snapshot.macd_kdj.get('confidence', 0):.2f}")
@@ -1296,6 +1860,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         print(f"  宽度: {s.market_breadth}")
     if s.global_market_summary:
         print(f"  全球: 🌏 {s.global_market_summary}")
+    if s.market_state:
+        basis = "指数" if (s.market_state_detail or {}).get("basis") == "index" else "标的"
+        print(f"  状态: {s.market_state} (conf {s.market_state_confidence:.0%} 基于{basis})")
     print(f"  建议: {s.sentiment_advice}")
 
     # ── 📊 基本面 ──
@@ -1331,6 +1898,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
         print(f"  {name:4s} {bar} {score:3.0f}/100  → {interp}")
     print(f"  {'综合':4s} {'='*20} {s.technical_composite:.0f}/100")
+    if s.weekly_direction in ("BULL", "BEAR"):
+        print(f"  周线方向: {'📈 ' if s.weekly_direction == 'BULL' else '📉 '}"
+              f"{s.weekly_direction} (跨周期过滤)")
 
     # 入场信号详情
     if s.entry_signals:
@@ -1364,6 +1934,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         print(f"  🛑 {' | '.join(stops)}")
     if s.target_prices and s.target_prices[0] > 0:
         print(f"  🎯 目标价: T1={s.target_prices[0]:.2f}  T2={s.target_prices[1]:.2f}")
+    if s.projected_target > 0:
+        tag = " (接近目标不追单)" if s.chase_blocked else ""
+        print(f"  📐 MM投影止盈: {s.projected_target:.2f}{tag}")
 
     # MACD+KDJ 五法 详细
     if s.macd_kdj:
@@ -1551,6 +2124,66 @@ def _interpret_crowding(score: int):
 # ═══════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
+
+# TechnicalAnalyzer 六维消费的 17 个技术因子 ID（对应 src/routing/technical.py 各维度列表）
+_TECH_FACTOR_IDS: list[str] = [
+    # 趋势 (trend)
+    "macd_histogram", "dmi_direction", "ma_bias",
+    # 反转 (reversal)
+    "rsi_signal", "kdj_signal", "williams_r", "short_term_reversal",
+    # 量价 (volume)
+    "obv_divergence", "mfi_signal", "volume_ratio", "turnover_anomaly",
+    # 波动 (volatility)
+    "atr_percentile", "bollinger_position", "hv_percentile",
+    # 均线 (ma)
+    "ma_alignment", "ma_cross", "ma_support",
+]
+
+
+def _inject_technical_factors(
+    panel: dict[str, pd.DataFrame],
+    df: pd.DataFrame,
+    symbol: str,
+) -> dict[str, pd.DataFrame]:
+    """把技术六维所需的因子帧注入 panel，使 TechnicalAnalyzer 六维真实打分。
+
+    与 factor Registry 的用法一致：每个因子在宽面板（index=date,
+    columns=stock_code）上通过 registry.compute(fid, panel) 计算，
+    输出帧再以 fid 为键并回 panel。Registry 校验 columns_required，
+    缺失输入时抛 SkipAlpha → 单因子跳过，实现优雅降级
+    （例如 turnover_anomaly 在无换手率数据时被跳过，不影响量价维度其余因子）。
+
+    Args:
+        panel: 基础 OHLCV 宽面板（close/high/low/volume）
+        df: 原始 K 线 DataFrame，用于补充 turnover 等扩展列
+        symbol: 股票代码（宽面板列名）
+
+    Returns:
+        追加了 17 个技术因子帧的 panel（原 dict 就地扩展）。
+    """
+    import pandas as pd
+
+    # 扩展字段：换手率（部分数据源提供）
+    if "turnover" not in panel and df is not None and not getattr(df, "empty", True):
+        turn_col = next(
+            (c for c in ("turnover", "turnover_rate", "换手率") if c in df.columns),
+            None,
+        )
+        if turn_col is not None:
+            s = pd.to_numeric(df[turn_col], errors="coerce")
+            panel["turnover"] = pd.DataFrame({symbol: s.values}, index=df.index)
+
+    from src.factors.registry import get_default_registry
+    registry = get_default_registry()
+    for fid in _TECH_FACTOR_IDS:
+        try:
+            frame = registry.compute(fid, panel)
+        except Exception as e:
+            logger.debug("tactics factor %s skipped: %s", fid, e)
+            continue
+        if frame is not None and not frame.empty:
+            panel[fid] = frame
+    return panel
 
 
 def _load_position_row(symbol: str) -> Optional[dict]:
@@ -1779,3 +2412,8 @@ def _resolve_final_action(
         if mk.get("action") == "AVOID_ENTRY" and result.action == "ENTER":
             result.action = "WAIT"
             result.warnings.append("KDJ: AVOID_ENTRY → WAIT")
+
+    # MM 投影目标位不追单 (P1-6)
+    if snapshot.chase_blocked and result.action in ("ENTER", "ADD"):
+        result.action = "WAIT"
+        result.warnings.append(f"接近MM投影目标位 {snapshot.projected_target:.2f} → 不追单")

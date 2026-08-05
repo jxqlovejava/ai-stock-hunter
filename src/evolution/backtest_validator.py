@@ -36,6 +36,12 @@ class BacktestValidationResult:
     report: str = ""
     checked_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
+    # P2-5: 样本外（OOS）验证 — 未提供 OOS 数据时恒为 True（向后兼容）
+    oos_passed: bool = True
+    oos_checks: dict[str, bool] = field(default_factory=dict)
+    oos_metrics: dict[str, float] = field(default_factory=dict)
+    oos_note: str = ""
+
 
 class BacktestValidator:
     """回测门禁验证器。
@@ -56,8 +62,20 @@ class BacktestValidator:
             ...
     """
 
-    def __init__(self, thresholds: Optional[BacktestThresholds] = None):
+    def __init__(
+        self,
+        thresholds: Optional[BacktestThresholds] = None,
+        oos_min_sharpe: float = 0.0,
+        oos_min_win_rate: float = 0.5,
+        oos_max_overfit_return_gap: float = 15.0,
+        oos_max_overfit_sharpe_drop: float = 0.5,
+    ):
         self._thresholds = thresholds or BacktestThresholds()
+        # P2-5: 样本外（OOS）门禁阈值（可选，默认不改变既有行为）
+        self._oos_min_sharpe = oos_min_sharpe
+        self._oos_min_win_rate = oos_min_win_rate
+        self._oos_max_overfit_return_gap = oos_max_overfit_return_gap
+        self._oos_max_overfit_sharpe_drop = oos_max_overfit_sharpe_drop
 
     @property
     def thresholds(self) -> BacktestThresholds:
@@ -74,8 +92,14 @@ class BacktestValidator:
         max_dd: float,
         trades: int,
         benchmark_return: float = 0.0,
+        oos_result: Any = None,
     ) -> BacktestValidationResult:
         """验证回测结果是否通过门禁。
+
+        P2-5: 可选传入样本外（OOS）验证结果（如
+        ``src.backtest.walkforward.WalkForwardResult``）。OOS 不达标 →
+        ``oos_passed=False`` 且整体 ``passed=False``（不直接合入/部署）。
+        未传 OOS 数据时 ``oos_passed`` 恒为 True（向后兼容）。
 
         Args:
             sharpe: 年化 Sharpe 比率
@@ -83,6 +107,8 @@ class BacktestValidator:
             max_dd: 最大回撤 (绝对值, 如 0.15 = 15%)
             trades: 交易次数
             benchmark_return: 基准收益
+            oos_result: 可选样本外验证结果对象（duck-typed，读取
+                        avg_oos_sharpe / win_rate / is_overfit / 等属性）
 
         Returns:
             BacktestValidationResult
@@ -115,12 +141,22 @@ class BacktestValidator:
                 f"交易次数 {trades} < 阈值 {t.min_trades}"
             )
 
-        passed = all(checks.values())
+        # P2-5: 样本外验证参与部署门禁
+        oos_passed, oos_checks, oos_metrics, oos_note = self._check_oos(oos_result)
+        if oos_result is not None and not oos_passed:
+            failures.append(oos_note or "样本外（OOS）验证未通过")
+
+        passed = all(checks.values()) and oos_passed
 
         report_lines = ["📊 回测验证报告", f"基准: {t.benchmark}"]
         for check, ok in checks.items():
             icon = "✅" if ok else "❌"
             report_lines.append(f"  {icon} {check}")
+        if oos_metrics:
+            report_lines.append(f"\n📈 样本外(OOS): {oos_note}")
+            for check, ok in oos_checks.items():
+                icon = "✅" if ok else "❌"
+                report_lines.append(f"  {icon} {check}")
         if failures:
             report_lines.append(f"\n⚠️ 未通过原因:")
             for f_msg in failures:
@@ -141,12 +177,71 @@ class BacktestValidator:
             checks=checks,
             failures=failures,
             report="\n".join(report_lines),
+            oos_passed=oos_passed,
+            oos_checks=oos_checks,
+            oos_metrics=oos_metrics,
+            oos_note=oos_note,
         )
+
+    def _check_oos(self, oos_result: Any) -> tuple[bool, dict[str, bool], dict[str, float], str]:
+        """评估样本外（OOS）验证结果。
+
+        Returns:
+            (oos_passed, oos_checks, oos_metrics, oos_note)。
+            oos_result 为 None 或缺少 OOS 指标 → (True, {}, {}, "")。
+        """
+        if oos_result is None:
+            return True, {}, {}, ""
+
+        oos_sharpe = getattr(oos_result, "avg_oos_sharpe", None)
+        oos_win_rate = getattr(oos_result, "win_rate", None)
+        is_overfit_fn = getattr(oos_result, "is_overfit", None)
+
+        if oos_sharpe is None:
+            return True, {}, {}, ""
+
+        overfit = False
+        if callable(is_overfit_fn):
+            try:
+                overfit = bool(is_overfit_fn())
+            except Exception:
+                overfit = False
+        # 兜底: 直接用 IS→OOS gap 阈值判断过拟合
+        if getattr(oos_result, "avg_is_oos_return_gap", 0.0) > self._oos_max_overfit_return_gap:
+            overfit = True
+        if getattr(oos_result, "avg_is_oos_sharpe_drop", 0.0) > self._oos_max_overfit_sharpe_drop:
+            overfit = True
+
+        oos_checks = {
+            "oos_sharpe": oos_sharpe >= self._oos_min_sharpe,
+            "oos_not_overfit": not overfit,
+        }
+        if oos_win_rate is not None:
+            oos_checks["oos_win_rate"] = oos_win_rate >= self._oos_min_win_rate
+
+        oos_passed = all(oos_checks.values())
+        oos_metrics = {
+            "avg_oos_sharpe": oos_sharpe,
+            "win_rate": oos_win_rate if oos_win_rate is not None else -1.0,
+            "avg_is_oos_return_gap": getattr(oos_result, "avg_is_oos_return_gap", 0.0),
+            "avg_is_oos_sharpe_drop": getattr(oos_result, "avg_is_oos_sharpe_drop", 0.0),
+        }
+
+        note = (
+            f"avg_oos_sharpe={oos_sharpe:.2f}"
+            + (f", win_rate={oos_win_rate:.0%}" if oos_win_rate is not None else "")
+            + (", ⚠️过拟合" if overfit else "")
+        )
+        if not oos_passed:
+            note = "样本外(OOS)未达标 — " + note
+
+        return oos_passed, oos_checks, oos_metrics, note
 
     def validate_from_engine_result(
         self,
         engine_result: Any,
         benchmark_return: float = 0.0,
+        oos_result: Any = None,
     ) -> BacktestValidationResult:
         """从回测引擎结果直接验证。
 
@@ -154,6 +249,7 @@ class BacktestValidator:
             engine_result: 回测引擎输出的结果对象（需有 sharpe_ratio,
                            total_return, max_drawdown, total_trades 属性）
             benchmark_return: 基准收益
+            oos_result: 可选样本外验证结果对象（P2-5）
         """
         return self.validate(
             sharpe=getattr(engine_result, "sharpe_ratio", 0.0),
@@ -161,4 +257,5 @@ class BacktestValidator:
             max_dd=getattr(engine_result, "max_drawdown", 0.0),
             trades=getattr(engine_result, "total_trades", 0),
             benchmark_return=benchmark_return,
+            oos_result=oos_result,
         )

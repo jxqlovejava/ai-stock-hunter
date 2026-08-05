@@ -36,6 +36,7 @@ class DiagnosisReport:
     earnings_revision_score: float = 50.0  # Phase 3: 盈利修正因子
     bottleneck_analysis: Optional[BottleneckAnalysis] = None  # cyberagent 瓶颈分析
     sentiment_signal: str = "NEUTRAL"
+    sentiment_score: float = 50.0        # P3-3: 情绪维整合评分 0-100（逆向指标: 高分=恐慌/逆向看多, 低分=贪婪/逆向看空）
     guba_heat_score: float = 0.0         # 股吧热度分 0-100（无数据=0）
     guba_bull_bear_ratio: Optional[float] = None  # 股吧多空比 >1偏多 <1偏空
     guba_hot_titles: list[str] = field(default_factory=list)  # 股吧 Top 3 热帖标题
@@ -311,6 +312,9 @@ class DiagnosisEngine:
             report.guba_bull_bear_ratio = getattr(guba_sentiment, "bull_bear_ratio", None)
             report.guba_hot_titles = list(getattr(guba_sentiment, "hot_titles", [])[:3])
 
+        # P3-3: 情绪维整合评分 0-100（逆向指标: 高分=恐慌/逆向看多, 低分=贪婪/逆向看空）
+        report.sentiment_score = self._score_sentiment(sentiment, guba_sentiment)
+
         # Phase 4: Alpha Lens 注入
         report.alpha_profile = alpha_profile
 
@@ -500,6 +504,8 @@ class DiagnosisEngine:
 
         # Phase 1: 填充数据溯源和信心度
         report.source_citations = self._collect_citations(quote, financials, macro, executive)
+        # P3-4: 数据新鲜度参与诊断评分加权 — 过期 citation 对应维度评分 ×0.7 降权
+        self._apply_freshness_weighting(report)
         report.confidence = self._calc_confidence(report, quote, financials)
         report.data_freshness = datetime.now()
         # 主题驱动检测 (传入行业PE中位数等上下文)
@@ -961,6 +967,14 @@ class DiagnosisEngine:
             if adj_val != 0:
                 score += adj_val
 
+        # ---- v6 领先信号窗口（[SPECULATION]，弱信号，doc 04 可信度 0.3）----
+        # 上游现货/海外龙头异动 → 未来 N 日窗口 A 股对标，仅弱参考，
+        # 幅度已由 lead_signal_weak_adjust 限幅在 ±cap（默认 ±3），不作为强信号
+        if us_st:
+            lead_adj = us_st.get("lead_signal_adjust", 0)
+            if lead_adj:
+                score += lead_adj
+
         return max(0, min(100, score))
 
     def _score_value(self, quote: dict, valuation_result: Optional[object] = None,
@@ -996,6 +1010,117 @@ class DiagnosisEngine:
         if cycle_analysis is None:
             return 50.0
         return float(getattr(cycle_analysis, "cycle_score", 50.0))
+
+    @staticmethod
+    def _score_sentiment(sentiment: Optional[dict], guba_sentiment: Optional[object] = None) -> float:
+        """情绪维整合评分 0-100（逆向/contrarian 指标）。
+
+        方向语义（逆向视角，与其他维度"高分=偏多"语义对齐）:
+          高分 → 100 = 市场/股吧情绪偏恐慌 → 逆向看多（别人恐惧我贪婪）
+          低分 → 0   = 市场/股吧情绪偏贪婪 → 逆向看空（别人贪婪我恐惧）
+          50         = 中性
+
+        整合三路信号:
+          1. MarketSentiment.score（signals.py: 0=极端恐慌 / 50=中性 / 100=极端贪婪）
+             逆向变换: contrarian_market = 100 - score
+          2. guba_sentiment.bull_bear_ratio（>1 偏多, <1 偏空）→ 逆向多空比分
+          3. guba_sentiment.heat_score（0-100 股吧热度）→ 情绪信号强度/可信度:
+             热度越高 → 采信 contrarian 方向越充分；热度低 → 向中性 50 收缩
+             （情绪数据弱，不据此下判断）
+
+        无任何情绪数据时返回中性 50（不误判方向）。
+        """
+        # 1. 大盘情绪逆向分
+        market_score = 50.0
+        if sentiment:
+            try:
+                # 注意: score=0 是合法值(极端恐慌)，不能用 `or` 兜底（0 为 falsy 会被吞成 50）
+                _raw = sentiment.get("score", None)
+                market_score = 50.0 if _raw is None else float(_raw)
+            except (TypeError, ValueError):
+                market_score = 50.0
+        contrarian_market = max(0.0, min(100.0, 100.0 - market_score))
+
+        # 2. 股吧多空比逆向分（ratio=1.0 → 中性50；>1 偏多/贪婪 → 逆向低分）
+        guba_contrarian: Optional[float] = None
+        if guba_sentiment is not None:
+            ratio = getattr(guba_sentiment, "bull_bear_ratio", None)
+            try:
+                ratio = float(ratio) if ratio is not None else None
+            except (TypeError, ValueError):
+                ratio = None
+            if ratio is not None:
+                bb_greedy = max(0.0, min(100.0, 50.0 + (ratio - 1.0) * 20.0))
+                guba_contrarian = 100.0 - bb_greedy
+
+        # 合成: 大盘情绪为主(0.7)，股吧多空为辅(0.3)
+        if guba_contrarian is not None:
+            score = contrarian_market * 0.7 + guba_contrarian * 0.3
+        else:
+            score = contrarian_market
+
+        # 3. 股吧热度调制: 低热度 → 向中性收缩（情绪信号弱）
+        heat = 0.0
+        if guba_sentiment is not None:
+            try:
+                heat = float(getattr(guba_sentiment, "heat_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                heat = 0.0
+        if heat > 0:
+            intensity = min(1.0, heat / 70.0)
+            score = 50.0 + (score - 50.0) * intensity
+        return round(max(0.0, min(100.0, score)), 1)
+
+    @staticmethod
+    def _dimensions_for_citation(report: "DiagnosisReport", c: SourceCitation) -> tuple[str, ...]:
+        """将 citation 映射到其支撑的诊断维度（过期时对该维度降权）。
+
+        仅映射"该维度真实依赖"的 citation 字段；无关/无 citation 的维度
+        保持原评分（不误降权）。
+        """
+        if c.field in ("quote", "cross_validated_quote"):
+            return ("value_score", "quality_score", "momentum_score")
+        if c.field == "financials":
+            return ("value_score", "quality_score")
+        if c.field == "macro":
+            return ("macro_score",)
+        if c.field == "executive":
+            return ("executive_score",)
+        if c.field == "guba_sentiment":
+            # guba_sentiment citation 无条件生成（即使无股吧数据）；
+            # 仅当确有情绪数据时才降权情绪维，避免无条件 citation 误伤。
+            if (
+                report.guba_heat_score > 0
+                or report.guba_bull_bear_ratio is not None
+                or report.sentiment_score != 50.0
+            ):
+                return ("sentiment_score",)
+        return ()
+
+    @classmethod
+    def _apply_freshness_weighting(cls, report: "DiagnosisReport") -> None:
+        """P3-4: 数据新鲜度 → 对应维度评分加权。
+
+        依据 guardrails G004 / quality checker 语义：freshness 过期 →
+        对应维度 confidence 乘 0.7。此处对「维度 0-100 评分」乘 0.7 降权。
+        仅当该维度存在过期 citation 时降权；无 citation / 数据未过期的
+        维度保持原评分（不误降权）。降权维度写入 data_gaps 标注 [STALE]。
+        """
+        stale_dims: set[str] = set()
+        for c in report.source_citations:
+            if c.is_fresh:
+                continue
+            stale_dims.update(cls._dimensions_for_citation(report, c))
+        if not stale_dims:
+            return
+        for dim in stale_dims:
+            cur = getattr(report, dim, None)
+            if isinstance(cur, (int, float)):
+                setattr(report, dim, cls._apply_weight(float(cur), 0.7))
+        report.data_gaps = list(getattr(report, "data_gaps", []) or [])
+        report.data_gaps.append(
+            f"[STALE] 以下维度数据过期，评分×0.7 降权: {', '.join(sorted(stale_dims))}"
+        )
 
     def _score_quality(self, financials: list, earnings_factor: Optional[object] = None) -> float:
         """质量评分（增强版）：ROE + 盈利修正因子。"""
@@ -1292,6 +1417,7 @@ class DiagnosisEngine:
             ("盈利修正", report.earnings_revision_score), ("估值综合", report.valuation_score),
             ("周期适配", report.cycle_score), ("高管因子", report.executive_score),
             ("股吧热度", report.guba_heat_score),
+            ("情绪状态(逆向)", report.sentiment_score),  # P3-3: 高分=恐慌/逆向看多, 低分=贪婪/逆向看空
         ]
         strong_bull = [(n, s) for n, s in dims if s >= 70]
         strong_bear = [(n, s) for n, s in dims if s <= 30]

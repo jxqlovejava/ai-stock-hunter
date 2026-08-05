@@ -56,6 +56,10 @@ class AttributionReport:
 
     confidence: float = 0.7
 
+    # P2-5: 聚合运气标记（单笔归因默认不设，由聚合接口填充）
+    luck_flag: bool = False
+    luck_note: str = ""
+
     @property
     def is_alpha_driven(self) -> bool:
         """是否以 Alpha 驱动为主（而非 Beta 驱动）。"""
@@ -67,6 +71,143 @@ class AttributionReport:
         if abs(self.total_return_pct) < 0.01:
             return 0.0
         return max(0, min(1.0, self.alpha_return_pct / abs(self.total_return_pct)))
+
+
+@dataclass
+class LuckAssessment:
+    """聚合运气评估（P2-5，可证伪）。
+
+    ``flagged=True`` 表示该策略/信号源的高收益高度集中于少数几笔，
+    且剔除这些笔后整体净收益转负 —— 该收益"可能含运气成分"，
+    合入/部署前需进一步验证或降权。
+
+    Args:
+        strategy: 策略/信号源标识
+        total_trades: 总样本笔数
+        positive_trades: 盈利笔数
+        top_profit_share: 前 TOP_N 笔盈利占全部盈利比例
+        avg_return_ex_top: 剔除 TOP_N 后每笔平均收益
+        minus_top_still_positive: 剔除 TOP_N 后整体净收益是否仍为正
+        statistical_support: 正收益笔数占比（统计支持度）
+        flagged: 是否标记"可能含运气成分"
+        reason: 判定结论
+        evidence: 可证伪证据描述
+    """
+
+    strategy: str = ""
+    total_trades: int = 0
+    positive_trades: int = 0
+    top_profit_share: float = 0.0
+    avg_return_ex_top: float = 0.0
+    minus_top_still_positive: bool = True
+    statistical_support: float = 0.0
+    flagged: bool = False
+    reason: str = ""
+    evidence: str = ""
+
+
+class LuckBiasDetector:
+    """聚合运气/幸存者偏差识别器。
+
+    按策略/信号源聚合高收益样本，用两条**可证伪条件**判断
+    "收益是否来自少数几笔、有无显著统计支持":
+
+      1. 集中度: 前 ``TOP_N`` 笔盈利占全部盈利比例 ≥ ``MAX_TOP_SHARE``
+      2. 稳健性: 剔除前 ``TOP_N`` 笔后整体净收益转负
+
+    两条同时满足 → ``flagged=True``（高收益可能含运气成分）。
+    若收益分布分散（少数笔贡献低）或剔除后仍为正 → 不标记，
+    说明收益具备统计支持，更可能是 Alpha。
+
+    用法:
+        detector = LuckBiasDetector()
+        assessment = detector.assess(returns, strategy="MVP1")
+        if assessment.flagged:
+            # 降权或暂缓合入
+            ...
+    """
+
+    MIN_TRADES = 20
+    TOP_N = 3
+    MAX_TOP_SHARE = 0.7
+
+    def assess(
+        self,
+        returns: list[float],
+        strategy: str = "",
+        top_n: Optional[int] = None,
+        min_trades: Optional[int] = None,
+    ) -> LuckAssessment:
+        """评估一组样本收益是否"可能含运气成分"。
+
+        Args:
+            returns: 单笔收益率序列（如 [0.10, -0.02, 0.05, ...]）
+            strategy: 策略/信号源标识
+            top_n: 考察的前 N 笔盈利（默认 ``TOP_N``）
+            min_trades: 最小样本门槛（默认 ``MIN_TRADES``）
+
+        Returns:
+            LuckAssessment
+        """
+        returns = [float(r) for r in returns if r is not None]
+        total = len(returns)
+        min_t = min_trades or self.MIN_TRADES
+        if total < min_t:
+            return LuckAssessment(
+                strategy=strategy,
+                total_trades=total,
+                reason=f"样本不足 ({total} < {min_t})，不判定运气成分",
+            )
+
+        positive = [r for r in returns if r > 0]
+        losses = [r for r in returns if r < 0]
+        gross_profit = sum(positive)
+        pos_count = len(positive)
+
+        if gross_profit <= 0:
+            return LuckAssessment(
+                strategy=strategy,
+                total_trades=total,
+                positive_trades=pos_count,
+                reason="无正收益样本，非运气成分问题",
+            )
+
+        n = max(1, min(top_n or self.TOP_N, pos_count))
+        top_profit = sum(sorted(positive, reverse=True)[:n])
+        share = top_profit / gross_profit if gross_profit else 0.0
+
+        net_ex_top = gross_profit - top_profit + sum(losses)
+        avg_ex_top = net_ex_top / max(1, total - n)
+        minus_top_positive = net_ex_top > 0
+        stat_support = pos_count / total
+
+        flagged = share >= self.MAX_TOP_SHARE and not minus_top_positive
+        if flagged:
+            reason = (
+                f"可能含运气成分：前 {n} 笔盈利占 {share:.0%} "
+                "且剔除后净收益转负，统计支持不足"
+            )
+        else:
+            reason = "收益分布较分散/剔除少数笔后仍为正，运气成分较低"
+
+        evidence = (
+            f"共{total}笔/盈利{pos_count}笔；前{n}笔盈利占{share:.0%}；"
+            f"剔除后净收益{'为正' if minus_top_positive else '为负'}；"
+            f"正收益笔数占比{stat_support:.0%}"
+        )
+
+        return LuckAssessment(
+            strategy=strategy,
+            total_trades=total,
+            positive_trades=pos_count,
+            top_profit_share=round(share, 4),
+            avg_return_ex_top=round(avg_ex_top, 4),
+            minus_top_still_positive=minus_top_positive,
+            statistical_support=round(stat_support, 4),
+            flagged=flagged,
+            reason=reason,
+            evidence=evidence,
+        )
 
 
 class AlphaAttribution:
@@ -463,3 +604,29 @@ class AlphaAttribution:
             base_half_life *= 0.4
 
         return round(base_half_life, 1)
+
+    # ------------------------------------------------------------------
+    # P2-5: 聚合运气识别（跨笔聚合）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def aggregate_luck_assessment(
+        returns: list[float],
+        strategy: str = "",
+        **kwargs,
+    ) -> LuckAssessment:
+        """按策略/信号源聚合收益，输出聚合运气标记（P2-5）。
+
+        单笔归因（:meth:`attribute`）已识别"正收益但 Alpha 为负 = 可能运气"，
+        本接口做跨笔聚合：判断高收益是否集中少数几笔、剔除后是否转负，
+        从而标记"可能含运气成分"。
+
+        Args:
+            returns: 单笔收益率序列
+            strategy: 策略/信号源标识
+            **kwargs: 透传 ``LuckBiasDetector.assess`` 参数（top_n/min_trades）
+
+        Returns:
+            LuckAssessment
+        """
+        return LuckBiasDetector().assess(returns, strategy=strategy, **kwargs)

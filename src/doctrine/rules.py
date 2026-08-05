@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""30 条 A 股专属投资军规。
+"""45 条 A 股专属投资军规。
 
 严重度:
   - block: 触发时硬阻断交易，不可覆盖
@@ -128,23 +128,6 @@ MILITARY_RULES: list[Rule] = [
         "近 3 年累计分红/净利润 > 30%，否则标注铁公鸡风险（不分红/少分红）",
     ),
 
-    # ── 反操纵军规 ──
-    Rule(
-        "R032", RuleCategory.RISK, "筹码集中度风险",
-        Severity.WARN,
-        "前十大流通股东持股>60%或股东户数连续下降>15%→筹码高度集中，操纵风险升高，仓位上限降低30%",
-    ),
-    Rule(
-        "R033", RuleCategory.RISK, "操纵历史警戒",
-        Severity.WARN,
-        "个股12个月内出现≥3次操纵嫌疑→标记为惯犯，永久提高操纵检测敏感度，仓位上限降低50%",
-    ),
-    Rule(
-        "R034", RuleCategory.RISK, "资金背离预警",
-        Severity.WARN,
-        "主力资金连续5日流出但价格不跌或上涨→诱多出货嫌疑，延迟入场1-2日",
-    ),
-
     # ── 周线均线军规 ──
     Rule(
         "r035", RuleCategory.SELECTION, "200周均线跌破",
@@ -169,5 +152,44 @@ MILITARY_RULES: list[Rule] = [
         "r038", RuleCategory.TRADING, "缠论背驰未确认",
         Severity.WARN,
         "中枢破位且无底背驰/买点确认 → 跌势未止，避免左侧抄底",
+    ),
+
+    # ── 反操纵军规 (原 R032/R033/R034，重编号消除大小写冲突) ──
+    Rule(
+        "r039", RuleCategory.RISK, "筹码集中度风险",
+        Severity.WARN,
+        "前十大流通股东持股>60%或股东户数连续下降>15%→筹码高度集中，操纵风险升高，仓位上限降低30%",
+        check_field="top10_holding_pct",
+        threshold=">60 or holder_decline_pct>15",
+    ),
+    Rule(
+        "r040", RuleCategory.RISK, "操纵历史警戒",
+        Severity.WARN,
+        "个股12个月内出现≥3次操纵嫌疑→标记为惯犯，永久提高操纵检测敏感度，仓位上限降低50%",
+        check_field="manipulation_history_count",
+        threshold=">=3",
+    ),
+    Rule(
+        "r041", RuleCategory.RISK, "资金背离预警",
+        Severity.WARN,
+        "主力资金连续5日流出但价格不跌或上涨→诱多出货嫌疑，延迟入场1-2日",
+        check_field="main_capital_outflow_days",
+        threshold=">=5 and price not down",
+    ),
+
+    # ── P0-2 新增军规 ──
+    Rule(
+        "r042", RuleCategory.TRADING, "亏损后禁止报复性加仓",
+        Severity.BLOCK,
+        "单笔止损后当日禁止追加仓位/摊平，避免报复性加仓放大亏损",
+        check_field="recent_stops",
+        threshold="今日已有止损记录且意图加仓",
+    ),
+    Rule(
+        "r043", RuleCategory.INFORMATION, "信息面冲突即禁止开仓",
+        Severity.BLOCK,
+        "技术信号方向与基本面/政策/新闻信息方向冲突 → 强制 hold/close，禁止开仓",
+        check_field="signal_action",
+        threshold="技术买/加与基本面或政策或新闻负面冲突",
     ),
 ]

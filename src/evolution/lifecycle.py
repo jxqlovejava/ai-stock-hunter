@@ -65,6 +65,9 @@ class LifecycleManager:
         self._path = db_path
         self._memory_only = db_path == ":memory:"
         self._lifecycles: dict[str, StrategyLifecycle] = {}
+        # P2-5: 样本外(OOS)验证登记表 — lifecycle_id -> {oos_passed, note, metrics}
+        # 同时以 [OOS] 前缀写入 lc.notes 持久化；进程内判定用内存表。
+        self._oos: dict[str, dict] = {}
         if not self._memory_only:
             self._load()
 
@@ -252,8 +255,14 @@ class LifecycleManager:
         total_return: float,
         max_dd: float,
         passed: bool,
+        oos_passed: Optional[bool] = None,
+        oos_note: str = "",
     ):
-        """更新回测结果。"""
+        """更新回测结果。
+
+        P2-5: ``oos_passed``/``oos_note`` 可选 —— 提供时登记样本外验证结果，
+        参与候选池/模拟盘部署门禁；不提供则不影响既有行为。
+        """
         lc = self.get(lifecycle_id)
         if lc is None:
             return
@@ -263,6 +272,8 @@ class LifecycleManager:
         lc.backtest_passed = passed
         lc.backtest_run_at = datetime.now().isoformat()
         lc.updated_at = datetime.now().isoformat()
+        if oos_passed is not None:
+            self.record_oos_validation(lifecycle_id, oos_passed, note=oos_note)
         self._save()
 
     def update_trial_metrics(
@@ -303,6 +314,40 @@ class LifecycleManager:
         lc.updated_at = datetime.now().isoformat()
         self._save()
 
+    def record_oos_validation(
+        self,
+        lifecycle_id: str,
+        oos_passed: bool,
+        note: str = "",
+        metrics: Optional[dict] = None,
+    ):
+        """登记样本外（OOS）验证结果（P2-5）。
+
+        进程内判定读 ``self._oos``；同时以 ``[OOS]`` 前缀追加到 ``lc.notes``
+        持久化。OOS 未达标 → 候选池/模拟盘转换前置条件不满足（不直接合入）。
+        """
+        lc = self.get(lifecycle_id)
+        if lc is None:
+            return
+        self._oos[lifecycle_id] = {
+            "oos_passed": bool(oos_passed),
+            "note": note,
+            "metrics": metrics or {},
+        }
+        lc.notes = (lc.notes + "\n" if lc.notes else "") + (
+            f"[OOS] passed={bool(oos_passed)}; {note}".rstrip("; ")
+        )
+        lc.updated_at = datetime.now().isoformat()
+        logger.info(
+            "生命周期 %s OOS 验证: passed=%s (%s)",
+            lifecycle_id, oos_passed, note,
+        )
+        self._save()
+
+    def oos_status(self, lifecycle_id: str) -> Optional[dict]:
+        """查询某生命周期的 OOS 验证登记（无则 None）。"""
+        return self._oos.get(lifecycle_id)
+
     # ------------------------------------------------------------------
     # Precondition Checks
     # ------------------------------------------------------------------
@@ -310,15 +355,32 @@ class LifecycleManager:
     def _check_preconditions(
         self, lc: StrategyLifecycle, target: LifecycleState
     ) -> tuple[bool, str]:
-        """检查状态转换的前置条件。"""
+        """检查状态转换的前置条件。
+
+        P2-5: 候选池/模拟盘部署门禁增加样本外（OOS）判定 ——
+        若已登记 OOS 且未达标，则 OOS 不过 → 禁止直接合入（降级/提示）。
+        未登记 OOS 的策略行为不变（向后兼容）。
+        """
+        oos = self._oos.get(lc.id)
+        oos_blocked = bool(oos is not None and not oos.get("oos_passed", True))
+
         if target == LifecycleState.CANDIDATE:
             if not lc.backtest_passed:
                 return False, "回测未通过，无法进入候选池"
+            if oos_blocked:
+                return False, (
+                    "回测通过但样本外(OOS)验证未达标 — 禁止进入候选池，"
+                    "建议降级/继续调参后重新验证"
+                )
             return True, ""
 
         if target == LifecycleState.TRIAL:
             if lc.state == LifecycleState.CANDIDATE and not lc.backtest_passed:
                 return False, "回测未通过，无法进入模拟盘"
+            if oos_blocked:
+                return False, (
+                    "样本外(OOS)验证未达标 — 禁止进入模拟盘部署"
+                )
             return True, ""
 
         if target == LifecycleState.ACTIVE:
@@ -429,6 +491,16 @@ class LifecycleManager:
                 notes=raw.get("notes", ""),
             )
             self._lifecycles[lc_id] = lc
+            # P2-5: 从持久化 notes 恢复 OOS 登记
+            for line in lc.notes.splitlines():
+                if line.startswith("[OOS]"):
+                    passed = "passed=True" in line or "passed = True" in line
+                    self._oos[lc_id] = {
+                        "oos_passed": passed,
+                        "note": line,
+                        "metrics": {},
+                    }
+                    break
 
     # ------------------------------------------------------------------
     # Summary

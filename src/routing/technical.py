@@ -64,11 +64,19 @@ class TechnicalSignal:
     description: str         # 人类可读
     is_entry: bool = False   # 是否可作为入场参考
     is_exit: bool = False    # 是否可作为出场参考
+    # P1-3: MACD 顶背离标记（动能背离 → 降权建议减仓，与均线破位联动）
+    top_divergence: bool = False
+    # P1-4: 风险旗标（如假突破 / 缩量反弹）
+    risk_flags: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # 维度权重
 # ---------------------------------------------------------------------------
+
+# P1-3: MACD 顶背离检测窗口（价格新高、DIF 未新高比较）。
+# 40 日可捕捉中期背离；20 日默认窗口在价格创出新高时，窗口 DIF 峰值往往是当日自身而漏检。
+TOP_DIVERGENCE_LOOKBACK = 40
 
 DEFAULT_WEIGHTS = {
     "trend": 0.20,
@@ -120,6 +128,21 @@ class TechnicalAnalyzer:
         if trend_scores:
             scores["trend"] = float(np.mean(trend_scores))
             all_signals.extend(self._interpret_trend(trend_scores, panel))
+            # P1-3: MACD 顶背离 → 正式降权信号（动能背离，逢高减仓；与均线破位联动）
+            div_col = self._detect_top_divergence(panel)
+            if div_col is not None:
+                scores["trend"] *= 0.9  # 趋势分降权
+                all_signals.append(TechnicalSignal(
+                    indicator="MACD_TOP_DIVERGENCE",
+                    direction="BEARISH",
+                    strength=0.55,
+                    description=(
+                        f"MACD 顶背离（{div_col} 价格新高、DIF 未新高）— 动能背离，"
+                        "降权建议：逢高减仓，与均线破位联动确认离场"
+                    ),
+                    is_exit=True,
+                    top_divergence=True,
+                ))
         else:
             scores["trend"] = 50.0
             gaps.append("trend_factors")
@@ -215,6 +238,32 @@ class TechnicalAnalyzer:
                 if not last_row.isna().all():
                     scores.append(float(last_row.mean()))
         return scores
+
+    def _detect_top_divergence(
+        self, panel: dict[str, pd.DataFrame]
+    ) -> Optional[str]:
+        """检测最新 bar 是否出现 MACD 顶背离（价格创新高、DIF 未创新高）。
+
+        复用 src/alphas/macd_kdj.detect_macd_top_divergence。返回背离列名或 None。
+        """
+        close = panel.get("close")
+        if close is None or close.empty or close.shape[0] < TOP_DIVERGENCE_LOOKBACK:
+            return None
+        try:
+            from src.alphas.macd_kdj import compute_macd, detect_macd_top_divergence
+        except Exception:
+            return None
+        for col in close.columns:
+            s = close[col].dropna()
+            if len(s) < TOP_DIVERGENCE_LOOKBACK:
+                continue
+            dif = compute_macd(s)[0]
+            div = detect_macd_top_divergence(
+                s, dif, lookback=TOP_DIVERGENCE_LOOKBACK
+            )
+            if bool(div.iloc[-1]):
+                return col
+        return None
 
     def _interpret_trend(
         self, scores: list[float], panel: dict[str, pd.DataFrame]

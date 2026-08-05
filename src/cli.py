@@ -1796,27 +1796,142 @@ def _cmd_preference_setup(loader):
         print("❌ 已取消，配置未保存")
 
 
+def _resolve_feedback_db_path() -> str:
+    """反馈库路径：优先 $BAIZE_FEEDBACK_PATH，默认 data/feedback.json。"""
+    return os.environ.get("BAIZE_FEEDBACK_PATH", "data/feedback.json")
+
+
+def _print_feedback_summary(collector) -> None:
+    """打印反馈汇总（含错误类型分布与教训）。"""
+    s = collector.summary()
+    print("📊 反馈统计")
+    print(f"总反馈: {s.total}")
+    print(f"赞同率: {s.agreement_rate:.1%} (agree {s.agree_count} / disagree {s.disagree_count})")
+    if s.mistake_types:
+        print("错误类型分布:")
+        for mt, cnt in sorted(s.mistake_types.items(), key=lambda x: -x[1]):
+            print(f"  - {mt}: {cnt} 次")
+    if s.lessons:
+        print("教训:")
+        for lesson in s.lessons[-5:]:
+            print(f"  • {lesson}")
+    else:
+        print("暂无教训记录。用 'python -m src feedback add' 录入交易反馈。")
+
+
+_MISTAKE_TYPE_OPTIONS = [
+    ("0", "none", "无"),
+    ("1", "chased_move", "追涨杀跌"),
+    ("2", "ignored_news_conflict", "忽视信息冲突"),
+    ("3", "stop_too_tight", "止损过紧"),
+    ("4", "stop_too_wide", "止损过宽"),
+    ("5", "overleveraged", "过度杠杆"),
+    ("6", "held_too_long", "持仓过久"),
+]
+
+
+def _feedback_add_interactive(collector, get_input=None):
+    """交互式交易反馈录入 — 标的/方向/结果/错误类型/教训。
+
+    Args:
+        collector: FeedbackCollector 实例（真实落盘路径）
+        get_input: 输入函数，可注入以支持测试（默认 builtins.input）
+
+    Returns:
+        bool — 是否成功录入
+    """
+    from src.learner.feedback import MistakeType, validate_lesson_specificity
+
+    if get_input is None:
+        get_input = input
+
+    print("📝 交易反馈录入（交易→反馈→复盘闭环）")
+    print("─" * 50)
+    print("录入一笔已发生交易的反馈，系统据此校准策略权重与复盘教训。")
+
+    # 1. 标的
+    symbol = get_input("标的股票代码 (6位, 如 600519): ").strip()
+    if not symbol or not re.fullmatch(r"\d{6}", symbol):
+        print("❌ 无效股票代码，已取消。")
+        return False
+
+    # 2. 方向
+    direction = get_input("交易方向 (BUY买入 / SELL卖出 / HOLD持有): ").strip().upper()
+    if direction not in ("BUY", "SELL", "HOLD"):
+        print("❌ 无效方向，已取消。")
+        return False
+
+    # 3. 结果
+    result = get_input("结果 (win盈利 / loss亏损 / flat持平): ").strip().lower()
+    if result not in ("win", "loss", "flat"):
+        print("❌ 无效结果，已取消。")
+        return False
+
+    # 4. 错误类型
+    print("错误类型 (回车=无):")
+    for key, val, label in _MISTAKE_TYPE_OPTIONS:
+        print(f"  [{key}] {label} ({val})")
+    mt_choice = get_input("选择错误类型 [0]: ").strip()
+    mistake_type = MistakeType.NONE
+    for key, val, _label in _MISTAKE_TYPE_OPTIONS:
+        if mt_choice == key or mt_choice.lower() == val:
+            mistake_type = MistakeType(val)
+            break
+
+    # 5. 实际收益率
+    ret_input = get_input("实际收益率% (可选, 如 -8.5 或 6.2): ").strip()
+    actual_return = None
+    if ret_input:
+        try:
+            actual_return = float(ret_input) / 100.0
+        except ValueError:
+            print("⚠️ 收益率格式无效，忽略。")
+
+    # 6. 教训（具体性校验 — 禁止"操作失误/行情不好"空话）
+    lesson = get_input("经验教训 (具体到哪做错了/如何改进): ").strip()
+    ok, msg = validate_lesson_specificity(lesson)
+    if not ok:
+        print(f"⚠️ {msg}")
+        print("   反馈未保存。请补充具体教训后重试。")
+        return False
+
+    fb = collector.record_trade_result(
+        symbol=symbol,
+        direction=direction,
+        result=result,
+        mistake_type=mistake_type,
+        lesson=lesson,
+        actual_return=actual_return,
+    )
+    print(f"✅ 反馈已记录: {fb.feedback_id} → {collector._path}")
+    return True
+
+
 @_safe_cmd
 def cmd_feedback(args: list[str]):
-    """用户反馈管理。"""
+    """用户反馈管理 — 交易→反馈→复盘闭环。
+
+    用法:
+      python -m src feedback add              # 交互式录入一笔交易反馈
+      python -m src feedback summary          # 查看反馈统计
+      python -m src feedback add --db PATH    # 指定反馈库路径 (默认 $BAIZE_FEEDBACK_PATH / data/feedback.json)
+    """
+    import argparse
     from src.learner import FeedbackCollector
 
-    sub = args[0] if args else "summary"
-    collector = FeedbackCollector(db_path=":memory:")
+    parser = argparse.ArgumentParser(description="用户反馈管理")
+    parser.add_argument("sub", nargs="?", default="summary", choices=["add", "summary"])
+    parser.add_argument("--db", type=str, default="",
+                        help="反馈库路径 (默认 $BAIZE_FEEDBACK_PATH 或 data/feedback.json)")
+    parsed = parser.parse_args(args)
 
-    if sub == "add":
-        print("💬 添加反馈")
-        print("FeedbackCollector 已就绪。使用 agree/disagree/adjust/annotate 方法记录反馈。")
-        print("⏳ 交互式反馈录入开发中。")
-    elif sub == "summary":
-        print("📊 反馈统计")
-        s = collector.summary()
-        print(f"总反馈: {s.total}")
-        print(f"赞同率: {s.agreement_rate:.1%}")
-        if s.lessons:
-            print(f"教训: {', '.join(s.lessons[:5])}")
+    db_path = parsed.db or _resolve_feedback_db_path()
+    collector = FeedbackCollector(db_path=db_path)
+
+    if parsed.sub == "add":
+        _feedback_add_interactive(collector)
     else:
-        print(f"未知子命令: {sub}，可用: add | summary")
+        _print_feedback_summary(collector)
 
 
 def cmd_evolve():

@@ -7,6 +7,7 @@ AttributionEngine 使用这些 DTO 作为 Phase 1-3 的结构化输入/输出。
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -63,6 +64,87 @@ class DriverFactor:
     description: str = ""  # 传导逻辑简述
 
 
+class AttributionLayer(str, enum.Enum):
+    """三层归因分层 (投资资讯精读 doc 29, 可信度 0.55)。
+
+    下跌/上涨先分三层 —— 越往上推翻所需证据越多：
+      - EXECUTION     执行层: 买法/操作问题 (买点差/追高/止损未执行)
+      - CONFIGURATION 配置层: 仓位排队/资金分配问题 (仓位过重/未分散/杠杆过高)
+      - LOGIC         投资逻辑层: 核心假设/基本面逻辑问题 (假设被证伪/基本面恶化)
+
+    两条防误判原则:
+      1. 避免把执行问题升级成逻辑问题 (不当用"逻辑错了"掩盖操作失误)
+      2. 避免用短期回调掩盖逻辑破裂 (不当用"只是回调"掩盖基本面恶化)
+    """
+
+    EXECUTION = "EXECUTION"
+    CONFIGURATION = "CONFIGURATION"
+    LOGIC = "LOGIC"
+
+    @property
+    def rank(self) -> int:
+        """层位序: EXECUTION=1 < CONFIGURATION=2 < LOGIC=3。"""
+        return _LAYER_RANK[self]
+
+    @property
+    def overturn_evidence_level(self) -> int:
+        """推翻该层归因所需证据级别 (1-3, 越高需越强证据)。
+
+        - EXECUTION: 1 — 单源盘面/分时数据即可推翻 (操作级)
+        - CONFIGURATION: 2 — 需多源交叉验证/仓位记录 (配置级)
+        - LOGIC: 3 — 需基本面/公告级一手证据或核心假设明确证伪 (逻辑级)
+        """
+        return _LAYER_RANK[self]
+
+    @property
+    def label(self) -> str:
+        """中文层名 (含定位描述)。"""
+        return _LAYER_LABEL[self]
+
+
+_LAYER_RANK: dict[AttributionLayer, int] = {
+    AttributionLayer.EXECUTION: 1,
+    AttributionLayer.CONFIGURATION: 2,
+    AttributionLayer.LOGIC: 3,
+}
+
+_LAYER_LABEL: dict[AttributionLayer, str] = {
+    AttributionLayer.EXECUTION: "执行层 (买法/操作问题)",
+    AttributionLayer.CONFIGURATION: "配置层 (仓位排队/资金分配问题)",
+    AttributionLayer.LOGIC: "投资逻辑层 (核心假设/基本面逻辑问题)",
+}
+
+# 推翻所需证据级别说明 (供输出层引用)
+EVIDENCE_LEVEL_LABELS: dict[int, str] = {
+    1: "低: 单源盘面/分时数据即可推翻 (操作级)",
+    2: "中: 需多源交叉验证/仓位记录 (配置级)",
+    3: "高: 需基本面/公告级一手证据或核心假设明确证伪 (逻辑级)",
+}
+
+
+@dataclass
+class LayerAttribution:
+    """单条三层归因 (执行/配置/逻辑)。
+
+    对应 doc 29: 下跌/上涨先分三层。每条归因记录 所属层 / 主要驱动 / 证据 /
+    置信度 / 需推翻所需证据级别。越往上 (LOGIC) 推翻所需证据越多。
+    """
+
+    layer: AttributionLayer  # 所属层
+    driver: str  # 主要驱动因素 (对应 DriverFactor.name)
+    evidence: str  # 证据简述 (推导该层归因的依据)
+    confidence: float = 0.0  # 该条归因置信度 (0.0-1.0)
+    overturn_evidence_level: int = 0  # 需推翻所需证据级别 (1-3; 0=按 layer 默认)
+    is_primary: bool = False  # 是否主因
+    evidence_note: str = ""  # 推翻该归因所需证据的说明
+
+    def effective_overturn_level(self) -> int:
+        """实际推翻所需证据级别: 显式指定优先, 否则取 layer 默认。"""
+        if self.overturn_evidence_level >= 1:
+            return self.overturn_evidence_level
+        return self.layer.overturn_evidence_level
+
+
 @dataclass
 class AttributionResult:
     """完整的个股涨跌归因分析结果。
@@ -103,6 +185,11 @@ class AttributionResult:
     noise_factors: list[str] = field(default_factory=list)  # 噪音
     causality_chain: str = ""  # 因果链推导过程
     confidence: float = 0.0  # 整体置信度
+
+    # ── Phase 3 扩展: 三层归因分层 (执行/配置/逻辑) 🆕 ──
+    # 每个主要驱动因素归入 执行层/配置层/投资逻辑层 之一。
+    # 默认空列表, 向后兼容; 由 attribution.layerize_drivers() 填充。
+    layer_attributions: list[LayerAttribution] = field(default_factory=list)
 
     # ── 元数据 ──
     created_at: datetime = field(default_factory=datetime.now)

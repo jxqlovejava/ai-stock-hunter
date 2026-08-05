@@ -13,9 +13,36 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.learner.feedback import MistakeType, mistake_type_from_text
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REVIEW_DIR = Path.home() / ".ai-stock-hunter" / "reviews"
+
+
+def mistake_type_from_deviation(reason: str) -> MistakeType:
+    """把 deviation_reason 自由文本映射到结构化 MistakeType。
+
+    Args:
+        reason: 偏差原因自由文本
+
+    Returns:
+        匹配的 MistakeType；无匹配返回 NONE。
+    """
+    return mistake_type_from_text(reason)
+
+
+def mistake_type_from_review(review: TradeReview) -> MistakeType:
+    """从 TradeReview 计算其结构化错误分类。
+
+    优先使用已标注的 review.mistake_type；为空时由 deviation_reason 推断。
+    """
+    if review.mistake_type:
+        try:
+            return MistakeType(review.mistake_type)
+        except ValueError:
+            pass
+    return mistake_type_from_deviation(review.deviation_reason)
 
 
 @dataclass
@@ -43,6 +70,8 @@ class TradeReview:
     expected_return_pct: Optional[float] = None  # what we expected
     deviation_reason: str = ""  # why actual ≠ expected
     was_exit_forced: bool = False  # hit stop-loss or time stop
+    # P2-1: 结构化错误分类（由 deviation_reason 映射，保留旧字段）
+    mistake_type: str = ""  # MistakeType.value, "" = 未分类
 
     # Improvement
     lessons: str = ""
@@ -70,6 +99,8 @@ class ReviewStats:
 
     # Error categories
     error_categories: dict[str, int] = field(default_factory=dict)  # reason → count
+    # P2-1: 结构化错误分类 (MistakeType.value → count)
+    mistake_categories: dict[str, int] = field(default_factory=dict)
     doctrine_violations: dict[str, int] = field(default_factory=dict)  # rule → count
 
     # Top lessons
@@ -153,6 +184,9 @@ class TradeReviewer:
         for r in reviews:
             reason = r.deviation_reason or "unspecified"
             stats.error_categories[reason] = stats.error_categories.get(reason, 0) + 1
+            # P2-1: 结构化错误分类
+            mt = mistake_type_from_review(r)
+            stats.mistake_categories[mt.value] = stats.mistake_categories.get(mt.value, 0) + 1
             for rule in r.doctrine_rules_applied:
                 stats.doctrine_violations[rule] = stats.doctrine_violations.get(rule, 0) + 1
 
@@ -275,6 +309,7 @@ class TradeReviewer:
             "expected_return_pct": r.expected_return_pct,
             "deviation_reason": r.deviation_reason,
             "was_exit_forced": r.was_exit_forced,
+            "mistake_type": r.mistake_type,
             "lessons": r.lessons,
             "suggested_param_changes": r.suggested_param_changes,
             "severity": r.severity,
@@ -300,6 +335,7 @@ class TradeReviewer:
             expected_return_pct=data.get("expected_return_pct"),
             deviation_reason=data.get("deviation_reason", ""),
             was_exit_forced=data.get("was_exit_forced", False),
+            mistake_type=data.get("mistake_type", ""),
             lessons=data.get("lessons", ""),
             suggested_param_changes=data.get("suggested_param_changes", []),
             severity=data.get("severity", "info"),

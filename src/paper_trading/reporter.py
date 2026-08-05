@@ -98,8 +98,15 @@ class ReportGenerator:
         week_start: str,
         week_end: str,
         notes: str = "",
+        feedback_collector=None,
+        decision_journal=None,
     ) -> str:
-        """生成周度复盘报告。"""
+        """生成周度复盘报告（打通"交易→反馈→复盘"数据流）。
+
+        Args:
+            feedback_collector: FeedbackCollector（读取反馈/教训，默认 data/feedback.json）
+            decision_journal: DecisionJournal（把周期内平仓决策写入决策日志）
+        """
         lines = [
             f"# 📊 模拟交易周度复盘",
             f"**周期**: {week_start} ~ {week_end}",
@@ -121,6 +128,12 @@ class ReportGenerator:
 
         # 策略偏差
         lines.extend(self._strategy_deviation(week_trades))
+
+        # 反馈与教训 (FeedbackCollector)
+        lines.extend(self._feedback_lessons_section(feedback_collector))
+
+        # 决策日志 (DecisionJournal)
+        self._log_decisions_to_journal(week_trades, decision_journal)
 
         # 下周关注
         lines.append("")
@@ -153,8 +166,10 @@ class ReportGenerator:
         month_key: str,
         benchmark_return: float = 0.0,
         notes: str = "",
+        feedback_collector=None,
+        decision_journal=None,
     ) -> str:
-        """生成月度复盘报告。"""
+        """生成月度复盘报告（打通"交易→反馈→复盘"数据流）。"""
         lines = [
             f"# 📈 模拟交易月度复盘",
             f"**月份**: {month_key}",
@@ -183,6 +198,12 @@ class ReportGenerator:
         # 策略迭代建议
         lines.extend(self._iteration_suggestions(month_trades))
 
+        # 反馈与教训 (FeedbackCollector)
+        lines.extend(self._feedback_lessons_section(feedback_collector))
+
+        # 决策日志 (DecisionJournal)
+        self._log_decisions_to_journal(month_trades, decision_journal)
+
         if notes:
             lines.append("")
             lines.append("## 📝 复盘笔记")
@@ -193,6 +214,76 @@ class ReportGenerator:
         filepath = self._monthly / f"month_{month_key}.md"
         filepath.write_text(content, encoding="utf-8")
         logger.info("月度复盘已保存: %s", filepath)
+        return str(filepath)
+
+    # ------------------------------------------------------------------
+    # 事件驱动即时复盘 (P2-3)
+    # ------------------------------------------------------------------
+
+    def generate_event_review(
+        self,
+        state: PortfolioState,
+        trades: list[PaperTrade],
+        reasons: list[str],
+        notes: str = "",
+        feedback_collector=None,
+        decision_journal=None,
+    ) -> str:
+        """生成事件驱动即时复盘报告。
+
+        触发条件: 平仓 / 连续止损 / 回撤超标（由引擎判定）。
+
+        Returns:
+            报告文件路径
+        """
+        lines = [
+            f"# ⚡ 模拟交易事件复盘",
+            f"**触发原因**: {'；'.join(reasons) if reasons else '手动触发'}",
+            f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+        ]
+
+        # 账户快照
+        lines.append("## 💰 账户快照")
+        lines.append("| 指标 | 数值 |")
+        lines.append("|------|------|")
+        lines.append(f"| 当前权益 | ¥{state.total_equity:,.2f} |")
+        lines.append(f"| 累计收益率 | {state.total_return_pct:+.2%} |")
+        lines.append(f"| 当前回撤 | {state.drawdown_pct:.2%} |")
+        lines.append(f"| 累计交易 | {state.total_trades} 笔 (胜率 {state.win_rate:.1%}) |")
+        lines.append("")
+
+        # 触发事件涉及的交易
+        lines.extend(self._trades_section(trades, "触发交易明细"))
+
+        # 最佳/最差交易
+        lines.extend(self._best_worst_trades(trades))
+
+        # 反馈与教训
+        lines.extend(self._feedback_lessons_section(feedback_collector))
+
+        # 决策日志
+        self._log_decisions_to_journal(trades, decision_journal)
+
+        # 记录亏损平仓反馈（含错误类型 + 具体教训）
+        self._record_loss_feedback(trades, feedback_collector)
+
+        # 复盘检查清单
+        lines.extend(self._strategy_deviation(trades))
+
+        if notes:
+            lines.append("")
+            lines.append("## 📝 复盘笔记")
+            lines.append(notes)
+
+        lines.extend(self._footer())
+        content = "\n".join(lines)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        event_dir = self._base / "event_reviews"
+        event_dir.mkdir(parents=True, exist_ok=True)
+        filepath = event_dir / f"event_{ts}.md"
+        filepath.write_text(content, encoding="utf-8")
+        logger.info("事件复盘已保存: %s", filepath)
         return str(filepath)
 
     # ------------------------------------------------------------------
@@ -402,6 +493,121 @@ class ReportGenerator:
             "- [ ] 止损执行是否及时？",
             "",
         ]
+
+    # ------------------------------------------------------------------
+    # P2-2: 反馈 / 决策日志 数据流打通
+    # ------------------------------------------------------------------
+
+    def _feedback_lessons_section(self, feedback_collector=None) -> list[str]:
+        """从 FeedbackCollector 汇总反馈与教训（打通"交易→反馈→复盘"）。"""
+        lines = ["## 📥 用户反馈与教训"]
+        if feedback_collector is None:
+            try:
+                from src.learner.feedback import FeedbackCollector
+                feedback_collector = FeedbackCollector(db_path="data/feedback.json")
+            except Exception:
+                lines.append("⚠️ 反馈库不可用。")
+                lines.append("")
+                return lines
+        try:
+            summary = feedback_collector.summary()
+        except Exception as e:
+            logger.warning("读取反馈失败: %s", e)
+            lines.append("⚠️ 反馈库读取失败。")
+            lines.append("")
+            return lines
+        if summary.total == 0:
+            lines.append("暂无反馈记录。用 'python -m src feedback add' 录入。")
+            lines.append("")
+            return lines
+        lines.append("| 指标 | 数值 |")
+        lines.append("|------|------|")
+        lines.append(f"| 反馈总数 | {summary.total} |")
+        lines.append(f"| 赞同/反对 | {summary.agree_count} / {summary.disagree_count} |")
+        lines.append(f"| 一致率 | {summary.agreement_rate:.1%} |")
+        if summary.mistake_types:
+            lines.append("")
+            lines.append("### 常见错误类型")
+            for mt, cnt in sorted(summary.mistake_types.items(), key=lambda x: -x[1])[:5]:
+                lines.append(f"- {mt}: {cnt} 次")
+        if summary.lessons:
+            lines.append("")
+            lines.append("### 近期教训")
+            for lesson in summary.lessons[-5:]:
+                lines.append(f"- {lesson}")
+        lines.append("")
+        return lines
+
+    def _log_decisions_to_journal(self, trades, decision_journal=None) -> int:
+        """把周期内平仓决策写入 DecisionJournal。返回写入条数。"""
+        if decision_journal is None:
+            try:
+                from src.learner import DecisionJournal
+                decision_journal = DecisionJournal(db_path="data/journal.db")
+            except Exception:
+                return 0
+        count = 0
+        for t in trades:
+            if t.action != "sell" or t.pnl_pct == 0:
+                continue
+            try:
+                decision_journal.log(
+                    symbol=t.symbol,
+                    system_action="SELL",
+                    user_action="SELL",
+                    user_reason=t.reason,
+                    total_return_pct=t.pnl_pct * 100,
+                )
+                count += 1
+            except Exception as e:
+                logger.warning("写入决策日志失败 %s: %s", t.symbol, e)
+        if count:
+            logger.info("周期复盘写入决策日志 %d 条", count)
+        return count
+
+    def _record_loss_feedback(self, trades, feedback_collector=None) -> int:
+        """把亏损平仓写入 FeedbackCollector（错误类型 + 具体教训）。
+
+        教训由真实交易数据生成，自动通过 validate_lesson_specificity（禁止空话）。
+        """
+        if feedback_collector is None:
+            return 0
+        from src.learner.feedback import (
+            MistakeType,
+            mistake_type_from_text,
+            validate_lesson_specificity,
+        )
+        count = 0
+        for t in trades:
+            if t.action != "sell" or t.pnl_pct >= 0:
+                continue
+            lesson = self._build_loss_lesson(t)
+            ok, _msg = validate_lesson_specificity(lesson)
+            if not ok:
+                logger.info("跳过空话教训: %s", lesson)
+                continue
+            try:
+                feedback_collector.record_trade_result(
+                    symbol=t.symbol,
+                    direction="SELL",
+                    result="loss",
+                    mistake_type=mistake_type_from_text(t.reason or ""),
+                    lesson=lesson,
+                    actual_return=t.pnl_pct,
+                )
+                count += 1
+            except Exception as e:
+                logger.warning("写入亏损反馈失败 %s: %s", t.symbol, e)
+        return count
+
+    def _build_loss_lesson(self, t: PaperTrade) -> str:
+        """基于交易数据生成具体教训（含标的/盈亏/原因，非空话）。"""
+        reason = (t.reason or "").strip()
+        parts = [f"{t.symbol} {t.name} 亏损 {t.pnl_pct:.1%}"]
+        if reason:
+            parts.append(f"卖出原因: {reason}")
+        parts.append("改进: 复盘入场逻辑与止损执行是否符合既定计划")
+        return "；".join(parts)
 
     def _monthly_overview(
         self, state: PortfolioState, trades: list[PaperTrade],

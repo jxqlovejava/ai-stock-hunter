@@ -43,8 +43,8 @@ class RiskConfig:
     """单笔交易最大亏损比例。"""
 
     # -- 黑天鹅阈值 --
-    black_swan_threshold_pct: float = 0.05
-    """市场单日跌幅超过此值 → 黑天鹅熔断。"""
+    black_swan_threshold_pct: float = 0.06
+    """市场单日跌幅超过此值 → 黑天鹅熔断 (P0-3: 5%→6%)。"""
 
     # -- 新策略隔离 --
     quarantine_days: int = 90
@@ -145,7 +145,7 @@ class RiskConfig:
                 max_drawdown_pct=0.10,
                 max_sector_pct=0.25,
                 single_stop_loss_pct=0.015,
-                black_swan_threshold_pct=0.03,
+                black_swan_threshold_pct=0.04,
                 quarantine_days=120,
                 quarantine_position_pct=0.005,
                 max_gross_exposure_pct=0.8,
@@ -160,7 +160,7 @@ class RiskConfig:
                 max_drawdown_pct=0.15,
                 max_sector_pct=0.40,
                 single_stop_loss_pct=0.02,
-                black_swan_threshold_pct=0.05,
+                black_swan_threshold_pct=0.06,
                 quarantine_days=90,
                 quarantine_position_pct=0.01,
                 max_gross_exposure_pct=1.0,
@@ -175,7 +175,7 @@ class RiskConfig:
                 max_drawdown_pct=0.25,
                 max_sector_pct=0.50,
                 single_stop_loss_pct=0.03,
-                black_swan_threshold_pct=0.07,
+                black_swan_threshold_pct=0.08,
                 quarantine_days=30,
                 quarantine_position_pct=0.02,
                 max_gross_exposure_pct=1.5,

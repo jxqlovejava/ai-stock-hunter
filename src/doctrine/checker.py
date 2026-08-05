@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """军规核查引擎。
 
-在准入检查之前运行，逐条审查 30 条军规，输出:
+在准入检查之前运行，逐条审查 45 条军规，输出:
   - blocked: 被 block 级军规拦截，不允许继续分析
   - warnings: warn 级军规触发，标注风险
   - infos: info 级军规触发，仅记录
+
+判定原则:
+  - 有明确数据依据的规则读取 ctx 字段做判定
+  - 无数据 / 字段缺失时一律不触发（防御性，避免误报）
+  - 纯信息/提示类规则在代码注释中标注说明，通常仅当 ctx 显式置位才触发
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ class DoctrineResult:
 
 
 class DoctrineChecker:
-    """30 条军规核查器。
+    """45 条军规核查器。
 
     用法:
         checker = DoctrineChecker()
@@ -146,9 +151,16 @@ class DoctrineChecker:
         if rule.id == "r015":
             return ctx.get("is_earnings_window", False)
 
-        # 连续止损检查
+        # 连续止损检查 (r017): 连续 ≥3 次止损后强制休整 ≥3 个交易日
+        # 读取 ctx.consecutive_stops（由 risk 模块注入）；缺键/None/非数字 → 无数据不触发
         if rule.id == "r017":
-            return ctx.get("consecutive_stops", 0) >= 3
+            stops = ctx.get("consecutive_stops")
+            if stops is None:
+                return False
+            try:
+                return int(stops) >= 3
+            except (TypeError, ValueError):
+                return False
 
         # 大盘暴跌检查
         if rule.id == "r018":
@@ -226,6 +238,286 @@ class DoctrineChecker:
             if ctx.get("chanlun_bihuang_down"):
                 return False
             return True
+
+        # ── P0-4 补全：仓位与资金管理 ──
+        # r001 单票仓位上限: 单票仓位 > max_single_pct（默认 20）→ BLOCK
+        if rule.id == "r001":
+            pct = ctx.get("single_stock_pct")
+            if pct is None:
+                return False
+            cap = ctx.get("max_single_pct", 20.0)
+            try:
+                return float(pct) > float(cap)
+            except (TypeError, ValueError):
+                return False
+
+        # r002 总仓位上限: 股票头寸 > max_total_exposure（默认 80）→ BLOCK
+        if rule.id == "r002":
+            pct = ctx.get("total_stock_pct")
+            if pct is None:
+                return False
+            cap = ctx.get("max_total_exposure", 80.0)
+            try:
+                return float(pct) > float(cap)
+            except (TypeError, ValueError):
+                return False
+
+        # r003 行业集中度: 单行业仓位 > max_sector_pct（默认 40）→ BLOCK
+        if rule.id == "r003":
+            pct = ctx.get("sector_stock_pct")
+            if pct is None:
+                return False
+            cap = ctx.get("max_sector_pct", 40.0)
+            try:
+                return float(pct) > float(cap)
+            except (TypeError, ValueError):
+                return False
+
+        # r004 创业板/科创板折扣: 双创标的仓位需 ×0.8 → WARN
+        if rule.id == "r004":
+            return bool(ctx.get("is_chinext") or ctx.get("is_star_market"))
+
+        # r005 永不满仓: 保留现金 ≥10%（现金比例 < 10 即触发）→ WARN
+        if rule.id == "r005":
+            cash = ctx.get("cash_pct")
+            if cash is None:
+                return False
+            try:
+                return float(cash) < 10.0
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-4 补全：选股与估值纪律 ──
+        # r007 次新股冷静期: 上市 < 60 交易日 → WARN
+        if rule.id == "r007":
+            days = ctx.get("listing_days")
+            if days is None:
+                return False
+            try:
+                return float(days) < 60.0
+            except (TypeError, ValueError):
+                return False
+
+        # r008 不懂不投: 超出能力圈 → WARN
+        if rule.id == "r008":
+            return bool(ctx.get("out_of_circle_of_competence"))
+
+        # r009 PE 极端值: PE 为负 或 > 行业均值 3 倍 → WARN
+        if rule.id == "r009":
+            pe = ctx.get("pe_ratio")
+            if pe is None:
+                return False
+            try:
+                pe = float(pe)
+            except (TypeError, ValueError):
+                return False
+            if pe < 0:
+                return True
+            ind_mean = ctx.get("industry_pe_mean")
+            if ind_mean is not None:
+                try:
+                    return pe > float(ind_mean) * 3.0
+                except (TypeError, ValueError):
+                    return False
+            return False
+
+        # r010 商誉雷: 商誉/净资产 > 30% → WARN
+        if rule.id == "r010":
+            ratio = ctx.get("goodwill_ratio")
+            if ratio is None:
+                return False
+            try:
+                return float(ratio) > 0.30
+            except (TypeError, ValueError):
+                return False
+
+        # r011 股权质押: 大股东质押 > 50% → WARN
+        if rule.id == "r011":
+            ratio = ctx.get("pledge_ratio")
+            if ratio is None:
+                return False
+            try:
+                return float(ratio) > 0.50
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-4 补全：买卖纪律 ──
+        # r016 分批建仓: 新建仓分 < 2 批 → WARN
+        if rule.id == "r016":
+            batches = ctx.get("entry_batch_count")
+            if batches is None:
+                return False
+            try:
+                return int(batches) < 2
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-4 补全：情绪纪律 ──
+        # r020 空仓视角检验: 空仓会在现价买入吗？(外部显式置位才触发)
+        if rule.id == "r020":
+            return bool(ctx.get("empty_position_test_fail"))
+
+        # r021 拒绝爱上持仓: 连续 3 次拒绝卖出建议 → WARN
+        if rule.id == "r021":
+            cnt = ctx.get("refused_sell_count")
+            if cnt is None:
+                return False
+            try:
+                return int(cnt) >= 3
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-4 补全：信息纪律 ──
+        # r022 信源交叉验证: 关键决策数据 < 2 个 T1+ 来源 → BLOCK
+        if rule.id == "r022":
+            src = ctx.get("source_tier1_count")
+            if src is None:
+                return False
+            try:
+                return int(src) < 2
+            except (TypeError, ValueError):
+                return False
+
+        # r023 机构研报≠事实: 机构目标价仅作参考 (外部显式置位才触发)
+        if rule.id == "r023":
+            return bool(ctx.get("analyst_only_target"))
+
+        # ── P0-4 补全：风控与止盈止损 ──
+        # r027 流动性熔断: 持仓市值 > 日均成交额 5% → 禁止加仓 → WARN
+        if rule.id == "r027":
+            mv = ctx.get("position_market_value")
+            turnover = ctx.get("daily_turnover")
+            if mv is None or turnover is None:
+                return False
+            try:
+                mv = float(mv)
+                turnover = float(turnover)
+            except (TypeError, ValueError):
+                return False
+            if turnover <= 0:
+                return False
+            return mv > turnover * 0.05
+
+        # r028 移动止盈: 浮盈 > 30% → 启动 ATR 移动止盈 → WARN
+        if rule.id == "r028":
+            profit = ctx.get("unrealized_profit_pct")
+            if profit is None:
+                return False
+            try:
+                return float(profit) > 30.0
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-4 补全：复盘与进化（信息/提示类，需外部置位）──
+        # r029 决策书面记录: 每次交易留书面记录 (外部置位 trade_journal_missing)
+        if rule.id == "r029":
+            return bool(ctx.get("trade_journal_missing"))
+
+        # r030 错题本更新: 止损/亏损交易 72h 内写教训 (外部置位 lesson_not_logged)
+        if rule.id == "r030":
+            return bool(ctx.get("lesson_not_logged"))
+
+        # ── P0-4 补全：反操纵军规 (原 R032-R034，重编号 r039-r041) ──
+        # r039 筹码集中度: 前十大流通股东 >60% 或 股东户数连续降 >15% → WARN
+        if rule.id == "r039":
+            top10 = ctx.get("top10_holding_pct")
+            if top10 is not None:
+                try:
+                    if float(top10) > 60.0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+            decline = ctx.get("holder_decline_pct")
+            if decline is not None:
+                try:
+                    return float(decline) > 15.0
+                except (TypeError, ValueError):
+                    return False
+            return False
+
+        # r040 操纵历史: 12 个月内 ≥3 次操纵嫌疑 → WARN
+        if rule.id == "r040":
+            cnt = ctx.get("manipulation_history_count")
+            if cnt is None:
+                return False
+            try:
+                return int(cnt) >= 3
+            except (TypeError, ValueError):
+                return False
+
+        # r041 资金背离: 主力连续 5 日流出但价格不跌/涨 → WARN
+        if rule.id == "r041":
+            outflow = ctx.get("main_capital_outflow_days")
+            if outflow is None:
+                return False
+            try:
+                outflow = int(outflow)
+            except (TypeError, ValueError):
+                return False
+            if outflow < 5:
+                return False
+            chg = ctx.get("price_change_pct")
+            if chg is None:
+                return False
+            try:
+                return float(chg) >= 0.0
+            except (TypeError, ValueError):
+                return False
+
+        # ── P0-2 新增军规 ──
+        # r042 亏损后禁止报复性加仓: 单笔止损后当日禁止追加仓位/摊平 → BLOCK
+        # ctx 字段: recent_stops (当日已止损记录) + intended_action / averaging_down
+        if rule.id == "r042":
+            recent_stops = ctx.get("recent_stops")
+            stop_today = ctx.get("stop_occurred_today", False)
+            if recent_stops is None and stop_today is False:
+                return False  # 无止损数据 → 不触发
+            # 归一化 recent_stops: 可接受 list / int 计数
+            if isinstance(recent_stops, (list, tuple)):
+                stop_today = stop_today or len(recent_stops) > 0
+            elif isinstance(recent_stops, (int, float)):
+                stop_today = stop_today or int(recent_stops) > 0
+            elif isinstance(recent_stops, dict):
+                stop_today = stop_today or bool(recent_stops.get("count", 0))
+            if not stop_today:
+                return False
+            # 当日存在加仓/摊平意图才触发（防御：意图未知不误报）
+            intended = str(ctx.get("intended_action", "") or "").upper()
+            sig = str(ctx.get("signal_action", "") or "").upper()
+            avg_down = ctx.get("averaging_down", False)
+            if avg_down:
+                return True
+            return intended in ("ADD", "OPEN", "BUY", "INCREASE", "加仓", "补仓") or \
+                sig in ("ADD", "OPEN", "BUY")
+
+        # r043 信息面冲突即禁止开仓: 技术买/加 与 基本面/政策/新闻负面冲突 → BLOCK
+        # ctx 字段: signal_action / technical_direction 为买; fundamental_direction /
+        #   news_polarity / news_sentiment / policy_direction 为负面; 或显式 info_conflict
+        # 注意: 不使用 fundamental_improving（orchestrator 默认注入 False，会误报）。
+        if rule.id == "r043":
+            sig = str(ctx.get("signal_action", "") or "").upper()
+            if not sig:
+                sig = str(ctx.get("technical_direction", "") or "").upper()
+            buy_sig = sig in ("BUY", "ADD", "OPEN", "INCREASE", "LONG", "看多", "买入", "加仓")
+            if not buy_sig:
+                return False  # 无买入信号 → 不触发
+            if ctx.get("info_conflict", False):
+                return True
+            # 信息面负面方向（任一命中即冲突）
+            fund_dir = str(ctx.get("fundamental_direction", "") or "").upper()
+            if fund_dir in ("NEGATIVE", "BEARISH", "DOWN", "WEAK", "利空", "看空"):
+                return True
+            pol_dir = str(ctx.get("policy_direction", "") or "").upper()
+            if pol_dir in ("NEGATIVE", "RESTRICTIVE", "TIGHTEN", "利空", "收紧"):
+                return True
+            news = ctx.get("news_polarity")
+            if news is None:
+                news = ctx.get("news_sentiment")
+            if isinstance(news, (int, float)):
+                return news < 0
+            if isinstance(news, str):
+                return news.upper() in ("NEGATIVE", "BEARISH", "DOWN", "利空", "看空")
+            return False
 
         # 默认不触发
         return False

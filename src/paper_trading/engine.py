@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -72,10 +73,16 @@ class PaperTradingEngine:
     # 每日最大分析候选数
     MAX_CANDIDATES_PER_DAY = 5
 
+    # P2-3: 事件驱动复盘触发阈值
+    EVENT_REVIEW_MIN_LOSSES = 3        # 连续亏损 ≥ N 笔触发即时复盘
+    EVENT_REVIEW_DRAWDOWN = 0.08       # 回撤 ≥ 8% 触发即时复盘
+
     def __init__(
         self,
         capital: float = 200_000.0,
         data_dir: Path | None = None,
+        feedback_path: str | None = None,
+        journal_path: str | None = None,
     ):
         self._capital = capital
         self._data_dir = Path(data_dir) if data_dir else Path("data/paper_trading")
@@ -99,6 +106,12 @@ class PaperTradingEngine:
         self._order_factory: Optional[OrderFactory] = None
         self._config: Optional[PaperTradingConfig] = None
         self._state: Optional[PortfolioState] = None
+
+        # P2-2: 反馈闭环路径（可注入以便测试隔离）
+        self._feedback_path = feedback_path
+        self._journal_path = journal_path
+        self._feedback_collector: Optional[object] = None
+        self._decision_journal: Optional[object] = None
 
         # 当日去重
         self._today_orders: set[str] = set()
@@ -135,6 +148,27 @@ class PaperTradingEngine:
         if self._state is None:
             self._state = self._state_mgr.load_or_initialize(capital=self._capital)
         return self._state
+
+    @property
+    def feedback_collector(self):
+        """反馈收集器（默认 data/feedback.json，可经 $BAIZE_FEEDBACK_PATH 覆盖）。"""
+        if self._feedback_collector is None:
+            from src.learner.feedback import FeedbackCollector
+            path = self._feedback_path or os.environ.get(
+                "BAIZE_FEEDBACK_PATH", "data/feedback.json"
+            )
+            self._feedback_collector = FeedbackCollector(db_path=path)
+        return self._feedback_collector
+
+    @property
+    def decision_journal(self):
+        """决策日志（默认 data/journal.db）。"""
+        if self._decision_journal is None:
+            from src.learner import DecisionJournal
+            self._decision_journal = DecisionJournal(
+                db_path=self._journal_path or "data/journal.db"
+            )
+        return self._decision_journal
 
     # ------------------------------------------------------------------
     # 主循环
@@ -206,8 +240,8 @@ class PaperTradingEngine:
             # 7. 更新 HWM
             state = state.observe_equity()
 
-            # 8. 检查周/月复盘触发
-            self._maybe_trigger_review(state)
+            # 8. 检查周/月复盘触发 + 事件驱动复盘（平仓/连亏/回撤超标）
+            self._maybe_trigger_review(state, result.trades)
 
             # 9. 生成日度报告
             if not dry_run:
@@ -753,8 +787,8 @@ class PaperTradingEngine:
     # 周/月复盘触发
     # ------------------------------------------------------------------
 
-    def _maybe_trigger_review(self, state: PortfolioState) -> None:
-        """检查是否需要触发周度/月度复盘。"""
+    def _maybe_trigger_review(self, state: PortfolioState, executed_trades: list | None = None) -> None:
+        """检查是否需要触发周度/月度复盘 + 事件驱动即时复盘。"""
         today = date.today()
 
         # 周五触发周度复盘
@@ -766,8 +800,75 @@ class PaperTradingEngine:
         if tomorrow.day == 1:  # 今天是月末
             self._trigger_monthly_review(state)
 
+        # P2-3: 事件驱动（平仓 / 连续止损 / 回撤超标）
+        self._maybe_trigger_event_review(state, executed_trades)
+
+    def _maybe_trigger_event_review(
+        self,
+        state: PortfolioState,
+        executed_trades: list | None = None,
+    ) -> None:
+        """事件驱动即时复盘：平仓 / 连续止损 / 回撤超标任一满足即触发。
+
+        Args:
+            state: 当前组合状态
+            executed_trades: 当日已执行的交易（用于平仓事件检测）
+        """
+        reasons: list[str] = []
+
+        # 1. 平仓事件
+        sells = [t for t in (executed_trades or []) if t.action == "sell"]
+        if sells:
+            loss_count = sum(1 for t in sells if t.pnl_pct < 0)
+            reasons.append(f"今日平仓 {len(sells)} 笔 (亏损 {loss_count} 笔)")
+
+        # 2. 连续止损
+        consec = self._count_consecutive_losses()
+        if consec >= self.EVENT_REVIEW_MIN_LOSSES:
+            reasons.append(f"连续 {consec} 笔亏损，触发止损复盘")
+
+        # 3. 回撤超标
+        if state.drawdown_pct >= self.EVENT_REVIEW_DRAWDOWN:
+            reasons.append(f"回撤 {state.drawdown_pct:.1%} 超过 {self.EVENT_REVIEW_DRAWDOWN:.0%} 阈值")
+
+        if reasons:
+            self._trigger_event_review(state, reasons, executed_trades or [])
+
+    def _count_consecutive_losses(self, limit: int = 30) -> int:
+        """统计最近连续亏损卖出的笔数（从最新一笔向前数）。"""
+        trades = self._state_mgr.load_trades(limit=limit)
+        count = 0
+        for t in reversed(trades):
+            if t.action != "sell":
+                continue
+            if t.pnl_pct < 0:
+                count += 1
+            else:
+                break
+        return count
+
+    def _trigger_event_review(
+        self,
+        state: PortfolioState,
+        reasons: list[str],
+        trades: list,
+    ) -> str:
+        """生成事件驱动即时复盘报告 + 写反馈/决策日志。"""
+        report_path = self._reporter.generate_event_review(
+            state,
+            trades,
+            reasons,
+            feedback_collector=self.feedback_collector,
+            decision_journal=self.decision_journal,
+        )
+        logger.info(
+            "⚡ 事件驱动复盘已生成: %s (%s)",
+            report_path, "; ".join(reasons),
+        )
+        return report_path
+
     def _trigger_weekly_review(self, state: PortfolioState) -> None:
-        """生成周度复盘报告。"""
+        """生成周度复盘报告（打通反馈与决策日志）。"""
         from .scheduler import trading_days_this_week, prev_trading_day
 
         week_days = trading_days_this_week()
@@ -782,11 +883,15 @@ class PaperTradingEngine:
             logger.info("本周无交易，跳过周度复盘")
             return
 
-        self._reporter.generate_weekly(state, week_trades, week_start, week_end)
+        self._reporter.generate_weekly(
+            state, week_trades, week_start, week_end,
+            feedback_collector=self.feedback_collector,
+            decision_journal=self.decision_journal,
+        )
         logger.info("📊 周度复盘已生成: %s ~ %s", week_start, week_end)
 
     def _trigger_monthly_review(self, state: PortfolioState) -> None:
-        """生成月度复盘报告。"""
+        """生成月度复盘报告（打通反馈与决策日志）。"""
         from .scheduler import trading_days_this_month
 
         month_days = trading_days_this_month()
@@ -801,6 +906,8 @@ class PaperTradingEngine:
         self._reporter.generate_monthly(
             state, month_trades, month_key,
             benchmark_return=0.0,  # 后续可从 DataAggregator 获取沪深300实际收益
+            feedback_collector=self.feedback_collector,
+            decision_journal=self.decision_journal,
         )
         logger.info("📈 月度复盘已生成: %s", month_key)
 

@@ -521,6 +521,9 @@ class Orchestrator:
             ctx["max_single_pct"] = investor.position_limits.max_single_pct
             ctx["portfolio_drawdown_pct"] = investor.position_limits.portfolio_drawdown_pct
 
+        # P0-3: 注入连亏计数供 r017 连续止损军规读取（来自 RiskState 状态机）
+        self._inject_risk_state_ctx(ctx)
+
         # 注入 r014/r014b 军规检查所需上下文
         close_series = quote_dict.get("close_series", [])
         rise_5day = 0.0
@@ -839,6 +842,32 @@ class Orchestrator:
                         ],
                         "signals": tx_result.active_signals,
                     }
+
+                    # ---- 领先信号窗口（[SPECULATION]，弱信号，doc 04 可信度 0.3）----
+                    # 上游现货/海外龙头异动 → 未来 N 日窗口 A 股对标，仅作弱参考，
+                    # 不作为强信号（可信度 0.3 理念借鉴）
+                    try:
+                        from src.data.us_sector_transmission import (
+                            to_leading_signals, lead_signal_weak_adjust,
+                        )
+                        _lead = to_leading_signals(tx_result, horizon_days=45)
+                        _lead_adj = lead_signal_weak_adjust(_lead, sector_candidates)
+                    except Exception:
+                        _lead, _lead_adj = [], 0.0
+                    enriched_macro["us_sector_transmission"]["lead_signals"] = [
+                        {
+                            "sector": s.sector,
+                            "direction": s.direction,
+                            "strength": s.strength,
+                            "window_start_days": s.window_start_days,
+                            "window_end_days": s.window_end_days,
+                            "us_label": s.us_label,
+                            "reason": s.reason,
+                            "speculation": s.speculation,
+                        }
+                        for s in _lead
+                    ]
+                    enriched_macro["us_sector_transmission"]["lead_signal_adjust"] = _lead_adj
 
                     sector_label = ",".join(sector_candidates) if sector_candidates else "未知"
                     if macro_adjust != 0:
@@ -3517,6 +3546,17 @@ class Orchestrator:
             "summary": "不可用", "errors": [str(e) if 'e' in dir() else "unknown"],
             "total_items": 0,
         }
+
+    def _inject_risk_state_ctx(self, ctx: dict) -> None:
+        """P0-3: 把连亏计数注入军规上下文（r017 连续止损检查用）。
+
+        数据源: RiskControlEngine 状态机中的连亏计数；无数据时为 0。
+        军规侧已对缺失做 None/0 防御，此处始终写入整型。
+        """
+        try:
+            ctx["consecutive_stops"] = self.risk_ctrl.state.consecutive_stops
+        except Exception:
+            ctx["consecutive_stops"] = 0
 
     def _inject_bottom_structure_ctx(
         self,

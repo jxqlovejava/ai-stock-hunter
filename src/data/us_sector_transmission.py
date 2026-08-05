@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -53,11 +54,31 @@ SECTOR_MAP: list[dict] = [
         "us_key": "MU", "us_label": "美光科技",
         "sectors": ["存储", "芯片"],
         "coefficient": 0.45, "threshold": 3.0, "weight": 0.8,
+        # 领先/滞后窗口（可选）: 存储周期"上游现货异动 → 海外龙头 → A股对标"约 2-4 周
+        # 理念借鉴投资资讯 doc 04（可信度 0.3），仅作为 [SPECULATION] 弱信号
+        "lead_lag": {
+            "lag_days": [14, 28],
+            "stages": [
+                {"name": "上游现货异动", "lag_days": 4, "signal_strength": 0.9},
+                {"name": "海外龙头", "lag_days": 10, "signal_strength": 0.8},
+                {"name": "A股对标", "lag_days": 6, "signal_strength": 0.9},
+            ],
+            "decay_per_week": 0.30,
+        },
     },
     {
         "us_key": "NVDA", "us_label": "英伟达",
         "sectors": ["AI算力", "光通信"],
         "coefficient": 0.50, "threshold": 2.0, "weight": 1.0,
+        # AI 算力产业链传导更快: 海外龙头 → A股对标 约 1-2 周
+        "lead_lag": {
+            "lag_days": [7, 14],
+            "stages": [
+                {"name": "海外龙头", "lag_days": 5, "signal_strength": 0.85},
+                {"name": "A股对标", "lag_days": 5, "signal_strength": 0.9},
+            ],
+            "decay_per_week": 0.25,
+        },
     },
     {
         "us_key": "AMD", "us_label": "AMD",
@@ -233,6 +254,240 @@ class TransmissionResult:
     data_available: bool = False      # 是否有足够数据支撑修正
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 领先/滞后窗口建模 (P3-2)
+# ═══════════════════════════════════════════════════════════════════
+#
+# 理念来源: 投资资讯精读 doc 04（可信度 0.3，仅借鉴）
+#   - 产业链现货价格异动（华强北 MLCC 囤货）→ 海外龙头（村田）
+#     → A股对标（风华高科）滞后约 2 周
+#   - 中美联动时间差 2-4 周
+#
+# 设计要点:
+#   - 每个 SECTOR_MAP 映射可携带可选 "lead_lag" 配置
+#   - 无配置 → LeadLagWindow(0,0)，行为与现状一致（当日直接传导）
+#   - 分段时滞 stages 描述"上游现货异动 → 海外龙头 → A股对标"的逐级延迟
+#   - to_leading_signals() 把当日触发信号投影成"未来 N 日窗口的领先信号"
+#   - 领先信号一律标注 [SPECULATION]，不作为强信号
+
+
+@dataclass(frozen=True)
+class LeadLagStage:
+    """分段时滞的一环（上游现货异动 → 海外龙头 → A股对标）。"""
+
+    name: str                          # 阶段名，如 "上游现货异动"、"海外龙头"
+    lag_days: int                      # 本阶段名义滞后天数
+    signal_strength: float = 1.0       # 通过该阶段的信号强度 0~1（信息逐级衰减）
+
+
+@dataclass(frozen=True)
+class LeadLagWindow:
+    """领先/滞后窗口。
+
+    lag_min_days == lag_max_days == 0 → 当日直接传导（默认，向后兼容）。
+    """
+
+    lag_min_days: int = 0
+    lag_max_days: int = 0
+    stages: tuple[LeadLagStage, ...] = field(default_factory=tuple)
+    decay_per_week: float = 0.30       # 每滞后一周的强度衰减因子（分母衰减）
+
+    @property
+    def is_same_day(self) -> bool:
+        return self.lag_min_days == 0 and self.lag_max_days == 0
+
+    @property
+    def mid_days(self) -> float:
+        return (self.lag_min_days + self.lag_max_days) / 2.0
+
+    @property
+    def staged_decay(self) -> float:
+        """分段信号强度乘积（无分段时为 1.0）。"""
+        if not self.stages:
+            return 1.0
+        p = 1.0
+        for s in self.stages:
+            p *= max(0.0, min(1.0, s.signal_strength))
+        return p
+
+    def to_dict(self) -> dict:
+        return {
+            "lag_min_days": self.lag_min_days,
+            "lag_max_days": self.lag_max_days,
+            "stages": [
+                {"name": s.name, "lag_days": s.lag_days,
+                 "signal_strength": s.signal_strength}
+                for s in self.stages
+            ],
+            "decay_per_week": self.decay_per_week,
+            "is_same_day": self.is_same_day,
+        }
+
+
+@dataclass(frozen=True)
+class LeadSignal:
+    """把当日传导信号投影到未来 N 日窗口的领先信号。
+
+    speculation 恒为 True —— 领先窗口来自 doc 04（可信度 0.3），
+    只作弱信号参考，不得作为强信号进入交易决策。
+    """
+
+    us_key: str
+    us_label: str
+    sector: str                        # A股受影响板块
+    direction: int                     # +1 利好 / -1 利空
+    strength: float                    # 0~1，含分段衰减 + 周时间衰减
+    window_start_days: int             # 从今日起的窗口起点（天）
+    window_end_days: int               # 从今日起的窗口终点（天）
+    raw_adjust: float                  # 原始修正值
+    reason: str = ""
+    window_start: Optional[date] = None   # 提供 as_of 时填充实际日期
+    window_end: Optional[date] = None
+    source: str = "us_sector_transmission_leadlag"
+    speculation: bool = True
+
+
+def build_lead_lag_window(config: Optional[dict]) -> LeadLagWindow:
+    """从配置构建领先/滞后窗口。
+
+    兼容两种输入格式：
+      1. 原始配置: {"lag_days": [14, 28], "stages": [...], "decay_per_week": 0.3}
+      2. to_dict() 输出: {"lag_min_days": 14, "lag_max_days": 28, ...}
+    无配置 / 空 dict → 当日窗口 (0,0)。
+    """
+    if not config:
+        return LeadLagWindow()
+
+    stages_raw = config.get("stages") or []
+    stages = tuple(
+        LeadLagStage(
+            name=str(s.get("name", "stage")),
+            lag_days=max(0, int(s.get("lag_days", 0))),
+            signal_strength=float(s.get("signal_strength", 1.0)),
+        )
+        for s in stages_raw
+    )
+
+    lag_min: int = 0
+    lag_max: int = 0
+    lag_days = config.get("lag_days")
+    if lag_days is not None and len(lag_days) == 2:
+        lag_min = max(0, int(lag_days[0]))
+        lag_max = max(lag_min, int(lag_days[1]))
+    elif "lag_min_days" in config or "lag_max_days" in config:
+        lag_min = max(0, int(config.get("lag_min_days", 0)))
+        lag_max = max(lag_min, int(config.get("lag_max_days", 0)))
+    elif stages:
+        total = sum(s.lag_days for s in stages)
+        lag_min = max(0, round(total * 0.85))
+        lag_max = max(lag_min, round(total * 1.25))
+
+    return LeadLagWindow(
+        lag_min_days=lag_min,
+        lag_max_days=lag_max,
+        stages=stages,
+        decay_per_week=float(config.get("decay_per_week", 0.30)),
+    )
+
+
+def resolve_lead_lag_window(mapping: dict) -> LeadLagWindow:
+    """从单条 SECTOR_MAP 映射解析窗口（无 lead_lag → 当日窗口）。"""
+    return build_lead_lag_window(mapping.get("lead_lag"))
+
+
+def to_leading_signals(
+    tx_result: TransmissionResult,
+    as_of: Optional[date] = None,
+    horizon_days: int = 60,
+) -> list[LeadSignal]:
+    """把当日传导信号转成"未来 N 日窗口的领先信号"。
+
+    对每条触发的 active_signal：
+      - 解析其 lead_lag_window（无配置 → 当日窗口 0,0）
+      - 生效窗口 = [lag_min, lag_max] 未来天数（截断到 horizon_days）
+      - strength = min(1, |raw_adjust|/10) × 分段衰减 × 周时间衰减
+      - 窗口起点已超出 horizon_days → 跳过
+      - 逐板块产出 LeadSignal
+
+    Returns:
+        领先信号列表（每条 speculation=True）
+    """
+    if tx_result is None:
+        return []
+
+    out: list[LeadSignal] = []
+    for sig in tx_result.active_signals:
+        window = build_lead_lag_window(sig.get("lead_lag_window"))
+        if window.lag_min_days > horizon_days:
+            continue
+        window_end = min(window.lag_max_days, horizon_days)
+        if window_end < window.lag_min_days:
+            continue
+
+        raw = float(sig.get("raw_adjust", 0.0) or 0.0)
+        direction = 1 if raw >= 0 else -1
+        base = min(1.0, abs(raw) / 10.0)
+        staged = window.staged_decay
+        mid_weeks = window.mid_days / 7.0
+        time_decay = 1.0 / (1.0 + window.decay_per_week * mid_weeks)
+        strength = round(max(0.0, min(1.0, base * staged * time_decay)), 4)
+
+        start_date = end_date = None
+        if as_of is not None:
+            start_date = as_of + timedelta(days=window.lag_min_days)
+            end_date = as_of + timedelta(days=window_end)
+
+        us_label = sig.get("us_label", sig.get("us_key", ""))
+        chg = sig.get("change_pct", raw)
+        for sector in sig.get("sectors", []) or []:
+            out.append(LeadSignal(
+                us_key=sig.get("us_key", ""),
+                us_label=us_label,
+                sector=sector,
+                direction=direction,
+                strength=strength,
+                window_start_days=window.lag_min_days,
+                window_end_days=window_end,
+                raw_adjust=raw,
+                reason=(
+                    f"{us_label}{chg:+.1f}% → {sector} 未来"
+                    f"{window.lag_min_days}-{window_end}天窗口（[SPECULATION]）"
+                ),
+                window_start=start_date,
+                window_end=end_date,
+            ))
+    return out
+
+
+def lead_signal_weak_adjust(
+    lead_signals: list[LeadSignal],
+    sector_candidates: list[str],
+    cap: float = 3.0,
+) -> float:
+    """汇总领先信号为弱修正值（[SPECULATION]，doc 04 可信度 0.3）。
+
+    仅对板块匹配的领先信号求和，每条约 direction×strength×2 分，
+    总幅上限 ±cap —— 明显弱于当日直接传导的 macro_adjust。
+
+    Args:
+        lead_signals: to_leading_signals() 的输出
+        sector_candidates: 该股所属板块候选（如 ["存储", "芯片"]）
+        cap: 弱修正幅度上限
+
+    Returns:
+        弱修正值（[-cap, +cap]，可能为 0）
+    """
+    total = 0.0
+    for ls in lead_signals:
+        matched = any(
+            ls.sector in sc or sc in ls.sector
+            for sc in sector_candidates
+        ) if sector_candidates else False
+        if matched:
+            total += ls.direction * ls.strength * 2.0
+    return round(max(-cap, min(cap, total)), 2)
+
+
 class UsSectorTransmissionAdjuster:
     """US 板块→A股板块 传导修正器。
 
@@ -289,6 +544,8 @@ class UsSectorTransmissionAdjuster:
                 "coefficient": coeff,
                 "weight": weight,
                 "raw_adjust": round(adj_val, 2),
+                "sectors": list(mapping["sectors"]),
+                "lead_lag_window": resolve_lead_lag_window(mapping).to_dict(),
             })
 
             for sector in mapping["sectors"]:

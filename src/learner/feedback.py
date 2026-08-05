@@ -35,6 +35,101 @@ class FeedbackType(Enum):
     ANNOTATE = "annotate"
 
 
+class MistakeType(Enum):
+    """结构化错误分类 — 复盘教训去空话的枚举化基础。
+
+    交易后复盘必须落到具体错误类别，禁止用"操作失误/行情不好"空话。
+    """
+    NONE = "none"                          # 无错误 / 未分类
+    CHASED_MOVE = "chased_move"            # 追涨杀跌
+    IGNORED_NEWS_CONFLICT = "ignored_news_conflict"  # 忽视信息冲突
+    STOP_TOO_TIGHT = "stop_too_tight"      # 止损过紧
+    STOP_TOO_WIDE = "stop_too_wide"        # 止损过宽
+    OVERLEVERAGED = "overleveraged"        # 过度杠杆
+    HELD_TOO_LONG = "held_too_long"        # 持仓过久
+
+    @classmethod
+    def _missing_(cls, value):
+        """未知值回退到 NONE，保证旧数据向后兼容。"""
+        return cls.NONE
+
+
+# 自由文本 → MistakeType 的关键词映射（用于 deviation_reason / 卖出原因 分类）
+_MISTAKE_KEYWORDS: dict[MistakeType, tuple[str, ...]] = {
+    MistakeType.CHASED_MOVE: (
+        "追涨", "追高", "打板", "高位买入", "追进去", "追涨杀跌", "chase", "高位接力",
+    ),
+    MistakeType.IGNORED_NEWS_CONFLICT: (
+        "忽视", "忽略", "无视", "利空", "公告", "消息", "逆势", "ignored", "冲突",
+        "利好兑现", "信息不对称",
+    ),
+    MistakeType.STOP_TOO_TIGHT: (
+        "止损过紧", "止损太紧", "被洗", "洗盘", "过早止损", "止损被打", "stop too tight",
+        "震动出局", "止损位太低",
+    ),
+    MistakeType.STOP_TOO_WIDE: (
+        "止损过宽", "止损太宽", "不止损", "扛单", "亏损扩大", "止损太慢", "没有止损",
+        "stop too wide", "止损设置过高", "没及时止损",
+    ),
+    MistakeType.OVERLEVERAGED: (
+        "杠杆", "满仓", "重仓", "融资", "梭哈", "overleveraged", "仓位过重", "加杠杆",
+        "过度仓位", "透支",
+    ),
+    MistakeType.HELD_TOO_LONG: (
+        "持仓过久", "拿太久", "持有太久", "利润回吐", "坐过山车", "held too long",
+        "止盈不及时", "拿不住利润", "该走没走",
+    ),
+}
+
+
+def mistake_type_from_text(text: str) -> MistakeType:
+    """把自由文本错误描述映射到结构化 MistakeType。
+
+    Args:
+        text: 复盘文本（如 deviation_reason / 卖出原因 / 教训）
+
+    Returns:
+        匹配的 MistakeType；无匹配返回 NONE。
+    """
+    if not text:
+        return MistakeType.NONE
+    lowered = text.lower()
+    for mt, kws in _MISTAKE_KEYWORDS.items():
+        for kw in kws:
+            if kw in lowered:
+                return mt
+    return MistakeType.NONE
+
+
+# 复盘教训空话黑名单 — 命中即拒绝，强制具体化
+VAGUE_LESSON_KEYWORDS: tuple[str, ...] = (
+    "操作失误", "行情不好", "没拿住", "心态不好", "运气不好", "没操作好",
+    "说不清", "忘了", "大盘不好", "市场不好", "随缘", "没办法",
+)
+
+
+def validate_lesson_specificity(lesson: str) -> tuple[bool, str]:
+    """校验复盘教训是否具体（禁止"操作失误/行情不好"空话）。
+
+    Args:
+        lesson: 复盘教训文本
+
+    Returns:
+        (ok, message) — ok=False 时 message 说明拒绝原因。
+    """
+    if not lesson or not lesson.strip():
+        return False, "教训不能为空"
+    text = lesson.strip()
+    if len(text) < 4:
+        return False, "教训太短，请描述具体过程（如: 突破假信号追高被套，未等回踩确认）"
+    for kw in VAGUE_LESSON_KEYWORDS:
+        if kw in text:
+            return False, (
+                f"教训过于空泛（含'{kw}'），请具体说明哪里做错了、当时缺了什么信息、下次如何改进"
+            )
+    return True, ""
+
+
 @dataclass
 class Feedback:
     """单条反馈记录。"""
@@ -56,6 +151,10 @@ class Feedback:
     # Phase 4: Alpha 归因
     alpha_contribution_pct: Optional[float] = None  # Alpha 贡献占比
     alpha_quality_score: Optional[float] = None     # Alpha 来源质量 0-100
+    # P2-1: 结构化错误分类（向后兼容，默认 NONE）
+    mistake_type: MistakeType = MistakeType.NONE    # 错误类型
+    symbol: str = ""                                # 标的代码（交易反馈用）
+    result: str = ""                                # 结果: win / loss / flat
 
 
 @dataclass
@@ -74,6 +173,8 @@ class FeedbackSummary:
     by_strategy: dict[str, dict] = field(default_factory=dict)
     period_start: str = ""
     period_end: str = ""
+    # P2-1: 错误类型分布 (mistake_type.value → count)
+    mistake_types: dict[str, int] = field(default_factory=dict)
 
 
 class FeedbackCollector:
@@ -182,6 +283,7 @@ class FeedbackCollector:
         holding_days: Optional[int] = None,
         strategy_name: str = "",
         strategy_version: str = "",
+        mistake_type: MistakeType = MistakeType.NONE,
     ) -> Feedback:
         """标注交易结果。
 
@@ -190,6 +292,7 @@ class FeedbackCollector:
             actual_return: 实际收益率（小数，如 0.08 = 8%）
             lesson: 经验教训
             holding_days: 持仓天数
+            mistake_type: 结构化错误分类（默认无）
         """
         return self._add(Feedback(
             feedback_id=self._next_id(),
@@ -198,8 +301,50 @@ class FeedbackCollector:
             actual_return=actual_return,
             holding_days=holding_days,
             lesson=lesson,
+            mistake_type=mistake_type,
             strategy_name=strategy_name,
             strategy_version=strategy_version,
+        ))
+
+    def record_trade_result(
+        self,
+        symbol: str,
+        direction: str,
+        result: str,
+        mistake_type: MistakeType = MistakeType.NONE,
+        lesson: str = "",
+        actual_return: Optional[float] = None,
+        holding_days: Optional[int] = None,
+        strategy_name: str = "",
+        signal_id: str = "",
+    ) -> Feedback:
+        """记录一笔交易结果反馈（供 feedback add CLI 与事件驱动复盘使用）。
+
+        Args:
+            symbol: 标的代码
+            direction: 交易方向 (BUY / SELL / HOLD)
+            result: 结果 (win / loss / flat)
+            mistake_type: 结构化错误分类
+            lesson: 具体教训（须通过 validate_lesson_specificity）
+            actual_return: 实际收益率（小数）
+            holding_days: 持仓天数
+            strategy_name: 策略名
+            signal_id: 关联信号 ID（默认用 TRADE_{symbol}）
+        """
+        sid = signal_id or f"TRADE_{symbol}"
+        return self._add(Feedback(
+            feedback_id=self._next_id(),
+            signal_id=sid,
+            type=FeedbackType.ANNOTATE,
+            reason=lesson,          # 兼容旧字段，保证 reason 有内容
+            user_action=direction,  # 方向存入 user_action
+            actual_return=actual_return,
+            holding_days=holding_days,
+            lesson=lesson,
+            symbol=symbol,
+            result=result,
+            mistake_type=mistake_type,
+            strategy_name=strategy_name,
         ))
 
     # ------------------------------------------------------------------
@@ -254,6 +399,12 @@ class FeedbackCollector:
         # 教训汇总
         lessons = [f.lesson for f in items if f.lesson]
 
+        # P2-1: 错误类型分布
+        mistake_counts: dict[str, int] = {}
+        for f in items:
+            mt = f.mistake_type.value if f.mistake_type else "none"
+            mistake_counts[mt] = mistake_counts.get(mt, 0) + 1
+
         # 按策略分组
         by_strategy: dict[str, dict] = {}
         for f in items:
@@ -280,6 +431,7 @@ class FeedbackCollector:
             by_strategy=by_strategy,
             period_start=dates[0] if dates else "",
             period_end=dates[-1] if dates else "",
+            mistake_types=mistake_counts,
         )
 
     def get_by_signal(self, signal_id: str) -> list[Feedback]:
@@ -347,6 +499,9 @@ class FeedbackCollector:
                 "created_at": f.created_at,
                 "strategy_name": f.strategy_name,
                 "strategy_version": f.strategy_version,
+                "mistake_type": f.mistake_type.value if f.mistake_type else "none",
+                "symbol": f.symbol,
+                "result": f.result,
             })
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -373,6 +528,9 @@ class FeedbackCollector:
                 created_at=item.get("created_at", ""),
                 strategy_name=item.get("strategy_name", ""),
                 strategy_version=item.get("strategy_version", ""),
+                mistake_type=MistakeType(item.get("mistake_type", "none")),
+                symbol=item.get("symbol", ""),
+                result=item.get("result", ""),
             )
             self._feedbacks.append(fb)
             # Restore counter from ID

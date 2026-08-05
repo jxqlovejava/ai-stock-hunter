@@ -69,7 +69,14 @@ class PositioningEngine:
       - 热启动 (n≥5): target = kelly_fraction × f*, f* = (b×p - q)/b
       - 冷启动 (n<5): 回退线性公式 base = (score - 50) / 50 × macro_cap
       - 负期望 (f*≤0): target = 0，不建仓
+
+    P0-3: 单笔风险预算反推仓位。
+      - 与乘数链结果取 min: max_weight = (equity × risk_budget_pct) / (entry − stop)
+        归一化后 equity 约去 → risk_budget_pct × entry / (entry − stop)。
+      - 止损位须在建仓前已知（T+1 前置）；suggested_stop 缺失时回退现有逻辑。
     """
+
+    DEFAULT_RISK_BUDGET_PCT = 0.02  # 单笔风险预算 = 权益的 2%
 
     def __init__(self, kelly_sizer: "Sizer | None" = None):
         """初始化仓位调度引擎。
@@ -96,6 +103,8 @@ class PositioningEngine:
         extra: Optional[dict] = None,
         timing_result=None,  # Phase 7: EntryExitEngine.TimingResult
         manipulation_risk: float = 0.0,  # Phase 11: 操纵风险评分 0-100
+        portfolio_value: float = 0.0,  # P0-3: 组合权益（risk-budget sizing）
+        entry_price: float = 0.0,      # P0-3: 入场价（缺省用 extra.price）
     ) -> TradeSignal:
         """生成交易信号。
 
@@ -114,6 +123,8 @@ class PositioningEngine:
             position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., "kelly_fraction": ...}
             risk_multiplier: 风险偏好仓位乘数 (conservative=0.7, balanced=1.0, aggressive=1.2)
             timing_result: Phase 7 入场/出场时机结果 (仅短线/波段模式)
+            portfolio_value: P0-3 组合权益（risk-budget sizing 公式 equity）
+            entry_price: P0-3 入场价（缺省回退 extra.price/close）
         """
         score = verdict.score
         action = self._score_to_action(score)
@@ -204,6 +215,19 @@ class PositioningEngine:
             atr_stop = timing_result.atr_stop
             target_1 = timing_result.target_1
             target_2 = timing_result.target_2
+
+        # P0-3: 单笔风险预算反推仓位 — 与乘数链结果取 min
+        if action in ("OPEN", "ADD"):
+            budget_capped = self._risk_budget_sizing(
+                target_d,
+                position_limits=position_limits,
+                extra=extra,
+                portfolio_value=portfolio_value,
+                entry_price=entry_price,
+                suggested_stop=suggested_stop,
+            )
+            if budget_capped is not None:
+                target_d = budget_capped
 
         return TradeSignal(
             symbol=symbol,
@@ -329,6 +353,70 @@ class PositioningEngine:
             0.0,
             f"linear:base=({score}-50)/50×{macro_cap}={float(base_d):.1%}",
         )
+
+    # ------------------------------------------------------------------
+    # P0-3: 单笔风险预算反推仓位
+    # ------------------------------------------------------------------
+
+    def _risk_budget_sizing(
+        self,
+        current: Decimal,
+        position_limits: Optional[dict],
+        extra: Optional[dict],
+        portfolio_value: float,
+        entry_price: float,
+        suggested_stop: float,
+    ) -> Optional[Decimal]:
+        """单笔风险预算反推仓位上限，与乘数链结果取 min。
+
+        公式: ``max_position = (equity × risk_budget_pct) / (entry − stop)``
+        归一化为组合权重（除以 equity，equity 在归一化中约去）:
+          ``max_weight = risk_budget_pct × entry / (entry − stop)``
+
+        A 股 T+1 前置: 止损位须在建仓前已知。以下任一情况返回 None
+        （回退现有乘数链逻辑，不报错）:
+          - ``suggested_stop`` 缺失/≤0（timing 未给出止损）
+          - 入场价缺失（entry_price 与 extra.price/close 均无）
+          - stop >= entry（止损不低于入场 → 风险模型失效）
+          - ``risk_budget_pct`` 未配置或 ≤0
+
+        Args:
+            current: 乘数链当前目标仓位（Decimal）
+            position_limits: 用户偏好仓位约束（可含 risk_budget_pct / total_capital）
+            extra: 行情 dict（入场价回退源）
+            portfolio_value: 组合权益（risk-budget sizing 公式 equity）
+            entry_price: 显式入场价
+            suggested_stop: 建仓前已知的止损价（timing_result.suggested_stop）
+        """
+        pl = position_limits or {}
+        risk_budget_pct = pl.get("risk_budget_pct", self.DEFAULT_RISK_BUDGET_PCT) or 0
+        if risk_budget_pct <= 0 or suggested_stop <= 0:
+            return None
+
+        # 入场价: 显式参数 > extra 行情价
+        entry = entry_price or 0
+        if entry <= 0 and extra:
+            entry = float(extra.get("price") or extra.get("close") or 0)
+        if entry <= 0:
+            return None
+
+        per_share_risk = entry - suggested_stop
+        if per_share_risk <= 0:
+            return None
+
+        # max_weight = risk_budget_pct × entry / (entry − stop)
+        cap = (
+            D(str(risk_budget_pct))
+            * D(str(entry))
+            / D(str(per_share_risk))
+        )
+        capped = min(current, cap)
+        logger.info(
+            "risk-budget sizing: entry=%.2f stop=%.2f budget=%.1f%% → cap=%.1f%% (current=%.1f%%)",
+            entry, suggested_stop, risk_budget_pct * 100, float(cap) * 100,
+            float(current) * 100,
+        )
+        return capped
 
     # ------------------------------------------------------------------
     # 评分 → 动作映射

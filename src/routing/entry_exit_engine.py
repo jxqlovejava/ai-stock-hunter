@@ -97,6 +97,21 @@ class EntryExitEngine:
     STALL_VOL_MULT = 1.3            # 放量滞涨量比阈值
     OVERSOLD_RSI = 30               # 超卖 RSI 阈值
     OVERBOUGHT_RSI = 70             # 超买 RSI 阈值
+    # P1-2 均线定方向 + MACD 定动能双层过滤
+    GOLDEN_CROSS_MA_LONG = 50       # 金叉方向层: 要求 MA20 > MA50
+    MA20_SLOPE_LOOKBACK = 5         # MA20 近 N 日斜率判断是否向上
+    MACD_HIST_BOOST = 0.10          # MACD 柱状放大时金叉置信度加成
+    # P1-2 破位质量
+    BREAKDOWN_VOL_MULT = 1.3        # 放量破位量比阈值（> = 真出逃）
+    # P1-3 MACD 顶背离联动
+    TOP_DIVERGENCE_BOOST = 0.05     # 顶背离 + 破位时置信度加成
+    TOP_DIVERGENCE_LOOKBACK = 40    # 顶背离窗口（价格新高、DIF 未新高比较）
+    # P1-4 量价过滤器
+    FAKE_BREAKOUT_CONFIRM_DAYS = 3  # 突破后确认窗口（不新高/回踩重新跌破检测）
+    FAKE_BREAKOUT_SHADOW_PCT = 0.03 # 长上影阈值（放量不涨）
+    FAKE_BREAKOUT_VOL_MULT = 1.3    # 假突破放量量比阈值
+    SHRINK_VOL_MULT = 0.8           # 缩量反弹量比阈值（< = 缩量）
+    SHRINK_REBOUND_DOWNGRADE = 0.7  # 缩量反弹降权系数（≠反转）
 
     def evaluate(
         self,
@@ -127,23 +142,24 @@ class EntryExitEngine:
         # --- 入场信号 ---
         entry_signals: list[EntrySignal] = []
 
-        # 1. 放量突破
+        # 1. 放量突破 (P1-4: 假突破否决过滤器 — 否决则不产生突破信号)
         bk = self._detect_breakout(close, high, volume)
-        if bk:
+        fake_reason = self._detect_fake_breakout(close, high, volume)
+        if bk and not fake_reason:
             entry_signals.append(bk)
 
-        # 2. 均线金叉
+        # 2. 均线金叉 (P1-2: MA 方向 + MACD 动能双层过滤)
         gc = self._detect_golden_cross(close, volume)
         if gc:
             entry_signals.append(gc)
 
-        # 3. 回踩支撑
+        # 3. 回踩支撑 (P1-4: 缩量反弹降权)
         ps = self._detect_pullback_support(close, low, volume)
         if ps:
             entry_signals.append(ps)
 
-        # 4. 超卖反弹
-        ob = self._detect_oversold_bounce(close)
+        # 4. 超卖反弹 (P1-4: 缩量反弹降权)
+        ob = self._detect_oversold_bounce(close, volume)
         if ob:
             entry_signals.append(ob)
 
@@ -160,8 +176,9 @@ class EntryExitEngine:
         # --- 出场信号 ---
         exit_signals: list[ExitSignal] = []
 
-        # 1. 跌破均线
-        mb = self._detect_ma_breakdown(close)
+        # 1. 跌破均线 (P1-2 破位质量: 放量=真出逃 / 缩量=洗盘; P1-3 顶背离联动)
+        top_div = self._detect_top_divergence(close)
+        mb = self._detect_ma_breakdown(close, volume, top_divergence=top_div)
         if mb:
             exit_signals.append(mb)
 
@@ -253,9 +270,14 @@ class EntryExitEngine:
         return None
 
     def _detect_golden_cross(
-        self, close: pd.DataFrame, volume: pd.DataFrame
+        self, close: pd.DataFrame, volume: pd.DataFrame | None = None
     ) -> Optional[EntrySignal]:
-        """MA5 上穿 MA20，伴随量能确认。"""
+        """MA5 上穿 MA20，伴随量能确认。
+
+        P1-2 双层过滤:
+          方向层 — 金叉须 MA20 > MA50 且 MA20 向上；MA50 数据不足时退化为仅要求 MA20 向上。
+          动能层 — MACD 柱状图放大（动能增强）时置信度加成 0.10，收窄时回落 0.05。
+        """
         if close.shape[0] < 21:
             return None
 
@@ -263,20 +285,41 @@ class EntryExitEngine:
         ma20 = close.rolling(20).mean()
         latest_close = close.iloc[-1]
 
-        # 金叉: 今日 MA5>MA20 且昨日 MA5<=MA20
-        crossed = (ma5.iloc[-1] > ma20.iloc[-1]) & (ma5.iloc[-2] <= ma20.iloc[-2])
+        # 方向层: 金叉须 MA20>MA50（至少 MA20 向上）
+        base_crossed = (ma5.iloc[-1] > ma20.iloc[-1]) & (ma5.iloc[-2] <= ma20.iloc[-2])
+        ma20_slope = ma20.iloc[-1] - ma20.iloc[-self.MA20_SLOPE_LOOKBACK]
+        ma20_rising = ma20_slope > 0
+
+        if close.shape[0] >= self.GOLDEN_CROSS_MA_LONG + 1:
+            ma50 = close.rolling(self.GOLDEN_CROSS_MA_LONG).mean()
+            long_ok = (ma20.iloc[-1] > ma50.iloc[-1]) & ma20_rising
+        else:
+            # MA50 数据不足，退化为仅要求 MA20 向上
+            long_ok = ma20_rising
+
+        crossed = base_crossed & long_ok
         cross_count = crossed.sum()
 
         if cross_count > 0:
+            # 动能层: MACD 柱状放大加成
+            hist_rising = self._macd_hist_rising(close)
+            confidence = 0.65 + (self.MACD_HIST_BOOST if hist_rising else -0.05)
+            confidence = min(0.8, max(0.4, confidence))
+
             cross_prices = latest_close[crossed]
             entry_price = float(cross_prices.mean()) if not cross_prices.empty else float(latest_close.mean())
             return EntrySignal(
                 type="MA_GOLDEN_CROSS",
-                description=f"MA5 上穿 MA20 金叉 ({cross_count}只触发)",
+                description=(
+                    f"MA5 上穿 MA20 金叉 + 方向确认 ({cross_count}只触发)"
+                    + ("，MACD动能增强" if hist_rising else "")
+                ),
                 entry_zone_low=round(entry_price * 0.99, 2),
                 entry_zone_high=round(entry_price * 1.02, 2),
-                confidence=0.65,
+                confidence=confidence,
                 trigger_conditions=[
+                    "MA20 > MA50 且 MA20 向上（均线定方向）",
+                    "MACD 柱状图放大（动能确认）",
                     "MA5>MA20 持续 3 日确认",
                     "金叉当日成交量 > 20日均量 1.2倍",
                 ],
@@ -284,9 +327,15 @@ class EntryExitEngine:
         return None
 
     def _detect_pullback_support(
-        self, close: pd.DataFrame, low: pd.DataFrame, volume: pd.DataFrame
+        self,
+        close: pd.DataFrame,
+        low: pd.DataFrame,
+        volume: pd.DataFrame | None = None,
     ) -> Optional[EntrySignal]:
-        """回踩均线支撑位反弹。"""
+        """回踩均线支撑位反弹。
+
+        P1-4: 缩量反弹降权（缩量 ≠ 反转，置信度 × 0.7）。
+        """
         if close.shape[0] < 21:
             return None
 
@@ -300,14 +349,22 @@ class EntryExitEngine:
         hits = (near_support & bounced).sum()
 
         if hits > 0:
+            confidence = 0.6
+            shrink = self._is_shrink_volume(volume)
+            if shrink:
+                confidence *= self.SHRINK_REBOUND_DOWNGRADE
+
             support_prices = ma20[near_support & bounced]
             entry_price = float(support_prices.mean()) if not support_prices.empty else float(ma20.mean())
             return EntrySignal(
                 type="PULLBACK_SUPPORT",
-                description=f"回踩 MA20 支撑反弹 ({hits}只)，是低吸机会",
+                description=(
+                    f"回踩 MA20 支撑反弹 ({hits}只)，是低吸机会"
+                    + ("（缩量反弹，非反转，降权）" if shrink else "")
+                ),
                 entry_zone_low=round(entry_price * 0.995, 2),
                 entry_zone_high=round(entry_price * 1.005, 2),
-                confidence=0.6,
+                confidence=confidence,
                 trigger_conditions=[
                     "收盘站稳 MA20 上方",
                     "次日不创新低",
@@ -315,8 +372,13 @@ class EntryExitEngine:
             )
         return None
 
-    def _detect_oversold_bounce(self, close: pd.DataFrame) -> Optional[EntrySignal]:
-        """RSI 超卖区反弹。"""
+    def _detect_oversold_bounce(
+        self, close: pd.DataFrame, volume: pd.DataFrame | None = None
+    ) -> Optional[EntrySignal]:
+        """RSI 超卖区反弹。
+
+        P1-4: 缩量反弹降权（缩量 ≠ 反转，置信度 × 0.7）。
+        """
         if close.shape[0] < 15:
             return None
 
@@ -337,14 +399,22 @@ class EntryExitEngine:
         signals = (oversold & price_up).sum()
 
         if signals > 0:
+            confidence = 0.55
+            shrink = self._is_shrink_volume(volume)
+            if shrink:
+                confidence *= self.SHRINK_REBOUND_DOWNGRADE
+
             prices = latest_close[oversold & price_up]
             entry_price = float(prices.mean()) if not prices.empty else float(latest_close.mean())
             return EntrySignal(
                 type="OVERSOLD_BOUNCE",
-                description=f"RSI 超卖(<{self.OVERSOLD_RSI})反弹 ({signals}只)，短线抄底机会",
+                description=(
+                    f"RSI 超卖(<{self.OVERSOLD_RSI})反弹 ({signals}只)，短线抄底机会"
+                    + ("（缩量反弹，非反转，降权）" if shrink else "")
+                ),
                 entry_zone_low=round(entry_price * 0.995, 2),
                 entry_zone_high=round(entry_price * 1.005, 2),
-                confidence=0.55,
+                confidence=confidence,
                 trigger_conditions=[
                     "RSI 回升至 35 以上确认",
                     "成交量配合放大",
@@ -409,8 +479,17 @@ class EntryExitEngine:
     # 出场检测
     # ------------------------------------------------------------------
 
-    def _detect_ma_breakdown(self, close: pd.DataFrame) -> Optional[ExitSignal]:
-        """跌破关键均线。"""
+    def _detect_ma_breakdown(
+        self,
+        close: pd.DataFrame,
+        volume: pd.DataFrame | None = None,
+        top_divergence: bool = False,
+    ) -> Optional[ExitSignal]:
+        """跌破关键均线。
+
+        P1-2 破位质量: 放量破位 = 真出逃（更高权重），缩量破位 = 多为洗盘（降权）。
+        P1-3 顶背离联动: 顶背离 + 破位 → 置信度加成 0.05，并升级为 URGENT。
+        """
         if close.shape[0] < 21:
             return None
 
@@ -418,27 +497,52 @@ class EntryExitEngine:
         ma20 = close.rolling(20).mean().iloc[-1]
         ma60 = close.rolling(60).mean().iloc[-1] if close.shape[0] >= 60 else ma20
 
-        # 跌破 MA20
+        # 跌破 MA20 / MA60
         broke_ma20 = (latest_close < ma20 * 0.98).sum()
         broke_ma60 = (latest_close < ma60 * 0.97).sum()
 
+        # 破位质量（放量=真出逃 / 缩量=洗盘）
+        vol_ratio = self._volume_ratio(volume)
+        heavy = vol_ratio is not None and vol_ratio >= self.BREAKDOWN_VOL_MULT
+        shrink = vol_ratio is not None and vol_ratio < 1.0
+        boost = self.TOP_DIVERGENCE_BOOST if top_divergence else 0.0
+        div_tag = " + MACD顶背离" if top_divergence else ""
+
         if broke_ma60 > 0:
+            if heavy:
+                confidence = 0.75 + boost
+            elif shrink:
+                confidence = 0.50 + boost
+            else:
+                confidence = 0.65 + boost
             return ExitSignal(
                 type="MA_BREAKDOWN",
-                description=f"跌破 MA60 支撑 ({broke_ma60}只)，趋势破坏",
+                description=self._breakdown_desc(
+                    "放量" if heavy else ("缩量" if shrink else ""),
+                    f"MA60 ({broke_ma60}只)，趋势破坏", div_tag,
+                ),
                 exit_zone_low=round(float(latest_close.mean()) * 0.97, 2),
                 exit_zone_high=round(float(latest_close.mean()), 2),
-                confidence=0.7,
-                urgency="URGENT",
+                confidence=min(0.85, confidence),
+                urgency="URGENT" if (heavy or top_divergence) else "NORMAL",
             )
         elif broke_ma20 > 0:
+            if heavy:
+                confidence = 0.62 + boost
+            elif shrink:
+                confidence = 0.40 + boost
+            else:
+                confidence = 0.55 + boost
             return ExitSignal(
                 type="MA_BREAKDOWN",
-                description=f"跌破 MA20 ({broke_ma20}只)，短线上涨节奏破坏",
+                description=self._breakdown_desc(
+                    "放量" if heavy else ("缩量" if shrink else ""),
+                    f"MA20 ({broke_ma20}只)，短线上涨节奏破坏", div_tag,
+                ),
                 exit_zone_low=round(float(latest_close.mean()) * 0.98, 2),
                 exit_zone_high=round(float(latest_close.mean()) * 1.0, 2),
-                confidence=0.55,
-                urgency="NORMAL",
+                confidence=min(0.8, confidence),
+                urgency="URGENT" if top_divergence else "NORMAL",
             )
         return None
 
@@ -572,3 +676,193 @@ class EntryExitEngine:
         )
         atr = tr.mean()
         return float(atr.mean()) if not atr.empty else 0.0
+
+    # ------------------------------------------------------------------
+    # P1-2 / P1-3 / P1-4 辅助
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _breakdown_desc(quality: str, base: str, extra: str = "") -> str:
+        """破位质量描述: 放量=真出逃，缩量=多为洗盘。"""
+        tag = "放量" if quality == "放量" else ("缩量" if quality == "缩量" else "")
+        if tag == "放量":
+            note = "放量破位=真出逃"
+        elif tag == "缩量":
+            note = "缩量破位=多为洗盘"
+        else:
+            note = "破位"
+        return f"{tag}跌破 {base}，{note}{extra}"
+
+    @staticmethod
+    def _volume_ratio(volume: pd.DataFrame | None) -> Optional[float]:
+        """最新量比（今量 / 20日均量）。无 volume 帧或数据不足返回 None。"""
+        if volume is None or volume.empty or volume.shape[0] < 20:
+            return None
+        latest = float(volume.iloc[-1].mean())
+        avg = float(volume.iloc[-20:].mean().mean())
+        if not np.isfinite(latest) or not np.isfinite(avg) or avg <= 0:
+            return None
+        return latest / avg
+
+    @staticmethod
+    def _vol_ratio_series(v: np.ndarray, window: int = 20) -> np.ndarray:
+        """逐日量比序列（当日量 / 前 window 日均量），前段为 NaN。"""
+        out = np.full(len(v), np.nan, dtype=float)
+        for i in range(len(v)):
+            lo = max(0, i - window)
+            if i == 0:
+                continue
+            avg = v[lo:i].mean()
+            if avg and avg > 0 and np.isfinite(v[i]):
+                out[i] = v[i] / avg
+        return out
+
+    def _is_shrink_volume(self, volume: pd.DataFrame | None) -> bool:
+        """是否缩量（量比 < SHRINK_VOL_MULT）— 缩量反弹 ≠ 反转。"""
+        vr = self._volume_ratio(volume)
+        return vr is not None and vr < self.SHRINK_VOL_MULT
+
+    @staticmethod
+    def _macd_hist_rising(close: pd.DataFrame) -> bool:
+        """最新 bar MACD 柱状图是否放大（动能增强）— 供金叉动能层。"""
+        if close is None or close.empty or close.shape[0] < 26:
+            return False
+        try:
+            from src.alphas.macd_kdj import compute_macd
+        except Exception:
+            return False
+        s = close.mean(axis=1).dropna()
+        if len(s) < 26:
+            return False
+        dif, dea, hist = compute_macd(s)
+        h0, h1 = hist.iloc[-1], hist.iloc[-2]
+        if h0 != h0 or h1 != h1:  # NaN 检查
+            return False
+        return bool(h0 > h1)
+
+    def _detect_top_divergence(self, close: pd.DataFrame) -> bool:
+        """最近一 bar 是否出现 MACD 顶背离（价格创新高、DIF 未创新高）。
+
+        使用 TOP_DIVERGENCE_LOOKBACK 窗口，捕捉中期的「价格新高、DIF 未新高」
+        （默认 20 日窗口在价格创出新高时，窗口 DIF 峰值往往是当日自身，漏检）。
+        """
+        if close is None or close.empty or close.shape[0] < self.TOP_DIVERGENCE_LOOKBACK:
+            return False
+        try:
+            from src.alphas.macd_kdj import compute_macd, detect_macd_top_divergence
+        except Exception:
+            return False
+        for col in close.columns:
+            s = close[col].dropna()
+            if len(s) < self.TOP_DIVERGENCE_LOOKBACK:
+                continue
+            dif = compute_macd(s)[0]
+            div = detect_macd_top_divergence(
+                s, dif, lookback=self.TOP_DIVERGENCE_LOOKBACK
+            )
+            if bool(div.iloc[-1]):
+                return True
+        return False
+
+    def _detect_fake_breakout(
+        self,
+        close: pd.DataFrame,
+        high: pd.DataFrame,
+        volume: pd.DataFrame | None = None,
+    ) -> Optional[str]:
+        """假突破否决过滤器 — 返回否决原因（命中任一检测）或 None。
+
+        4 检测（作为 BREAKOUT 信号的否决项）:
+          1. 盘中破位收盘跌回 — 最高价上破前 N 日高，但收盘跌回下方
+          2. 放量不涨留长上影 — 收盘破前 N 日高但留长上影且放量
+          3. 突破当天放量后续不新高 — 近 N 日放量突破后未再创新高
+          4. 回踩放量重新跌破 — 突破后回踩放量重新跌破突破位
+        """
+        if close is None or high is None or close.empty or high.empty:
+            return None
+        if close.shape[0] < self.BREAKOUT_LOOKBACK + 2:
+            return None
+        try:
+            for col in close.columns:
+                if col not in high.columns:
+                    continue
+                reason = self._fake_breakout_col(
+                    close[col].astype(float),
+                    high[col].astype(float),
+                    volume,
+                    col,
+                )
+                if reason:
+                    return reason
+        except Exception:
+            logger.debug("假突破检测跳过", exc_info=True)
+        return None
+
+    def _fake_breakout_col(
+        self,
+        c: pd.Series,
+        h: pd.Series,
+        volume: pd.DataFrame | None,
+        col: object,
+    ) -> Optional[str]:
+        """单列假突破检测。"""
+        lookback = self.BREAKOUT_LOOKBACK
+        # 前 N 日最高（不含当日）
+        level = h.shift(1).rolling(lookback, min_periods=1).max()
+
+        latest_c = float(c.iloc[-1])
+        latest_h = float(h.iloc[-1])
+        latest_level = float(level.iloc[-1])
+        if not np.isfinite(latest_level) or latest_level <= 0:
+            return None
+
+        # 检测 1: 盘中破位收盘跌回
+        if latest_h > latest_level and latest_c < latest_level:
+            return "盘中破位收盘跌回"
+
+        # 逐日量比序列（用于检测 2/3/4 的放量确认）
+        v_arr = None
+        v_ratio = None
+        if volume is not None and col in volume.columns:
+            v_arr = volume[col].to_numpy(dtype=float)
+            v_ratio = self._vol_ratio_series(v_arr)
+
+        # 检测 2: 放量不涨留长上影（收盘确实破前高，但长上影 + 放量）
+        if latest_c > latest_level:
+            if v_ratio is not None and np.isfinite(v_ratio[-1]) \
+                    and v_ratio[-1] >= self.FAKE_BREAKOUT_VOL_MULT:
+                if latest_c > 0:
+                    upper_shadow = (latest_h - latest_c) / latest_c
+                    if upper_shadow >= self.FAKE_BREAKOUT_SHADOW_PCT:
+                        return "放量不涨留长上影"
+
+        # 检测 3/4: 近 CONFIRM_DAYS 窗口内的突破后续行为
+        confirm = self.FAKE_BREAKOUT_CONFIRM_DAYS
+        n = len(c)
+        c_arr = c.to_numpy(dtype=float)
+        h_arr = h.to_numpy(dtype=float)
+        lev_arr = level.to_numpy(dtype=float)
+        for d in range(max(1, n - confirm), n):
+            ld = float(lev_arr[d])
+            if not np.isfinite(ld) or ld <= 0:
+                continue
+            # 突破日（收盘站上前高）
+            if c_arr[d] <= ld:
+                continue
+            # 突破日需放量
+            if v_ratio is None or not np.isfinite(v_ratio[d]) \
+                    or v_ratio[d] < self.FAKE_BREAKOUT_VOL_MULT:
+                continue
+            # 检测 3: 突破后未再创新高（今日是突破日则无法判断，跳过）
+            if d < n - 1:
+                later_high = float(np.nanmax(h_arr[d + 1:]))
+                if np.isfinite(later_high) and later_high <= h_arr[d]:
+                    return "突破后不新高"
+                # 检测 4: 突破后回踩放量重新跌破突破位
+                for j in range(d + 1, n):
+                    if c_arr[j] < ld:
+                        if v_ratio is not None and np.isfinite(v_ratio[j]) \
+                                and v_ratio[j] >= self.FAKE_BREAKOUT_VOL_MULT:
+                            return "回踩放量重新跌破"
+                        break
+        return None

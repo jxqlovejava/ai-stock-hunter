@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Mapping, Optional
 
@@ -42,6 +42,10 @@ class RiskState:
     tripped_at: Optional[datetime] = None
     trip_reason: str = ""
     strategy_inception: Mapping[str, datetime] = field(default_factory=dict)
+    consecutive_stops: int = 0
+    """连续止损次数（无盈利平仓时累计，盈利复位）。军规 r017 / 冷却逻辑读取。"""
+    cooling_until: Optional[datetime] = None
+    """连亏冷却到期时间（UTC）。达阈值后，此时间之前禁止自动开新仓。"""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "strategy_inception", _freeze(self.strategy_inception))
@@ -120,6 +124,59 @@ class RiskState:
         return ((now or _utc_now()) - inception).total_seconds() / 86400.0
 
     # ------------------------------------------------------------------
+    # 连续止损计数 & 冷却 (P0-3)
+    # ------------------------------------------------------------------
+    def record_stop(
+        self, now: Optional[datetime] = None, cooldown_days: int = 3
+    ) -> "RiskState":
+        """记录一笔止损平仓 → 连亏计数 +1，冷却窗口从本次止损起算。
+
+        达到阈值后由引擎的 ``_check_cooldown`` 暂停自动开仓。``cooldown_days``
+        ≤ 0 表示不启用时间冷却（仅计数，冷却判据交给调用方）。
+        """
+        now = now or _utc_now()
+        cooling_until = self.cooling_until
+        if cooldown_days > 0:
+            cooling_until = now + timedelta(days=cooldown_days)
+        return replace(
+            self,
+            consecutive_stops=self.consecutive_stops + 1,
+            cooling_until=cooling_until,
+        )
+
+    def record_win(self) -> "RiskState":
+        """记录一笔盈利平仓 → 连亏计数复位，冷却解除。"""
+        if self.consecutive_stops == 0 and self.cooling_until is None:
+            return self
+        return replace(self, consecutive_stops=0, cooling_until=None)
+
+    def advance_time(self, now: Optional[datetime] = None) -> "RiskState":
+        """时间推进 — 冷却窗口无新止损发生时，连亏计数自动复位。
+
+        冷却到期前若再次止损，计数继续累计（冷却窗口随之顺延）。
+        """
+        now = now or _utc_now()
+        if (
+            self.consecutive_stops > 0
+            and self.cooling_until is not None
+            and now >= self.cooling_until
+        ):
+            return replace(self, consecutive_stops=0, cooling_until=None)
+        return self
+
+    def in_cooldown(self, now: Optional[datetime] = None) -> bool:
+        """是否处于冷却窗口内（``cooling_until`` 未过期）。"""
+        now = now or _utc_now()
+        return self.cooling_until is not None and now < self.cooling_until
+
+    def cooldown_remaining_days(self, now: Optional[datetime] = None) -> float:
+        """冷却剩余天数（已过期/未触发 → 0.0）。"""
+        now = now or _utc_now()
+        if self.cooling_until is None or now >= self.cooling_until:
+            return 0.0
+        return (self.cooling_until - now).total_seconds() / 86400.0
+
+    # ------------------------------------------------------------------
     # 工厂方法
     # ------------------------------------------------------------------
     @classmethod
@@ -142,6 +199,8 @@ class RiskState:
             "strategy_inception": {
                 k: v.isoformat() for k, v in self.strategy_inception.items()
             },
+            "consecutive_stops": self.consecutive_stops,
+            "cooling_until": self.cooling_until.isoformat() if self.cooling_until else None,
         }
 
     @classmethod
@@ -161,4 +220,10 @@ class RiskState:
                 k: datetime.fromisoformat(v)
                 for k, v in d.get("strategy_inception", {}).items()
             },
+            consecutive_stops=int(d.get("consecutive_stops", 0)),
+            cooling_until=(
+                datetime.fromisoformat(d["cooling_until"])
+                if d.get("cooling_until")
+                else None
+            ),
         )
