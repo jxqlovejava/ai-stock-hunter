@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.factors.base import rank
+from src.factors.base import cross_or_ts_rank
 
 __alpha_meta__ = {
     "id": "dmi_direction",
@@ -52,4 +52,5 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     direction = plus_di - minus_di
     adx_scaled = adx / 100.0
     score = direction * adx_scaled
-    return rank(score) * 100.0
+    # 单列面板走时序 rank（当前值 vs 自身 20 根历史），多列保持截面 rank
+    return cross_or_ts_rank(score, n=20) * 100.0

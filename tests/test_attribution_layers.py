@@ -77,6 +77,30 @@ def test_formatter_consumes_result_with_new_field():
     assert "个股涨跌归因" in out
 
 
+def test_formatter_renders_layer_attributions_block():
+    """format_attribution_result 渲染三层归因块 (执行/配置/逻辑 + 主导层)。"""
+    r = _make_result_with_three_layers()
+    layerize_drivers(r)
+    out = format_attribution_result(r)
+    assert "三层归因分层" in out
+    assert "执行层" in out
+    assert "配置层" in out
+    assert "投资逻辑层" in out
+    assert "主导层" in out
+    assert "推翻所需证据级别" in out
+    assert "业绩不及预期" in out  # 主因 (投资逻辑层) 的驱动名
+    # 主因标记列
+    assert "主因" in out
+
+
+def test_formatter_no_layer_field_backward_compatible():
+    """无 layer_attributions 时输出确定性提示且不报错 (向后兼容)。"""
+    r = AttributionResult(symbol="600089", name="XX公司", price_change_pct=-3.5)
+    out = format_attribution_result(r)
+    assert "三层归因分层" in out
+    assert "未计算" in out
+
+
 # ────────────────────────────────────────────────────────
 # ② 给定驱动因素正确分层 (执行/配置/逻辑 各一)
 # ────────────────────────────────────────────────────────

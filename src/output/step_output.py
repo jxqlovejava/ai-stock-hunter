@@ -191,6 +191,13 @@ def print_diagnosis(report: Any, mental_model_info: dict | None = None) -> None:
         print(f"  {label:6s} {score:5.0f} {bar} {nature}")
     sentiment = getattr(report, "sentiment_signal", "NORMAL")
     print(f"  情绪     {CN.get(str(sentiment), str(sentiment))} [📊事实]")
+    # P3-3: 情绪维 0-100 整合评分（逆向指标: 高分=恐慌/逆向看多, 低分=贪婪/逆向看空）
+    _ss = float(getattr(report, "sentiment_score", 50.0) or 50.0)
+    _ss_bar = "▓" * int(_ss / 5) + "░" * (20 - int(_ss / 5))
+    print(
+        f"  情绪(逆向) {_ss:5.0f} {_ss_bar} "
+        f"[高分=恐慌逆向看多 / 低分=贪婪逆向看空] 原始信号 {CN.get(str(sentiment), str(sentiment))}"
+    )
     sector_flow_rank = getattr(report, "sector_flow_rank", None)
     if sector_flow_rank is not None:
         print(f"  板块资金排名 {sector_flow_rank}% (净流入越靠前排名越高) [📊事实]")

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.factors.base import rank
+from src.factors.base import cross_or_ts_rank
 
 __alpha_meta__ = {
     "id": "short_term_reversal",
@@ -21,4 +21,5 @@ __alpha_meta__ = {
 def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     close = panel["close"]
     ret_5d = close.pct_change(5)
-    return rank(-ret_5d) * 100.0
+    # 单列面板走时序 rank（当前值 vs 自身 20 根历史），多列保持截面 rank
+    return cross_or_ts_rank(-ret_5d, n=20) * 100.0

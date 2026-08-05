@@ -74,13 +74,15 @@
 - [~] 冒烟：`diagnose 002415` 因环境网络部分数据源不可达挂起于数据拉取阶段（position_state 之后，非新增代码；已终止）
 - [ ] 全量 `pytest tests/`（网络用例挂起，环境限制；定向 421 已覆盖所有改动模块）
 
-## 实施过程中的已知遗留项（不影响主流程，后续可优化）
+## 遗留项修复状态（2026-08-06 第二批，5 Agent 并行）
 
-| 项 | 说明 |
-|---|---|
-| tactics 单票面板 rank 因子恒 100 | `macd_histogram/dmi_direction` 等截面 rank 因子单列时恒 100，可能推高趋势/反转/均线维（因子设计局限，需 ts_rank 变体） |
-| orchestrator 全量 run() 的 risk-budget cap 惰性 | `generate_signal` 未传 `timing_result` → suggested_stop=0 走回退；tactics/light 路径已生效 |
-| DecisionJournal 仍内存态 | log() 不持久化 journal.db，进程重启丢失（超范围） |
-| 事件复盘偏频繁 | 任意 sell 成交触发事件复盘，阈值可调（EVENT_REVIEW_MIN_LOSSES） |
-| 三层归因/情绪维渲染未接线 | 数据层已就绪，formatter/step_output 展示行待接（P3-A/P3-B 注明） |
-| 传导时差无真实数据源 | 配置驱动理念验证层（MU/NVDA 示例配置），需接真实现货价/海外龙头数据 |
+| 遗留项 | 状态 | 验证 |
+|---|---|---|
+| 单票面板 rank 因子恒 100 | ✅ 修复 | `base.py` 新增 `cross_or_ts_rank`（单列走 ts_rank，多列保持截面）；6 因子接入；test_factor_single_rank 14 passed |
+| risk-budget cap 接入全量 run() | ✅ 修复 | `generate_signal` 增 `suggested_stop` 参数；orchestrator `_entry_stop_for_sizing` 接线（T+0 stop→固定止损回退） |
+| DecisionJournal 内存态 | ✅ 修复 | SQLite 持久化（data/journal.db），三层降级（连库失败→写失败→log 异常），路径可注入；test_journal_persistence 12 passed |
+| 事件复盘偏频繁 | ✅ 修复 | `EVENT_REVIEW_LOSS_TRIGGER`：仅亏损平仓触发单笔复盘，止盈不触发；连亏/回撤保留 |
+| 三层归因/情绪维渲染未接线 | ✅ 修复 | attribution_formatter 加「🧭 三层归因分层」块；formatter/step_output 加「情绪(逆向)」行；test_output_sentiment_render 5 passed |
+| 传导时差为配置驱动 | ✅ 修复 | `LeadSignalSource` 可插拔接口 + `FuturesSpotLeadSource`（akshare 生意社现货价，**实测返回5条真实信号**，6h缓存）；失败优雅回退配置路径；生产启用 `AI_STOCK_LEAD_SOURCES=futures_spot` |
+
+**第二批联合回归：362 passed**（doctrine/routing/indicators/phase2/feedback/calibration/journal/factor_single_rank/transmission/attribution/output_render/evolution）

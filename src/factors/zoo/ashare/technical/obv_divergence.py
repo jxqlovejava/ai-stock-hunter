@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.factors.base import rank
+from src.factors.base import cross_or_ts_rank
 
 __alpha_meta__ = {
     "id": "obv_divergence",
@@ -26,4 +26,5 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     obv_chg = obv.diff(20)
     price_chg = close.diff(20)
     corr = obv_chg.rolling(20, min_periods=10).corr(price_chg)
-    return rank(corr.fillna(0)) * 100.0
+    # 单列面板走时序 rank（当前值 vs 自身 20 根历史），多列保持截面 rank
+    return cross_or_ts_rank(corr.fillna(0), n=20) * 100.0

@@ -74,6 +74,7 @@ class PaperTradingEngine:
     MAX_CANDIDATES_PER_DAY = 5
 
     # P2-3: 事件驱动复盘触发阈值
+    EVENT_REVIEW_LOSS_TRIGGER = 1      # 当日亏损平仓 ≥ N 笔触发即时复盘（正常止盈平仓不触发）
     EVENT_REVIEW_MIN_LOSSES = 3        # 连续亏损 ≥ N 笔触发即时复盘
     EVENT_REVIEW_DRAWDOWN = 0.08       # 回撤 ≥ 8% 触发即时复盘
 
@@ -808,7 +809,9 @@ class PaperTradingEngine:
         state: PortfolioState,
         executed_trades: list | None = None,
     ) -> None:
-        """事件驱动即时复盘：平仓 / 连续止损 / 回撤超标任一满足即触发。
+        """事件驱动即时复盘：亏损平仓 / 连续止损 / 回撤超标任一满足即触发。
+
+        正常止盈平仓（pnl_pct ≥ 0）不触发单笔事件复盘，避免复盘偏频繁。
 
         Args:
             state: 当前组合状态
@@ -816,11 +819,13 @@ class PaperTradingEngine:
         """
         reasons: list[str] = []
 
-        # 1. 平仓事件
-        sells = [t for t in (executed_trades or []) if t.action == "sell"]
-        if sells:
-            loss_count = sum(1 for t in sells if t.pnl_pct < 0)
-            reasons.append(f"今日平仓 {len(sells)} 笔 (亏损 {loss_count} 笔)")
+        # 1. 净亏损平仓事件（正常止盈平仓不触发）
+        loss_sells = [
+            t for t in (executed_trades or [])
+            if t.action == "sell" and t.pnl_pct < 0
+        ]
+        if len(loss_sells) >= self.EVENT_REVIEW_LOSS_TRIGGER:
+            reasons.append(f"今日亏损平仓 {len(loss_sells)} 笔")
 
         # 2. 连续止损
         consec = self._count_consecutive_losses()

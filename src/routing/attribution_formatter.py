@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from src.routing.attribution import format_layer_attributions
 from src.routing.attribution_types import AttributionResult, QualitySummary
 
 
@@ -166,6 +167,12 @@ def format_attribution_result(result: AttributionResult) -> str:
     if result.causality_chain:
         sections.append(f"\n  🔗 因果链:")
         sections.append(f"     {result.causality_chain}")
+
+    # ── 三层归因分层 (执行/配置/逻辑) ──
+    # 每层: 主要驱动 / 证据 / 置信度 / 推翻所需证据级别 / 是否主导层。
+    # 越往上 (LOGIC) 推翻所需证据越多。空结果时渲染确定性提示, 向后兼容。
+    sections.append("")
+    sections.append(format_layer_attributions(result))
 
     # ── 置信度 ──
     sections.append(f"\n  📐 归因置信度: {result.confidence:.0%}")

@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,205 @@ class LeadSignal:
     speculation: bool = True
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 可插拔真实数据源 (P3-2 遗留项) — 为 lead-lag 管道注入上游/海外领先信号
+# ═══════════════════════════════════════════════════════════════════
+#
+# 理念来源: 投资资讯精读 doc 04（可信度 0.3）
+#   "华强北 MLCC 囤货 → 村田(MU) → A股对标(风华高科) 滞后约 2 周"
+#
+# 现状（遗留）: to_leading_signals() 只由 SECTOR_MAP 配置驱动 —— 用当日美股
+#   板块异动投影未来窗口。缺失的是更上游的"现货价格异动 / 海外龙头股价"真实数据。
+#
+# 本段引入 LeadSignalSource 可插拔接口:
+#   - 任何实现 fetch() 的数据源均可被 lead-lag 管道消费
+#   - 网络/解析失败必须返回 []（优雅降级），调用方回退到 SECTOR_MAP 配置驱动路径
+#   - 无任何数据源配置时行为与现状完全一致（向后兼容）
+#   - 数据源信号一律标 [SPECULATION]，幅度受限（弱信号）
+
+
+@dataclass(frozen=True)
+class LeadSourceSignal:
+    """上游/海外领先信号 — 来自真实数据源的一次现货价/股价异动。
+
+    category 采用命名空间形式: "commodity.CU" / "us_stock.MU"，
+    命名空间前缀决定领先窗口（见 LEAD_NAMESPACE_WINDOW_MAP）。
+    """
+
+    category: str                       # 类别，如 "commodity.CU"
+    name: str                           # 显示名称，如 "沪铜"
+    change_pct: float                   # 异动幅度（%），正=涨 负=跌
+    as_of: Optional[date] = None        # 信号对应日期
+    source: str = ""                    # 数据源标识
+    target_sectors: tuple[str, ...] = ()   # 影响的 A 股板块（空=按 name 兜底）
+    confidence: float = 0.5             # 数据置信度 0~1
+
+
+class LeadSignalSource(ABC):
+    """可插拔领先信号数据源接口。
+
+    实现要求:
+      - name: 唯一标识
+      - fetch(category): 返回 list[LeadSourceSignal]；**任何失败返回 []，
+        绝不抛异常**（优雅降级到配置驱动路径）
+    """
+
+    name: str = "base"
+
+    def is_available(self) -> bool:
+        """默认可用；依赖网络/鉴权的子类应覆盖。"""
+        return True
+
+    @abstractmethod
+    def fetch(self, category: str = "") -> list[LeadSourceSignal]:
+        """获取领先信号。
+
+        Args:
+            category: 可选过滤（如 "commodity.CU"）；空=全部。
+
+        Returns:
+            list[LeadSourceSignal]；失败返回 []。
+        """
+        raise NotImplementedError
+
+
+# 领先信号幅度上限 — 现货/股价异动被限幅后再进管道（[SPECULATION] 弱信号）
+SOURCE_MAX_CHANGE = 8.0    # 单条信号原始幅度上限(%)，避免极端行情过度外推
+SOURCE_CHANGE_TO_STRENGTH = 10.0   # 10% 异动 → strength 1.0
+
+# 命名空间 → 领先窗口配置（上游现货 2-4 周 / 海外龙头 1-2 周，doc 04）
+LEAD_NAMESPACE_WINDOW_MAP: dict[str, dict] = {
+    "commodity": {
+        "lag_days": [14, 28],
+        "stages": [
+            {"name": "上游现货异动", "lag_days": 4, "signal_strength": 0.9},
+            {"name": "海外龙头", "lag_days": 10, "signal_strength": 0.8},
+            {"name": "A股对标", "lag_days": 6, "signal_strength": 0.9},
+        ],
+        "decay_per_week": 0.30,
+    },
+    "us_stock": {
+        "lag_days": [7, 14],
+        "stages": [
+            {"name": "海外龙头", "lag_days": 5, "signal_strength": 0.85},
+            {"name": "A股对标", "lag_days": 5, "signal_strength": 0.9},
+        ],
+        "decay_per_week": 0.25,
+    },
+}
+
+
+# 模块级数据源注册表（进程内显式注册）
+_LEAD_SOURCE_REGISTRY: dict[str, LeadSignalSource] = {}
+
+
+def register_lead_signal_source(source: LeadSignalSource) -> None:
+    """显式注册一个领先信号数据源（进程内）。"""
+    _LEAD_SOURCE_REGISTRY[source.name] = source
+
+
+def clear_lead_signal_sources() -> None:
+    """清空数据源注册表（测试用）。"""
+    _LEAD_SOURCE_REGISTRY.clear()
+
+
+def _env_enabled_sources() -> list[LeadSignalSource]:
+    """按环境变量 AI_STOCK_LEAD_SOURCES 懒加载数据源。
+
+    支持逗号分隔 token，如 "futures_spot"。未配置 → 空列表（向后兼容）。
+    环境变量是"开关"：生产环境设 AI_STOCK_LEAD_SOURCES=futures_spot 即可启用，
+    网络不可用时该源 fetch() 返回 []，自动回退到配置驱动路径。
+    """
+    import os
+
+    raw = os.environ.get("AI_STOCK_LEAD_SOURCES", "").strip()
+    if not raw:
+        return []
+    out: list[LeadSignalSource] = []
+    for token in raw.split(","):
+        token = token.strip().lower()
+        if token in ("futures_spot", "futures"):
+            try:
+                from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+                out.append(FuturesSpotLeadSource())
+            except Exception as exc:
+                logger.debug("env lead source '%s' init failed: %s", token, exc)
+    return out
+
+
+def get_lead_signal_sources() -> list[LeadSignalSource]:
+    """返回当前生效的数据源列表（显式注册 + 环境变量配置）。
+
+    默认（无注册、无环境变量）返回 [] → to_leading_signals 行为与现状一致。
+    """
+    return list(_LEAD_SOURCE_REGISTRY.values()) + _env_enabled_sources()
+
+
+def source_signal_to_lead(
+    src_sig: LeadSourceSignal,
+    as_of: Optional[date] = None,
+    horizon_days: int = 60,
+) -> list[LeadSignal]:
+    """把一条上游/海外数据源信号转换为 LeadSignal 列表（逐板块）。
+
+    - 按 category 命名空间查领先窗口（未知命名空间 → 上游现货窗口兜底）
+    - 幅度受限：change_pct 先限幅到 ±SOURCE_MAX_CHANGE，再计算 strength
+    - 恒标 [SPECULATION]，置信度参与 strength 折算
+    - 窗口起点超出 horizon_days → 丢弃
+    """
+    if src_sig is None:
+        return []
+
+    namespace = (src_sig.category or "commodity").split(".")[0]
+    window_cfg = LEAD_NAMESPACE_WINDOW_MAP.get(
+        namespace, LEAD_NAMESPACE_WINDOW_MAP["commodity"]
+    )
+    window = build_lead_lag_window(window_cfg)
+    if window.lag_min_days > horizon_days:
+        return []
+
+    window_end = min(window.lag_max_days, horizon_days)
+    if window_end < window.lag_min_days:
+        return []
+
+    raw = max(-SOURCE_MAX_CHANGE, min(SOURCE_MAX_CHANGE, float(src_sig.change_pct)))
+    direction = 1 if raw >= 0 else -1
+    base = min(1.0, abs(raw) / SOURCE_CHANGE_TO_STRENGTH)
+    staged = window.staged_decay
+    mid_weeks = window.mid_days / 7.0
+    time_decay = 1.0 / (1.0 + window.decay_per_week * mid_weeks)
+    strength = round(
+        max(0.0, min(1.0, base * staged * time_decay * float(src_sig.confidence))), 4
+    )
+
+    start_date = end_date = None
+    if as_of is not None:
+        start_date = as_of + timedelta(days=window.lag_min_days)
+        end_date = as_of + timedelta(days=window_end)
+
+    sectors = list(src_sig.target_sectors) or [src_sig.name]
+    out: list[LeadSignal] = []
+    for sector in sectors:
+        out.append(LeadSignal(
+            us_key=src_sig.category,
+            us_label=f"{src_sig.name} 现货",
+            sector=sector,
+            direction=direction,
+            strength=strength,
+            window_start_days=window.lag_min_days,
+            window_end_days=window_end,
+            raw_adjust=round(raw, 2),
+            reason=(
+                f"[{src_sig.source}] {src_sig.name}现货{raw:+.1f}% → {sector} 未来"
+                f"{window.lag_min_days}-{window_end}天窗口（[SPECULATION] 上游现货异动）"
+            ),
+            window_start=start_date,
+            window_end=end_date,
+            source="lead_source",
+        ))
+    return out
+
+
 def build_lead_lag_window(config: Optional[dict]) -> LeadLagWindow:
     """从配置构建领先/滞后窗口。
 
@@ -399,8 +599,9 @@ def to_leading_signals(
     tx_result: TransmissionResult,
     as_of: Optional[date] = None,
     horizon_days: int = 60,
+    lead_sources: Optional[Sequence[LeadSignalSource]] = None,
 ) -> list[LeadSignal]:
-    """把当日传导信号转成"未来 N 日窗口的领先信号"。
+    """把当日传导信号 + 上游/海外数据源信号 转成"未来 N 日窗口的领先信号"。
 
     对每条触发的 active_signal：
       - 解析其 lead_lag_window（无配置 → 当日窗口 0,0）
@@ -408,6 +609,10 @@ def to_leading_signals(
       - strength = min(1, |raw_adjust|/10) × 分段衰减 × 周时间衰减
       - 窗口起点已超出 horizon_days → 跳过
       - 逐板块产出 LeadSignal
+
+    附加: 当 lead_sources 提供（或经注册表/环境变量启用）时，把真实数据源的
+      上游现货/海外龙头信号也转换为 LeadSignal（[SPECULATION]，幅度受限）追加到结果。
+      lead_sources=None → 查 get_lead_signal_sources()；无任何数据源 → 行为与现状一致。
 
     Returns:
         领先信号列表（每条 speculation=True）
@@ -456,7 +661,40 @@ def to_leading_signals(
                 window_start=start_date,
                 window_end=end_date,
             ))
+
+    # ---- 真实数据源注入（可插拔，[SPECULATION] 弱信号，幅度受限）----
+    # 上游现货异动/海外龙头信号 → 生成/增强对应 A 股对标的领先信号。
+    # 数据源 fetch 失败返回 [] 或抛异常 → 优雅降级，不影响配置驱动路径。
+    sources = list(lead_sources) if lead_sources is not None else get_lead_signal_sources()
+    for src in sources:
+        if src is None:
+            continue
+        try:
+            fetched = src.fetch()
+        except Exception as exc:
+            logger.debug(
+                "lead source '%s' fetch failed (degrade): %s",
+                getattr(src, "name", "?"), exc,
+            )
+            continue
+        for s in fetched or []:
+            out.extend(source_signal_to_lead(s, as_of=as_of, horizon_days=horizon_days))
     return out
+
+
+def build_lead_signals(
+    tx_result: TransmissionResult,
+    lead_sources: Optional[Sequence[LeadSignalSource]] = None,
+    as_of: Optional[date] = None,
+    horizon_days: int = 60,
+) -> list[LeadSignal]:
+    """便捷入口: 配置驱动 + 显式数据源 组合生成领先信号。
+
+    等价于 to_leading_signals(..., lead_sources=lead_sources)。
+    """
+    return to_leading_signals(
+        tx_result, as_of=as_of, horizon_days=horizon_days, lead_sources=lead_sources
+    )
 
 
 def lead_signal_weak_adjust(

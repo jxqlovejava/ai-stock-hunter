@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.factors.base import rank, safe_div
+from src.factors.base import cross_or_ts_rank, safe_div
 
 __alpha_meta__ = {
     "id": "macd_histogram",
@@ -26,4 +26,5 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     dea = dif.ewm(span=9, min_periods=9).mean()
     histogram = (dif - dea) * 2.0
     normalized = safe_div(histogram, close)
-    return rank(normalized) * 100.0
+    # 单列面板走时序 rank（当前值 vs 自身 20 根历史），多列保持截面 rank
+    return cross_or_ts_rank(normalized, n=20) * 100.0

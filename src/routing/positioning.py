@@ -102,6 +102,7 @@ class PositioningEngine:
         name: str = "",
         extra: Optional[dict] = None,
         timing_result=None,  # Phase 7: EntryExitEngine.TimingResult
+        suggested_stop: float = 0.0,  # P0-3: 直接建议止损价（timing_result 缺失时用于 risk-budget sizing）
         manipulation_risk: float = 0.0,  # Phase 11: 操纵风险评分 0-100
         portfolio_value: float = 0.0,  # P0-3: 组合权益（risk-budget sizing）
         entry_price: float = 0.0,      # P0-3: 入场价（缺省用 extra.price）
@@ -123,6 +124,8 @@ class PositioningEngine:
             position_limits: 用户偏好仓位约束 {"single_stock_cap": ..., "kelly_fraction": ...}
             risk_multiplier: 风险偏好仓位乘数 (conservative=0.7, balanced=1.0, aggressive=1.2)
             timing_result: Phase 7 入场/出场时机结果 (仅短线/波段模式)
+            suggested_stop: P0-3 直接建议止损价（全量路径无 timing_result 时传入，
+                供 risk-budget sizing 反推仓位上限；缺失时回退乘数链，不报错）
             portfolio_value: P0-3 组合权益（risk-budget sizing 公式 equity）
             entry_price: P0-3 入场价（缺省回退 extra.price/close）
         """
@@ -193,11 +196,12 @@ class PositioningEngine:
             alpha_timing = verdict.alpha_rationale
 
         # Phase 7: 入场/出场时机注入
+        # 注意: suggested_stop 直接来自入参（全量路径传入的 P0-3 止损建议），
+        # timing_result 存在时由 timing_result 覆盖。
         entry_low = 0.0
         entry_high = 0.0
         exit_low = 0.0
         exit_high = 0.0
-        suggested_stop = 0.0
         time_stop_days = 60
         atr_stop = 0.0
         target_1 = 0.0

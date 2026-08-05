@@ -333,6 +333,14 @@ def format_analysis_result(result: OrchestratorResult) -> str:
             bar = "▓" * int(score / 5) + "░" * (20 - int(score / 5))
             lines.append(f"  {label:6s} {score:5.0f} {bar} [🧠解释]")
         lines.append(f"  情绪     {CN.get(report.sentiment_signal, report.sentiment_signal)} [📊事实]")
+        # P3-3: 情绪维 0-100 整合评分（逆向指标: 高分=恐慌/逆向看多, 低分=贪婪/逆向看空）
+        _ss = float(getattr(report, "sentiment_score", 50.0) or 50.0)
+        _ss_bar = "▓" * int(_ss / 5) + "░" * (20 - int(_ss / 5))
+        _ss_sig = getattr(report, "sentiment_signal", "NORMAL")
+        lines.append(
+            f"  情绪(逆向) {_ss:5.0f} {_ss_bar} "
+            f"[高分=恐慌逆向看多 / 低分=贪婪逆向看空] 原始信号 {CN.get(_ss_sig, _ss_sig)}"
+        )
 
         if report.executive_risks:
             for r in report.executive_risks[:2]:

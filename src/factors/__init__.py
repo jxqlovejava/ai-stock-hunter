@@ -2,6 +2,7 @@
 """因子注册表与算子库。"""
 
 from src.factors.base import (
+    cross_or_ts_rank,
     decay_linear,
     delta,
     rank,
@@ -16,6 +17,7 @@ from src.factors.base import (
     ts_mean,
     ts_min,
     ts_rank,
+    ts_rank_value,
     ts_std,
     vwap,
 )
@@ -29,6 +31,8 @@ __all__ = [
     "rank",
     "scale",
     "ts_rank",
+    "ts_rank_value",
+    "cross_or_ts_rank",
     "ts_corr",
     "ts_cov",
     "ts_mean",

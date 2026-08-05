@@ -33,24 +33,24 @@ class TestCLI:
 
 
 class TestDecisions:
-    def test_journal_log(self):
+    def test_journal_log(self, tmp_path):
         from src.learner import DecisionJournal
-        j = DecisionJournal()
+        j = DecisionJournal(db_path=str(tmp_path / "journal.db"))
         j.log("600519", "BUY", "BUY", "觉得便宜", "NORMAL")
         j.log("000001", "SELL", "HOLD", "再看看", "PANIC")
         assert j.count() == 2
 
-    def test_weekly_review(self):
+    def test_weekly_review(self, tmp_path):
         from src.learner import DecisionJournal
-        j = DecisionJournal()
+        j = DecisionJournal(db_path=str(tmp_path / "journal.db"))
         j.log("600519", "BUY", "BUY", "同意系统", "NORMAL")
         report = j.weekly_review()
         assert "600519" in report
         assert "100%" in report  # 1/1 agreement
 
-    def test_empty_journal(self):
+    def test_empty_journal(self, tmp_path):
         from src.learner import DecisionJournal
-        j = DecisionJournal()
+        j = DecisionJournal(db_path=str(tmp_path / "journal.db"))
         assert "无交易" in j.weekly_review()
 
 

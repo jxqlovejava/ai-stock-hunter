@@ -17,11 +17,18 @@ import pytest
 from src.data.us_sector_transmission import (
     LeadLagStage,
     LeadLagWindow,
+    LeadSignalSource,
+    LeadSourceSignal,
     TransmissionResult,
     UsSectorTransmissionAdjuster,
     build_lead_lag_window,
+    build_lead_signals,
+    clear_lead_signal_sources,
+    get_lead_signal_sources,
     lead_signal_weak_adjust,
+    register_lead_signal_source,
     resolve_lead_lag_window,
+    source_signal_to_lead,
     to_leading_signals,
 )
 from src.routing.diagnosis import DiagnosisEngine
@@ -281,3 +288,237 @@ class TestDiagnosisLeadSignalConsumption:
     def test_score_macro_no_transmission_block(self):
         engine = DiagnosisEngine()
         assert engine._score_macro({}) == pytest.approx(self._baseline())
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. 可插拔真实数据源（LeadSignalSource）— 跨市场传导时差接真实数据
+# ─────────────────────────────────────────────────────────────
+class _MockLeadSource(LeadSignalSource):
+    """测试用数据源：可配置返回值 / 抛异常。"""
+
+    name = "mock_source"
+
+    def __init__(self, signals=None, error: Exception | None = None):
+        self.signals = signals or []
+        self.error = error
+        self.calls = 0
+
+    def fetch(self, category: str = "") -> list:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.signals
+
+
+class TestPluggableLeadSource:
+    def _upstream_signal(self, change_pct=5.0, category="commodity.CU",
+                         sectors=("铜", "有色金属")):
+        return LeadSourceSignal(
+            category=category,
+            name="沪铜",
+            change_pct=change_pct,
+            as_of=date(2026, 8, 5),
+            source="mock",
+            target_sectors=sectors,
+            confidence=0.6,
+        )
+
+    def test_interface_generates_lead_signal_from_source(self):
+        """① mock fetch 返回现货异动 → 断言生成领先信号（[SPECULATION] 弱信号）。"""
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        src = _MockLeadSource(signals=[self._upstream_signal(change_pct=5.0)])
+        lead = to_leading_signals(tx, lead_sources=[src])
+        assert src.calls == 1
+        source_leads = [s for s in lead if s.source == "lead_source"]
+        assert len(source_leads) >= 1
+        cu = next(s for s in source_leads if s.sector == "铜")
+        assert cu.us_key == "commodity.CU"
+        assert cu.direction == 1          # 现货涨 → 利好
+        assert cu.speculation is True     # 恒标 [SPECULATION]
+        assert 0.0 <= cu.strength <= 1.0
+        # 上游现货命名空间 → 窗口 14-28 天
+        assert cu.window_start_days == 14
+        assert cu.window_end_days == 28
+        # 配置驱动信号仍然保留（叠加而非替换）
+        assert any(s.source == "us_sector_transmission_leadlag" for s in lead)
+
+    def test_source_signal_strength_and_amplitude_limited(self):
+        """幅度受限: 极端异动被限幅到 ±SOURCE_MAX_CHANGE。"""
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        big = self._upstream_signal(change_pct=40.0)
+        src = _MockLeadSource(signals=[big])
+        lead = to_leading_signals(tx, lead_sources=[src])
+        cu = next(s for s in lead if s.sector == "铜")
+        assert abs(cu.raw_adjust) <= 8.0        # 限幅
+        assert 0.0 <= cu.strength <= 1.0
+
+    def test_fetch_failure_degrades_gracefully(self):
+        """② fetch 抛异常 → 优雅降级到配置驱动路径，不抛异常、不阻塞。"""
+        tx = UsSectorTransmissionAdjuster().compute({"MU": -5.38})
+        src = _MockLeadSource(error=RuntimeError("network down"))
+        lead = to_leading_signals(tx, lead_sources=[src])   # 不应抛异常
+        # 配置驱动信号仍在
+        assert any(s.us_key == "MU" for s in lead)
+        assert src.calls == 1
+
+    def test_fetch_empty_returns_config_only(self):
+        """fetch 返回 [] → 无新增信号，与无数据源时一致。"""
+        tx = UsSectorTransmissionAdjuster().compute({"MU": -5.38})
+        baseline = to_leading_signals(tx)
+        lead = to_leading_signals(tx, lead_sources=[_MockLeadSource(signals=[])])
+        assert lead == baseline
+
+    def test_enhances_existing_signal_sector(self):
+        """③ 与既有 to_leading_signals 集成: 现货异动增强同一板块信号。"""
+        tx = UsSectorTransmissionAdjuster().compute({"MU": -5.38})
+        # 碳酸锂现货上涨 → 新能源车/锂电 板块领先信号（新增维度）
+        src = _MockLeadSource(signals=[
+            LeadSourceSignal(
+                category="commodity.LC", name="碳酸锂", change_pct=4.0,
+                source="mock", target_sectors=("锂电", "新能源车"), confidence=0.6,
+            )
+        ])
+        lead = to_leading_signals(tx, lead_sources=[src], horizon_days=45)
+        assert any(s.us_key == "commodity.LC" and s.sector == "锂电" for s in lead)
+        # 存储板块仍收到 MU 空头弱信号
+        assert lead_signal_weak_adjust(lead, ["存储"]) < 0
+        # 锂电板块收到碳酸锂上涨利好
+        assert lead_signal_weak_adjust(lead, ["锂电"]) > 0
+
+    def test_source_signals_capped_in_weak_adjust(self):
+        """多源信号求和仍被 lead_signal_weak_adjust 限幅在 ±cap。"""
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        many = [_MockLeadSource(signals=[self._upstream_signal(change_pct=9.0, sectors=("铜",))])
+                for _ in range(5)]
+        lead = to_leading_signals(tx, lead_sources=many)
+        wa = lead_signal_weak_adjust(lead, ["铜"], cap=3.0)
+        assert -3.0 <= wa <= 3.0
+
+    def test_build_lead_signals_convenience(self):
+        """build_lead_signals 便捷入口与 to_leading_signals 等价。"""
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        src = _MockLeadSource(signals=[self._upstream_signal(change_pct=3.0)])
+        assert build_lead_signals(tx, lead_sources=[src]) == to_leading_signals(
+            tx, lead_sources=[src]
+        )
+
+    def test_source_signal_to_lead_beyond_horizon_skipped(self):
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        src = _MockLeadSource(signals=[self._upstream_signal(change_pct=3.0)])
+        lead = to_leading_signals(tx, lead_sources=[src], horizon_days=10)
+        # 上游现货窗口 14-28 > horizon 10 → 被跳过
+        assert not any(s.source == "lead_source" for s in lead)
+        # 配置驱动信号仍在
+        assert any(s.us_key == "SOX" for s in lead)
+
+    def test_source_signal_to_lead_window_dates(self):
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        src = _MockLeadSource(signals=[self._upstream_signal(change_pct=3.0)])
+        lead = to_leading_signals(tx, lead_sources=[src], as_of=date(2026, 8, 5))
+        cu = next(s for s in lead if s.sector == "铜")
+        assert cu.window_start == date(2026, 8, 19)
+        assert cu.window_end == date(2026, 9, 2)
+
+    def test_registry_and_env_empty_by_default(self):
+        """无任何数据源配置 → 注册表为空、环境未配置 → 行为与现状一致。"""
+        clear_lead_signal_sources()
+        assert get_lead_signal_sources() == []
+        tx = UsSectorTransmissionAdjuster().compute({"MU": -5.38})
+        assert to_leading_signals(tx) == to_leading_signals(tx, lead_sources=[])
+
+    def test_registry_registration(self, monkeypatch):
+        """显式注册的数据源被 get_lead_signal_sources 返回。"""
+        monkeypatch.delenv("AI_STOCK_LEAD_SOURCES", raising=False)
+        clear_lead_signal_sources()
+        src = _MockLeadSource(signals=[self._upstream_signal(change_pct=2.5)])
+        register_lead_signal_source(src)
+        assert get_lead_signal_sources() == [src]
+        clear_lead_signal_sources()
+
+    def test_env_enabled_source_loaded(self, monkeypatch):
+        """环境变量 AI_STOCK_LEAD_SOURCES=futures_spot 启用真实数据源。"""
+        clear_lead_signal_sources()
+        monkeypatch.setenv("AI_STOCK_LEAD_SOURCES", "futures_spot")
+        try:
+            names = [s.name for s in get_lead_signal_sources()]
+            assert "futures_spot" in names
+        finally:
+            clear_lead_signal_sources()
+
+
+class TestFuturesSpotLeadSource:
+    """真实数据源 FuturesSpotLeadSource — 用 mock 数据驱动管道验证。"""
+
+    def _fake_df(self):
+        import pandas as pd
+        return pd.DataFrame([
+            {"date": "20260804", "symbol": "CU", "spot_price": 100.0},
+            {"date": "20260805", "symbol": "CU", "spot_price": 105.0},
+            {"date": "20260804", "symbol": "AU", "spot_price": 800.0},
+            {"date": "20260805", "symbol": "AU", "spot_price": 810.0},
+            {"date": "20260805", "symbol": "LC", "spot_price": 100.0},  # 仅一日 → 无涨跌幅
+        ])
+
+    def test_fetch_computes_spot_change(self, monkeypatch):
+        from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+        monkeypatch.setattr(
+            "akshare.futures_spot_price_daily",
+            lambda start_day, end_day: self._fake_df(),
+        )
+        src = FuturesSpotLeadSource(threshold_pct=2.0)
+        signals = src.fetch()
+        by_cat = {s.category: s for s in signals}
+        # CU 100→105 = +5% ≥2% 阈值 → 产出
+        assert "commodity.CU" in by_cat
+        assert by_cat["commodity.CU"].change_pct == pytest.approx(5.0)
+        assert by_cat["commodity.CU"].target_sectors == ("铜", "有色金属", "电缆")
+        # AU 800→810 = +1.25% < 2% → 被阈值过滤
+        assert "commodity.AU" not in by_cat
+        # LC 仅一日 → 无涨跌幅
+        assert "commodity.LC" not in by_cat
+
+    def test_fetch_category_filter(self, monkeypatch):
+        from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+        monkeypatch.setattr(
+            "akshare.futures_spot_price_daily",
+            lambda start_day, end_day: self._fake_df(),
+        )
+        src = FuturesSpotLeadSource(threshold_pct=2.0)
+        assert [s.category for s in src.fetch("CU")] == ["commodity.CU"]
+        assert [s.category for s in src.fetch("commodity.CU")] == ["commodity.CU"]
+        assert src.fetch("ZZZ") == []
+
+    def test_fetch_failure_degrades_to_empty(self, monkeypatch):
+        """网络/解析失败 → 返回 []（优雅降级），不抛异常。"""
+        from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+
+        def boom(start_day, end_day):
+            raise RuntimeError("100ppi down")
+
+        monkeypatch.setattr("akshare.futures_spot_price_daily", boom)
+        src = FuturesSpotLeadSource()
+        assert src.fetch() == []
+
+    def test_fetch_empty_df_returns_empty(self, monkeypatch):
+        from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+        import pandas as pd
+        monkeypatch.setattr(
+            "akshare.futures_spot_price_daily",
+            lambda start_day, end_day: pd.DataFrame(),
+        )
+        assert FuturesSpotLeadSource().fetch() == []
+
+    def test_source_drives_pipeline_end_to_end(self, monkeypatch):
+        """mock 现货数据 → 数据源 → to_leading_signals 全链路。"""
+        from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+        monkeypatch.setattr(
+            "akshare.futures_spot_price_daily",
+            lambda start_day, end_day: self._fake_df(),
+        )
+        src = FuturesSpotLeadSource(threshold_pct=2.0)
+        tx = UsSectorTransmissionAdjuster().compute({"SOX": -3.33})
+        lead = to_leading_signals(tx, lead_sources=[src])
+        cu = next(s for s in lead if s.us_key == "commodity.CU")
+        assert cu.direction == 1
+        assert cu.speculation is True
+        assert cu.source == "lead_source"

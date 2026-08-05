@@ -232,6 +232,55 @@ class Orchestrator:
         except Exception as exc:
             logger.warning("Deep research engines unavailable: %s", exc)
 
+    @staticmethod
+    def _entry_stop_for_sizing(
+        t0: Optional[dict],
+        quote,
+        quote_dict: dict,
+        position_limits: Optional[dict],
+    ) -> tuple[float, float]:
+        """推导全量路径建仓前止损价与入场价，供 risk-budget sizing 使用。
+
+        全量 run() 没有 tactics 的 TimingResult，止损价从既有来源推导：
+          1. T+0 引擎止损（t0 dict 的 ``stop_loss`` 字段）
+          2. 固定止损百分比（``position_limits.stop_loss``，默认 -2%）
+        入场价取 quote.price，缺失时回退 quote_dict 的 price/close。
+
+        Returns:
+            (suggested_stop, entry_price)；取不到止损价时返回 (0.0, 0.0)，
+            此时 generate_signal 内部回退乘数链（不报错）。
+        """
+        entry_px = 0.0
+        if quote is not None:
+            try:
+                entry_px = float(getattr(quote, "price", 0) or 0)
+            except (TypeError, ValueError):
+                entry_px = 0.0
+        if entry_px <= 0:
+            try:
+                entry_px = float(quote_dict.get("price") or quote_dict.get("close") or 0)
+            except (TypeError, ValueError):
+                entry_px = 0.0
+
+        suggested_stop = 0.0
+        if t0:
+            try:
+                suggested_stop = float(t0.get("stop_loss") or 0) or 0.0
+            except (TypeError, ValueError):
+                suggested_stop = 0.0
+
+        # T+0 无止损 → 固定止损百分比回退
+        if suggested_stop <= 0 and entry_px > 0:
+            stop_loss_pct = (position_limits or {}).get("stop_loss", -0.02)
+            try:
+                suggested_stop = entry_px * (1 + float(stop_loss_pct or -0.02))
+            except (TypeError, ValueError):
+                suggested_stop = 0.0
+
+        if suggested_stop <= 0 or entry_px <= 0:
+            return 0.0, 0.0
+        return suggested_stop, entry_px
+
     def run(
         self,
         symbol: str,
@@ -1596,6 +1645,11 @@ class Orchestrator:
         if sizing_result is not None:
             _adj_manip_cap = sizing_result.position_cap or (effective_macro_cap * sizing_result.kelly_discount)
 
+        # P0-3: 全量路径接线 risk-budget cap — 从 T+0 止损/固定止损推导 suggested_stop，
+        # 使 generate_signal 的 risk-budget sizing 生效；取不到则回退（不报错）。
+        entry_stop, entry_px = self._entry_stop_for_sizing(
+            result.t0_result, quote, quote_dict, position_limits,
+        )
         signal = self.positioning.generate_signal(
             verdict,
             macro_cap=effective_macro_cap,
@@ -1604,6 +1658,8 @@ class Orchestrator:
             name=name,
             extra=quote.dict() if quote else {},
             manipulation_risk=_adj_manip_cap,
+            suggested_stop=entry_stop,
+            entry_price=entry_px,
         )
         result.signal = signal
         # 保存仓位计算详情供格式化器使用

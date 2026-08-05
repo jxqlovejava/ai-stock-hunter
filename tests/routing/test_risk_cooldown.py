@@ -223,6 +223,95 @@ class TestRiskBudgetSizing:
         )
         assert sig.target_weight == pytest.approx(0.20)
 
+    def test_suggested_stop_param_caps_weight(self):
+        """全量路径直接传 suggested_stop（无 timing_result）→ risk-budget cap 生效。
+
+        乘数链 0.608，risk_budget_pct=0.02, entry=100, stop=95
+        → cap = 0.02*100/5 = 0.40 → 取 min 得 0.40。
+        """
+        pe = PositioningEngine(kelly_sizer=None)
+        sig = pe.generate_signal(
+            _verdict(),
+            macro_cap=0.8,
+            extra={"price": 100.0},
+            suggested_stop=95.0,
+            portfolio_value=1_000_000,
+        )
+        assert sig.target_weight == pytest.approx(0.40)
+
+    def test_suggested_stop_param_fallback_without_stop(self):
+        """suggested_stop 缺失 → 回退乘数链，不报错。"""
+        pe = PositioningEngine(kelly_sizer=None)
+        sig = pe.generate_signal(
+            _verdict(),
+            macro_cap=0.8,
+            extra={"price": 100.0},
+        )
+        assert sig.target_weight == pytest.approx(0.608)
+
+    def test_suggested_stop_param_stop_gte_entry_fallback(self):
+        """suggested_stop ≥ 入场 → 风险模型失效，回退乘数链。"""
+        pe = PositioningEngine(kelly_sizer=None)
+        sig = pe.generate_signal(
+            _verdict(),
+            macro_cap=0.8,
+            extra={"price": 100.0},
+            suggested_stop=100.0,
+        )
+        assert sig.target_weight == pytest.approx(0.608)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ③b 全量路径 suggested_stop 推导（orchestrator → risk-budget sizing）
+# ══════════════════════════════════════════════════════════════════════
+
+class TestEntryStopDerivation:
+    """Orchestrator._entry_stop_for_sizing：T+0 止损 / 固定止损百分比推导。"""
+
+    def _helper(self, t0, quote, quote_dict, position_limits):
+        from src.routing.orchestrator import Orchestrator
+        return Orchestrator._entry_stop_for_sizing(t0, quote, quote_dict, position_limits)
+
+    def test_t0_stop_loss_used(self):
+        """T+0 引擎止损优先。"""
+        from types import SimpleNamespace
+        stop, entry = self._helper(
+            {"stop_loss": 9.5},
+            SimpleNamespace(price=10.0),
+            {},
+            None,
+        )
+        assert stop == pytest.approx(9.5)
+        assert entry == pytest.approx(10.0)
+
+    def test_fixed_pct_fallback_without_t0(self):
+        """无 T+0 → 固定止损百分比回退（-5% → stop=9.5）。"""
+        stop, entry = self._helper(
+            None,
+            None,
+            {"price": 10.0},
+            {"stop_loss": -0.05},
+        )
+        assert stop == pytest.approx(9.5)
+        assert entry == pytest.approx(10.0)
+
+    def test_default_stop_loss_pct(self):
+        """position_limits 无 stop_loss → 默认 -2% → stop=9.8。"""
+        stop, entry = self._helper(
+            None,
+            None,
+            {"close": 10.0},
+            None,
+        )
+        assert stop == pytest.approx(9.8)
+        assert entry == pytest.approx(10.0)
+
+    def test_no_price_no_stop_returns_zero(self):
+        """取不到入场价/止损 → 返回 (0.0, 0.0)，generate_signal 回退不报错。"""
+        stop, entry = self._helper(None, None, {}, None)
+        assert stop == 0.0
+        assert entry == 0.0
+
 
 # ══════════════════════════════════════════════════════════════════════
 # ④ ctx 注入 consecutive_stops（orchestrator → 军规 r017）

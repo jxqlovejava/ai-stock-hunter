@@ -195,3 +195,102 @@ class TestMoniOrder:
         assert order.symbol == "600519"
         assert order.action == "buy"
         assert order.use_market_price is True
+
+
+class TestEventReview:
+    """P2-3 事件驱动复盘触发频率：仅亏损平仓 / 连续止损 / 回撤超标触发。"""
+
+    @pytest.fixture
+    def engine(self, tmp_path):
+        from src.paper_trading.engine import PaperTradingEngine
+
+        eng = PaperTradingEngine(data_dir=tmp_path)
+        eng._triggered = []
+        eng._trigger_event_review = (
+            lambda state, reasons, trades: eng._triggered.append(reasons)
+        )
+        return eng
+
+    @staticmethod
+    def _state(drawdown: float = 0.01):
+        from src.paper_trading.state import PortfolioState
+
+        hwm = 1000.0
+        return PortfolioState(
+            initial_capital=1000.0,
+            high_water_mark=hwm,
+            cash=hwm * (1 - drawdown),
+        )
+
+    @staticmethod
+    def _trade(symbol: str = "600519", action: str = "sell", pnl_pct: float = 0.0):
+        from src.paper_trading.state import PaperTrade
+
+        return PaperTrade(
+            trade_id=f"{symbol}_{action}_{pnl_pct}",
+            symbol=symbol,
+            name="测试",
+            action=action,
+            price=10.0,
+            quantity=100,
+            notional=1000.0,
+            commission=1.0,
+            stamp_tax=0.0,
+            transfer_fee=0.0,
+            total_cost=1.0,
+            net_amount=999.0,
+            reason="test",
+            timestamp="2026-08-06T10:00:00",
+            remaining_cash=1000.0,
+            pnl_pct=pnl_pct,
+        )
+
+    def test_profit_sell_does_not_trigger(self, engine, monkeypatch):
+        """正常止盈平仓不触发单笔事件复盘。"""
+        monkeypatch.setattr(engine._state_mgr, "load_trades", lambda limit=30: [])
+        engine._maybe_trigger_event_review(self._state(), [self._trade(pnl_pct=0.05)])
+        assert engine._triggered == []
+
+    def test_loss_sell_triggers(self, engine, monkeypatch):
+        """亏损平仓触发单笔事件复盘。"""
+        monkeypatch.setattr(engine._state_mgr, "load_trades", lambda limit=30: [])
+        engine._maybe_trigger_event_review(self._state(), [self._trade(pnl_pct=-0.03)])
+        assert len(engine._triggered) == 1
+        assert any("亏损平仓" in r for r in engine._triggered[0])
+
+    def test_mixed_sells_only_loss_counts(self, engine, monkeypatch):
+        """同日多笔卖出：仅亏损笔数计入，止盈笔不计入。"""
+        monkeypatch.setattr(engine._state_mgr, "load_trades", lambda limit=30: [])
+        trades = [
+            self._trade("000001", "sell", 0.08),   # 止盈
+            self._trade("600519", "sell", -0.02),  # 亏损
+        ]
+        engine._maybe_trigger_event_review(self._state(), trades)
+        assert len(engine._triggered) == 1
+        assert any("亏损平仓 1 笔" in r for r in engine._triggered[0])
+
+    def test_consecutive_losses_triggers(self, engine, monkeypatch):
+        """连续 ≥3 笔亏损卖出触发止损复盘（保留既有行为）。"""
+        monkeypatch.setattr(
+            engine._state_mgr,
+            "load_trades",
+            lambda limit=30: [
+                self._trade(symbol=f"6{i}", pnl_pct=-0.02) for i in range(3)
+            ],
+        )
+        engine._maybe_trigger_event_review(self._state(), [])
+        assert len(engine._triggered) == 1
+        assert any("连续" in r for r in engine._triggered[0])
+
+    def test_drawdown_triggers(self, engine, monkeypatch):
+        """回撤 ≥8% 触发即时复盘（保留既有行为）。"""
+        monkeypatch.setattr(engine._state_mgr, "load_trades", lambda limit=30: [])
+        engine._maybe_trigger_event_review(self._state(drawdown=0.09), [])
+        assert len(engine._triggered) == 1
+        assert any("回撤" in r for r in engine._triggered[0])
+
+    def test_no_trigger_when_clean(self, engine, monkeypatch):
+        """无亏损平仓/连亏/回撤 → 不触发复盘。"""
+        monkeypatch.setattr(engine._state_mgr, "load_trades", lambda limit=30: [])
+        engine._maybe_trigger_event_review(self._state(), [])
+        assert engine._triggered == []
