@@ -212,6 +212,21 @@ class DoctrineChecker:
             threshold = 8 if penalty < 1.0 else 4
             return weeks < threshold
 
+        # ── 缠论结构军规 ──
+        # 中枢破位/三卖 — 结构转弱
+        if rule.id == "r037":
+            return bool(ctx.get("chanlun_sell_signal")) or bool(ctx.get("chanlun_zs_break"))
+
+        # 背驰未确认不进场 — 中枢破位且无买点/底背驰确认
+        if rule.id == "r038":
+            if not ctx.get("chanlun_zs_break"):
+                return False
+            if ctx.get("chanlun_buy_confirmed"):
+                return False
+            if ctx.get("chanlun_bihuang_down"):
+                return False
+            return True
+
         # 默认不触发
         return False
 

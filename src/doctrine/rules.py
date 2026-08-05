@@ -158,4 +158,16 @@ MILITARY_RULES: list[Rule] = [
         "价格站回200周均线不足4周 → 趋势反转未确认，"
         "建议等待周线级别右侧确认后再考虑建仓。",
     ),
+
+    # ── 缠论结构军规 ──
+    Rule(
+        "r037", RuleCategory.TRADING, "缠论中枢破位/三卖",
+        Severity.WARN,
+        "缠论结构转弱(出现一卖/二卖/三卖或现价跌破中枢下沿) → 追高/抄底需谨慎",
+    ),
+    Rule(
+        "r038", RuleCategory.TRADING, "缠论背驰未确认",
+        Severity.WARN,
+        "中枢破位且无底背驰/买点确认 → 跌势未止，避免左侧抄底",
+    ),
 ]
