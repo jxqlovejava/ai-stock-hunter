@@ -33,6 +33,29 @@ def test_analyzer_data_gap_short():
     assert "gap" in r.current_state
 
 
+def test_analyzer_rangeindex_date_col_normalized():
+    """回归: 腾讯/mootdx 等源返回 RangeIndex + 「日期」列，dt 必须是真实日期。"""
+    rng = np.random.default_rng(7)
+    n = 120
+    close = 100 + np.cumsum(rng.normal(0, 1, n))
+    dates = pd.date_range("2025-01-01", periods=n, freq="D").strftime("%Y-%m-%d")
+    df = pd.DataFrame({
+        "日期": dates, "open": close + rng.normal(0, 0.3, n),
+        "high": close + rng.uniform(0, 1, n), "low": close - rng.uniform(0, 1, n),
+        "close": close, "volume": 1e6,
+    })                                       # index 默认 RangeIndex
+    assert not isinstance(df.index, pd.DatetimeIndex)
+    r = ChanlunAnalyzer().analyze(df, "000001", "测试")
+    assert r.bis and r.zhongshus
+    # 笔 dt 必须可格式化（strftime），不能是整数位置
+    for b in r.bis:
+        assert hasattr(b.start_dt, "strftime") and hasattr(b.end_dt, "strftime")
+    for p in r.points:
+        assert hasattr(p.dt, "strftime")
+    # 现价位置取整须基于归一化后 df 的收盘
+    assert r.current_state["last_close"] == float(close[-1])
+
+
 def test_analyzer_backend_self_without_czsc(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "czsc", None)  # 模拟 czsc 不可用

@@ -19,6 +19,29 @@ from src.indicators.chanlun.schema import Bi, ChanlunPoint, ChanlunResult
 
 logger = logging.getLogger(__name__)
 
+# 部分数据源（腾讯/mootdx 等）返回 RangeIndex，真实日期在「日期」列。
+# 全管道（去包含/分型/笔/中枢/买卖点/czsc 适配器）依赖 index 作为 dt，
+# 故入口统一归一化为 DatetimeIndex，保证 dt 语义与 CLI 日期渲染。
+_DATETIME_COLS = ("date", "datetime", "日期", "trade_date", "Date", "time")
+
+
+def _ensure_datetime_index(df) -> pd.DataFrame:
+    if df is None or isinstance(getattr(df, "index", None), pd.DatetimeIndex):
+        return df
+    for col in _DATETIME_COLS:
+        if col in df.columns:
+            try:
+                parsed = pd.to_datetime(df[col], errors="coerce")
+                if parsed.notna().sum() < len(df) * 0.9:
+                    continue  # 该列解析失败比例过高，尝试下一列
+                out = df.copy()
+                out["_dt"] = parsed
+                out = out.set_index("_dt").drop(columns=[col])
+                return out
+            except Exception:
+                continue
+    return df
+
 
 def _assign_macd_area(bis: list[Bi], df: pd.DataFrame) -> list[Bi]:
     """按笔区间回填 MACD 柱面积。"""
@@ -92,6 +115,7 @@ class ChanlunAnalyzer:
 
     def analyze(self, df, symbol: str, name: str = "", freq: str | None = None) -> ChanlunResult:
         f = freq or self.freq
+        df = _ensure_datetime_index(df)
         if df is None or len(df) < 30:
             return self._empty_result(symbol, name, f, reason="[DATA_GAP] 缠论: 数据不足30根")
         try:

@@ -928,6 +928,100 @@ def cmd_indicators(args: list[str]):
     print("💡 更多指标: 趋势/震荡/波动率/结构共 20+ 种，见 src/indicators/")
 
 
+@_safe_cmd
+def cmd_chanlun(args: list[str]):
+    """缠论结构分析 — 分型/笔/中枢/背驰/买卖点。
+
+    用法: python -m src chanlun <code> [--freq D|W]
+    """
+    import argparse
+    from src.data.aggregator import DataAggregator
+    from src.indicators.chanlun.analyzer import ChanlunAnalyzer
+
+    parser = argparse.ArgumentParser(description="缠论结构分析")
+    parser.add_argument("symbol", nargs="?", default="", help="6 位股票代码")
+    parser.add_argument("--freq", default="D", choices=["D", "W"],
+                        help="周期 D=日线 / W=周线 (默认 D)")
+    parsed = parser.parse_args(args)
+
+    symbol = parsed.symbol
+    if not symbol:
+        print("用法: python -m src chanlun <code> [--freq D|W]")
+        print()
+        print("输出: 去包含K线 / 顶底分型 / 笔 / 中枢 / 背驰 / 买卖点")
+        return
+    if not re.match(r"^\d{6}$", symbol):
+        print(f"❌ 无效股票代码: {symbol}")
+        return
+
+    agg = DataAggregator()
+    try:
+        if parsed.freq == "W":
+            df = agg.get_history(symbol, period="weekly")
+        else:
+            df = agg.get_history(symbol)
+        q = agg.get_quote(symbol)
+        name = q.name if q else symbol
+    except Exception:
+        print(f"❌ 无法获取 {symbol} 数据")
+        return
+    if df is None or (hasattr(df, "empty") and df.empty):
+        print(f"❌ {symbol} 无数据")
+        return
+
+    col_map = {"开盘": "open", "收盘": "close", "最高": "high", "最低": "low",
+               "成交量": "volume", "成交额": "amount",
+               "open": "open", "close": "close", "high": "high",
+               "low": "low", "volume": "volume"}
+    if hasattr(df, "rename"):
+        df = df.rename(columns={c: col_map[c] for c in df.columns if c in col_map})
+
+    result = ChanlunAnalyzer(freq=parsed.freq).analyze(df, symbol, name)
+    _render_chanlun(result)
+
+
+def _render_chanlun(result) -> None:
+    """渲染缠论分析结果。"""
+    if result.current_state.get("gap"):
+        print(f"\n⚠️  {result.current_state['gap']}")
+        return
+    print(f"\n📈 缠论结构分析 — {result.symbol} {result.name} "
+          f"({result.freq}线)  backend={result.backend}  confidence={result.confidence}")
+    print(f"   分型 {len(result.fractals)} | 笔 {len(result.bis)} "
+          f"| 中枢 {len(result.zhongshus)} | 买卖点 {len(result.points)}")
+
+    if result.zhongshus:
+        print("\n  📦 中枢序列:")
+        for zs in result.zhongshus[-6:]:
+            print(f"     {zs.state} ZG={zs.zg:.2f} ZD={zs.zd:.2f} ZZ={zs.zz:.2f} "
+                  f"({_fmt_dt(zs.start_dt)} → {_fmt_dt(zs.end_dt)})")
+    if result.bis:
+        print("\n  ✏️ 最近笔:")
+        for b in result.bis[-6:]:
+            d = "↑" if b.direction == "up" else "↓"
+            print(f"     {d} {_fmt_dt(b.start_dt)}→{_fmt_dt(b.end_dt)}  "
+                  f"H={b.high:.2f} L={b.low:.2f} len={b.length} MACD={b.macd_area:.0f}")
+    if result.points:
+        print("\n  🎯 买卖点信号:")
+        for p in result.points[-8:]:
+            print(f"     {p.kind} @ {p.price:.2f} ({_fmt_dt(p.dt)}) "
+                  f"conf={p.confidence:.2f} — {p.rationale}")
+
+    cs = result.current_state
+    print(f"\n  📍 现价位置: {cs.get('position', '未知')} "
+          f"| 中枢状态: {cs.get('zhongshu_state', '未形成')}")
+    print(f"  信号: 入场{len(result.signals['entry'])}个 "
+          f"出场{len(result.signals['exit'])}个 | 置信度 {result.confidence}")
+
+
+def _fmt_dt(dt) -> str:
+    """安全格式化 datetime/Timestamp。"""
+    try:
+        return dt.strftime("%Y-%m-%d")
+    except AttributeError:
+        return str(dt)
+
+
 def cmd_backtest_optimize():
     """参数优化 — 对 MVP1 策略进行网格搜索参数优化。"""
     from src.backtest.optimizer import GridSearchOptimizer
@@ -4959,6 +5053,8 @@ def _print_command_detail(cmd: str) -> None:
         "sweep": ("python -m src sweep", "自选股扫雷（检查所有自选股风险）", []),
         "preference": ("python -m src preference <view|setup|edit|reset>", "投资者偏好管理", ["view: 查看当前配置", "setup: 交互式设置向导", "edit: 编辑配置", "reset: 重置为默认"]),
         "preview-earnings": ("python -m src preview-earnings [code] [--consensus N] [--q2-shipment N]", "业绩先行研判 — 基于锂盐价格等高频公开数据测算Q2业绩", ["code: 股票代码 (默认002460 赣锋锂业)", "--consensus: 机构一致预期Q2净利(亿元)", "--q2-shipment: Q2锂盐出货量(千吨LCE)", "--no-sensitivity: 跳过敏感性分析"]),
+        "chanlun": ("python -m src chanlun <code> [--freq D|W]",
+                    "缠论结构分析 — 分型/笔/中枢/背驰/买卖点", ["--freq D|W: 周期 日线/周线 (默认 D)"]),
     }
 
     if cmd in details:
@@ -5109,6 +5205,7 @@ _NL_ROUTES: list[dict] = [
     {"keys": ["形态", "k线", "蜡烛", "candlestick", "技术形态"], "cmd": "patterns", "help": "python -m src patterns <code>  # 需要股票代码"},
     {"keys": ["短线", "波段", "技术分析", "入场", "出场", "technical", "swing"], "cmd": "technical", "help": "python -m src technical <code>  # 需要股票代码"},
     {"keys": ["买点", "卖点", "能买吗", "现在能买", "现在能进", "什么时候买", "什么时候卖", "止损", "止盈", "止损设", "能进吗", "还能拿", "还能拿吗", "加仓", "减仓", "tactics"], "cmd": "tactics", "help": "python -m src tactics <code>  # 需要股票代码"},
+    {"keys": ["缠论", "中枢", "背驰", "chanlun"], "cmd": "chanlun", "help": "python -m src chanlun <code>  # 需要股票代码"},
     {"keys": ["新手", "引导", "入门", "开始", "帮助", "help", "start", "怎么用", "如何使用"], "cmd": "start", "help": "python -m src start"},
     {"keys": ["自选", "盯盘", "扫雷", "watchlist", "sweep", "预警", "alert"], "cmd": "sweep", "help": "python -m src sweep"},
     {"keys": ["进化", "学习", "策略进化", "论文", "evolution"], "cmd": "evolution list", "help": "python -m src evolution list"},
@@ -5918,6 +6015,7 @@ def main():
         print("🕯️ K线形态 (NEW):")
         print("  patterns <code>         K线形态识别 (63种)")
         print("  indicators <code>       技术指标计算 (25种)")
+        print("  chanlun <code>          缠论结构分析 (分型/笔/中枢/买卖点)")
         print()
         print("🧬 学习 & 进化:")
         print("  evolution <sub>         策略进化（论文驱动）")
@@ -6025,6 +6123,8 @@ def main():
         "alert": lambda: cmd_alert(args),
         # Phase 7: 短线/波段
         "tactics": lambda: cmd_tactics(args),
+        # 缠论结构分析
+        "chanlun": lambda: cmd_chanlun(args),
         "monitor": lambda: cmd_monitor(args),
         "technical": lambda: cmd_technical(args),
         "swing-scan": lambda: cmd_swing_scan(args),
@@ -6119,6 +6219,9 @@ def main():
                 cmd_backtest()
             elif nl_result["cmd"] == "sweep":
                 cmd_sweep(args)
+            elif nl_result["cmd"] == "chanlun":
+                m = re.search(r"\b(\d{6})\b", nl_query)
+                cmd_chanlun([m.group(1)] if m else [])
             elif nl_result["cmd"] == "start":
                 cmd_start(args)
             elif nl_result["cmd"] in ("diagnose", "analyze", "technical", "patterns"):
