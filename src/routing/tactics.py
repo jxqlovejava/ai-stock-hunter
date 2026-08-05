@@ -35,6 +35,58 @@ logger = logging.getLogger(__name__)
 _perf = __debug__
 
 
+def _chanlun_score(points, position: str | None = None) -> float:
+    """缠论独立维度评分（0-100）：买点加分/卖点减分 + 中枢位置微调。
+
+    独立于技术 6 维 composite，供 tactics 报告展示与军规 ctx 参考。
+    """
+    score = 50.0
+    for p in points:
+        if p.kind in ("一买", "二买", "三买"):
+            score = max(score, 55.0 + 15.0 * p.confidence)
+        elif p.kind in ("一卖", "二卖", "三卖"):
+            score = min(score, 45.0 - 10.0 * p.confidence)
+    if position == "中枢下方":
+        score -= 8.0
+    elif position == "中枢上方":
+        score += 6.0
+    return round(max(0.0, min(100.0, score)), 1)
+
+
+def _apply_chanlun_snapshot(snapshot: "TacticalSnapshot", chanlun_res) -> dict:
+    """把缠论结果写入 snapshot：评分 + 买卖点信号 + 返回 doctrine_ctx 字段。
+
+    M4 决策A：缠论为独立维度，不改技术 6 维 composite，仅并表信号。
+    返回 dict 供 doctrine_ctx 注入（Task 13 军规消费）。
+    """
+    snapshot.chanlun_result = chanlun_res.to_summary_dict()
+    cs = chanlun_res.current_state
+    snapshot.chanlun_score = _chanlun_score(chanlun_res.points, cs.get("position"))
+    for p in chanlun_res.points:
+        if p.kind in ("一买", "二买", "三买"):
+            snapshot.entry_signals.append({
+                "type": f"CHANLUN_{p.kind}", "description": p.rationale,
+                "zone_low": round(p.price * 0.99, 2),
+                "zone_high": round(p.price * 1.01, 2),
+                "confidence": p.confidence,
+            })
+        else:
+            snapshot.exit_signals.append({
+                "type": f"CHANLUN_{p.kind}", "description": p.rationale,
+                "zone_low": round(p.price * 0.99, 2),
+                "zone_high": round(p.price * 1.01, 2),
+                "confidence": p.confidence, "urgency": "NORMAL",
+            })
+    last_kind = cs.get("last_point", {}).get("kind", "")
+    return {
+        "chanlun_sell_signal": "sell" if last_kind in ("一卖", "二卖", "三卖") else "",
+        "chanlun_zs_break": cs.get("position") == "中枢下方",
+        "chanlun_buy_confirmed": any(
+            p.kind in ("一买", "二买", "三买") for p in chanlun_res.points),
+        "chanlun_bihuang_down": any("底背驰" in p.rationale for p in chanlun_res.points),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════
 # DTO
 # ═══════════════════════════════════════════════════════════════════
@@ -82,6 +134,10 @@ class TacticalSnapshot:
     time_stop_days: int = 10
     macd_kdj: Optional[dict] = None
     technical_note: str = ""
+
+    # ── 🥋 缠论结构（独立维度，不改 6 维 composite）──
+    chanlun_score: float = 50.0
+    chanlun_result: Optional[dict] = None
 
     # ── 💰 资金面 ──
     margin_balance: Optional[float] = None         # 融资余额(亿)
@@ -220,6 +276,7 @@ def run_tactics(
     _quote = None
     _cross_validated = False
     _bars_df = None       # pd.DataFrame | None
+    _chanlun_state: dict = {}   # 缠论状态 → doctrine_ctx 注入
     _close_series: list[float] = []
     _ma20 = None
     _ma60 = None
@@ -623,6 +680,14 @@ def run_tactics(
         except Exception:
             pass
 
+        # 缠论独立维度 (M4, 决策A: 独立报告不改 composite)
+        try:
+            from src.indicators.chanlun.analyzer import ChanlunAnalyzer
+            chanlun_res = ChanlunAnalyzer(freq="D").analyze(df, symbol, name)
+            _chanlun_state.update(_apply_chanlun_snapshot(snapshot, chanlun_res))
+        except Exception:
+            snapshot.data_gaps.append("[DATA_GAP] 缠论分析")
+
         snapshot.technical_note = (
             f"综合{snapshot.technical_composite:.0f} "
             f"趋势{snapshot.trend_score:.0f} 反转{snapshot.reversal_score:.0f} "
@@ -774,6 +839,8 @@ def run_tactics(
 
     # 构建军规上下文 (从缓存提取, 零网络)
     doctrine_ctx = {"stock_name": name}
+    if _chanlun_state:
+        doctrine_ctx.update(_chanlun_state)
     cs = _close_series
     if len(cs) >= 6:
         try:
