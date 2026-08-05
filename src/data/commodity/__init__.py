@@ -16,6 +16,7 @@ from src.data.commodity.schemas import (
 )
 from src.data.commodity.lithium_tracker import LithiumPriceTracker
 from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
+from src.data.commodity.memory_chip_source import MemoryChipLeadSource
 
 __all__ = [
     "CommodityPrice",
@@ -25,4 +26,5 @@ __all__ = [
     "LithiumPriceSeries",
     "LithiumPriceTracker",
     "FuturesSpotLeadSource",
+    "MemoryChipLeadSource",
 ]

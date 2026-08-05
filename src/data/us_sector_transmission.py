@@ -113,15 +113,19 @@ SECTOR_MAP: list[dict] = [
 
 # 需要从东财API额外拉取的美股标的secid列表
 # (已有的SPX/NDX/DJIA之外需要补充的)
+#
+# ⚠️ secid 市场前缀（2026-08-06 实测，东财 push2 ulist）:
+#   105 = 美股 NASDAQ / 106 = 美股 NYSE / 107 = 美股 ARCA(ETF) / 251 = 费城半导体指数
+#   错误使用 100.（指数前缀）会导致该标的无返回（历史上 `100.MU` 等返回 0 条，属隐蔽 bug）。
 EXTRA_US_SECIDS: dict[str, str] = {
-    "SOX": "100.SOX",
-    "MU": "100.MU",
-    "NVDA": "100.NVDA",
-    "AMD": "100.AMD",
-    "AAPL": "100.AAPL",
-    "TSLA": "100.TSLA",
-    "BABA": "100.BABA",
-    "KWEB": "100.KWEB",
+    "SOX": "251.SOX",
+    "MU": "105.MU",
+    "NVDA": "105.NVDA",
+    "AMD": "105.AMD",
+    "AAPL": "105.AAPL",
+    "TSLA": "105.TSLA",
+    "BABA": "106.BABA",
+    "KWEB": "107.KWEB",
 }
 
 
@@ -435,6 +439,134 @@ LEAD_NAMESPACE_WINDOW_MAP: dict[str, dict] = {
     },
 }
 
+# ═══════════════════════════════════════════════════════════════════
+# 传导窗口校准证据（2026-08-06 实测，一年日线，akshare sina 源）
+# ═══════════════════════════════════════════════════════════════════
+#
+# 校准方法（run_transmission_calibration() 可复跑）:
+#   1. 上游: ak.futures_main_sina("CU0"/"AL0"/"LC0"/"SI0") 主力连续合约收盘 → 日收益
+#   2. 下游: ak.stock_zh_a_daily() 对应 A 股板块代表股等权组合收盘 → 日收益
+#        (东财 push2his 被墙无法取板块指数K线，故用代表股组合代理板块)
+#   3. 交叉相关 corr(r_up[t], r_down[t+k])，k=0..30；
+#      + >2% 异动事件后板块前向累计收益均值（事件研究）
+#   数据区间 2025-08-01 ~ 2026-08-05，n≈244 个交易日。
+#
+# 结果:
+#   上游→板块            | lag0 同日corr | lag14/21/28 corr | >2%异动后板块前向收益
+#   沪铜CU0→有色金属     |   0.70 (强)  | ~0.00 / -0.05 / -0.11 | 14日+7.5% 21日+7.2%
+#   沪铝AL0→有色金属     |   0.55 (强)  | ~+0.05 / -0.08 / -0.05 | 近噪声（14日-0.7%）
+#   碳酸锂LC0→新能源车/锂电| 0.21 (弱)   | ~+0.01 / -0.07 / -0.10 | 温和正向 28日+3.2%
+#   工业硅SI0→光伏       |   0.15 (弱)  | ~-0.09 / -0.04 / -0.17 | 单调上升 28日+14.3%
+#
+# 结论（两条通道并存）:
+#   (1) 同日联动通道: 上游与板块当日强共动（corr 0.15~0.70），由同一宏观因素当日驱动，
+#       不属于"异动 → 未来窗口"本模型 scope；
+#   (2) 前向漂移通道: >2% 显著异动后，CU/SI 对应板块未来 2-4 周有正向漂移
+#       （CU 峰值约 14 日，SI 单调至 28 日）→ 支持 doc 04 的 commodity 窗口 [14,28]。
+# 因此 commodity 命名空间保留 [14,28]（事件驱动前向通道，标 [SPECULATION]）；
+# us_stock 命名空间 [7,14] 无足够海外龙头历史数据校准，同样标 [SPECULATION] 未校准。
+TRANSMISSION_CALIBRATION = {
+    "as_of": "2026-08-06",
+    "period": "2025-08-01 ~ 2026-08-05 (n≈244 trading days)",
+    "method": (
+        "akshare sina 源: 上游主力连续期货日收益 × 下游 A 股板块代表股等权组合日收益; "
+        "交叉相关 lag 0..30 + >2% 异动事件研究前向累计收益"
+    ),
+    "pairs": [
+        {"up": "CU0", "label": "沪铜", "down": "有色金属",
+         "lag0_corr": 0.70, "best_lag": 0, "event_fwd_14d": "+7.5%", "event_fwd_21d": "+7.2%"},
+        {"up": "AL0", "label": "沪铝", "down": "有色金属",
+         "lag0_corr": 0.55, "best_lag": 0, "event_fwd_14d": "-0.7%", "event_fwd_21d": "-3.2%"},
+        {"up": "LC0", "label": "碳酸锂", "down": "新能源车/锂电",
+         "lag0_corr": 0.21, "best_lag": 0, "event_fwd_14d": "+1.1%", "event_fwd_21d": "+2.1%"},
+        {"up": "SI0", "label": "工业硅", "down": "光伏",
+         "lag0_corr": 0.15, "best_lag": 0, "event_fwd_14d": "+6.8%", "event_fwd_21d": "+8.9%"},
+    ],
+    "conclusion": (
+        "commodity [14,28] 保留（事件驱动前向漂移通道，CU/SI 实证支持，[SPECULATION]）；"
+        "us_stock [7,14] 无足够数据校准（[SPECULATION] 未校准）"
+    ),
+}
+
+
+def run_transmission_calibration(
+    start: str = "2025-08-01",
+    end: str = "2026-08-05",
+    max_lag: int = 30,
+    event_threshold: float = 0.02,
+) -> list[dict]:
+    """复跑"上游期货异动 → A股板块"滞后相关校准（供后续维护者更新窗口）。
+
+    需要 akshare 网络可用；失败抛出异常（这是显式校准工具，非管道热路径）。
+    返回每对上下游的 {up, down, n, best_lag, corr_by_lag, event_forward} 证据。
+    """
+    import warnings
+    warnings.filterwarnings("ignore")
+    import akshare as ak
+    import pandas as pd
+    import numpy as np
+
+    _DEFAULT_PAIRS = [
+        ("CU0", ["sh600362", "sz000878", "sh601899"], "有色金属"),
+        ("AL0", ["sh600362", "sz000878", "sh601899"], "有色金属"),
+        ("LC0", ["sz300750", "sz002594", "sz002466"], "新能源车/锂电"),
+        ("SI0", ["sh601012", "sh600438", "sz300274"], "光伏"),
+    ]
+
+    def _futures_close(sym: str) -> pd.Series:
+        df = ak.futures_main_sina(symbol=sym)
+        df = df.rename(columns={"日期": "date", "收盘价": "close"})
+        df["date"] = pd.to_datetime(df["date"])
+        return df.set_index("date")["close"]
+
+    def _stock_composite(symbols: list[str]) -> pd.Series:
+        cols = {}
+        for s in symbols:
+            try:
+                d = ak.stock_zh_a_daily(symbol=s)
+                d["date"] = pd.to_datetime(d["date"])
+                cols[s] = d.set_index("date")["close"]
+            except Exception:
+                continue
+        if not cols:
+            raise ValueError(f"no stock data for {symbols}")
+        return pd.DataFrame(cols).mean(axis=1)
+
+    results: list[dict] = []
+    for up_sym, stocks, sector in _DEFAULT_PAIRS:
+        up = _futures_close(up_sym)
+        down = _stock_composite(stocks)
+        df = pd.concat([up.rename("up"), down.rename("down")], axis=1).dropna()
+        df = df.loc[start:end]
+        r = df.pct_change().dropna()
+        up_r, dn_r = r["up"].values, r["down"].values
+        n = len(r)
+        corr_by_lag: dict[int, float] = {}
+        for k in range(0, max_lag + 1):
+            if n - k < 30:
+                corr_by_lag[k] = float("nan")
+                continue
+            corr_by_lag[k] = round(float(np.corrcoef(up_r[: n - k], dn_r[k:])[0, 1]), 4)
+        best_lag = max(corr_by_lag, key=lambda k: abs(corr_by_lag[k]) if np.isfinite(corr_by_lag[k]) else 0)
+        ev_days = [t for t in range(n) if abs(up_r[t]) > event_threshold]
+        event_forward: dict[int, float] = {}
+        for h in (5, 10, 14, 21, 28):
+            acc = [
+                float(np.prod(1 + dn_r[t + 1:t + h + 1]) - 1)
+                for t in ev_days if t + h < n
+            ]
+            event_forward[h] = round(float(np.mean(acc)), 4) if acc else float("nan")
+        results.append({
+            "up": up_sym, "down": sector, "n": n,
+            "best_lag": best_lag,
+            "corr_lag0": corr_by_lag.get(0),
+            "corr_lag14": corr_by_lag.get(14),
+            "corr_lag21": corr_by_lag.get(21),
+            "corr_lag28": corr_by_lag.get(28),
+            "event_forward": event_forward,
+        })
+    return results
+
 
 # 模块级数据源注册表（进程内显式注册）
 _LEAD_SOURCE_REGISTRY: dict[str, LeadSignalSource] = {}
@@ -469,6 +601,18 @@ def _env_enabled_sources() -> list[LeadSignalSource]:
             try:
                 from src.data.commodity.futures_spot_source import FuturesSpotLeadSource
                 out.append(FuturesSpotLeadSource())
+            except Exception as exc:
+                logger.debug("env lead source '%s' init failed: %s", token, exc)
+        elif token == "us_stock":
+            try:
+                from src.data.us_stock_lead_source import UsStockLeadSource
+                out.append(UsStockLeadSource())
+            except Exception as exc:
+                logger.debug("env lead source '%s' init failed: %s", token, exc)
+        elif token in ("memory_chip", "memory", "dram"):
+            try:
+                from src.data.commodity.memory_chip_source import MemoryChipLeadSource
+                out.append(MemoryChipLeadSource())
             except Exception as exc:
                 logger.debug("env lead source '%s' init failed: %s", token, exc)
     return out
@@ -524,12 +668,16 @@ def source_signal_to_lead(
         start_date = as_of + timedelta(days=window.lag_min_days)
         end_date = as_of + timedelta(days=window_end)
 
+    # 命名空间 → 标签后缀（commodity=现货 / us_stock=股价 / 未知=空），避免误标
+    _suffix_map = {"commodity": "现货", "us_stock": "股价", "commodity_futures": "期货"}
+    suffix = _suffix_map.get(namespace, "")
+
     sectors = list(src_sig.target_sectors) or [src_sig.name]
     out: list[LeadSignal] = []
     for sector in sectors:
         out.append(LeadSignal(
             us_key=src_sig.category,
-            us_label=f"{src_sig.name} 现货",
+            us_label=f"{src_sig.name}{suffix}",
             sector=sector,
             direction=direction,
             strength=strength,
@@ -537,8 +685,8 @@ def source_signal_to_lead(
             window_end_days=window_end,
             raw_adjust=round(raw, 2),
             reason=(
-                f"[{src_sig.source}] {src_sig.name}现货{raw:+.1f}% → {sector} 未来"
-                f"{window.lag_min_days}-{window_end}天窗口（[SPECULATION] 上游现货异动）"
+                f"[{src_sig.source}] {src_sig.name}{suffix}{raw:+.1f}% → {sector} 未来"
+                f"{window.lag_min_days}-{window_end}天窗口（[SPECULATION] 上游/海外异动）"
             ),
             window_start=start_date,
             window_end=end_date,
@@ -907,7 +1055,7 @@ def _fetch_extra_us_tickers(
         batch = valid_secids[i:i + batch_size]
         url = (
             "https://push2.eastmoney.com/api/qt/ulist.np/get"
-            f"?fltt=2&invt=2&fields=f12,f14,f2,f3,f4"
+            f"?fltt=2&invt=2&fields=f12,f13,f14,f2,f3,f4"
             f"&secids={','.join(batch)}"
         )
 
@@ -930,7 +1078,11 @@ def _fetch_extra_us_tickers(
                 payload = resp.json()
                 items = (payload.get("data") or {}).get("diff", [])
                 for item in items:
-                    secid = str(item.get("f12", ""))
+                    # f12=代码(如 "MU")，f13=市场前缀(如 "105")；必须拼接 f13.f12
+                    # 才能匹配 key_map（历史 bug: 仅用 f12 匹配 "100.MU" 形式的 key，恒不命中）
+                    code = str(item.get("f12", ""))
+                    market = str(item.get("f13", ""))
+                    secid = f"{market}.{code}" if market else code
                     chg = item.get("f3")
                     name = item.get("f14", "")
                     if secid in key_map and chg is not None and name:

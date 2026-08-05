@@ -2668,6 +2668,7 @@ class Orchestrator:
             return {"blocked": True, "blocked_by": ["无裁决结果"]}
 
         # 仓位调度 (with investor preference limits)
+        investor, *_investor_meta = self._get_investor_prefs()
         position_limits = None
         risk_mult = 1.0
         if investor is not None:
@@ -2680,11 +2681,28 @@ class Orchestrator:
                 risk_mult = resolve_macro_cap_multiplier(investor)
             except Exception:
                 pass
+        # P0-3: 复用 _entry_stop_for_sizing 推导止损/入场价 → risk-budget cap 生效。
+        # analysis_result 可携带 quote/t0_result（caller 注入）；取不到则回退 (0,0) 不报错。
+        _sw_quote = analysis_result.get("quote")
+        _sw_quote_dict = {}
+        if _sw_quote is not None:
+            try:
+                _sw_quote_dict = _sw_quote.model_dump()
+            except Exception:
+                _sw_quote_dict = getattr(_sw_quote, "__dict__", {}) or {}
+        _sw_stop, _sw_entry = self._entry_stop_for_sizing(
+            analysis_result.get("t0_result"),
+            _sw_quote,
+            _sw_quote_dict,
+            position_limits,
+        )
         signal = self.positioning.generate_signal(
             verdict,
             macro_cap=0.80 * risk_mult,
             position_limits=position_limits,
             risk_multiplier=risk_mult,
+            suggested_stop=_sw_stop,
+            entry_price=_sw_entry,
         )
         l3_violations = self.enforcer.enforce(
             stage="positioning",
@@ -3043,7 +3061,22 @@ class Orchestrator:
             result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {VerdictEngine.MIN_CONFIDENCE})")
             return result
 
-        signal = self.positioning.generate_signal(verdict, macro_cap=0.80, name=name, extra=quote_dict)
+        # P0-3: 并行路径接线 risk-budget cap — 复用 _entry_stop_for_sizing 推导止损/入场价。
+        # 无 T+0 → 固定止损百分比回退（stop_loss_pct 默认 -2%）；取不到则回退 (0,0) 不报错。
+        _qp_limits = None
+        if investor is not None:
+            try:
+                from src.learner.preference.adapter import resolve_position_limits
+                _qp_limits = resolve_position_limits(investor)
+            except Exception:
+                _qp_limits = None
+        _qp_stop, _qp_entry = self._entry_stop_for_sizing(
+            None, quote, quote_dict, _qp_limits,
+        )
+        signal = self.positioning.generate_signal(
+            verdict, macro_cap=0.80, name=name, extra=quote_dict,
+            suggested_stop=_qp_stop, entry_price=_qp_entry,
+        )
         result.signal = signal
         eq3 = (portfolio or {}).get("total_equity", 0)
         if eq3 > 0:

@@ -74,6 +74,19 @@
 - [~] 冒烟：`diagnose 002415` 因环境网络部分数据源不可达挂起于数据拉取阶段（position_state 之后，非新增代码；已终止）
 - [ ] 全量 `pytest tests/`（网络用例挂起，环境限制；定向 421 已覆盖所有改动模块）
 
+## 第三批继续优化（2026-08-06，3 Agent 并行）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 海外龙头 us_stock 数据源 | ✅ | `UsStockLeadSource`（东财 push2 ulist 实测可用，10 海外龙头→A股对标映射，6h缓存，失败降级） |
+| 传导系数回测校准 | ✅ | 用真实历史数据校准：沪铜→有色同日 corr 0.70、>2%异动后14日 +7.5%；工业硅→光伏 28日 +14.3%。保留 commodity [14,28] 有实证；us_stock [7,14] 标 [SPECULATION] 未校准。`TRANSMISSION_CALIBRATION` + `run_transmission_calibration()` 可复跑 |
+| 剩余 risk-budget 接线 | ✅ | `_signal_writer_produce` + quick 路径接 `_entry_stop_for_sizing`；顺手修复 `_signal_writer_produce` 潜在 NameError |
+| MLCC/DRAM/NAND 现货源 | ✅ | 调查发现 **DRAMeXchange 免费可用**（实测9类颗粒+涨跌幅）；实现 `MemoryChipLeadSource`（DDR4/DDR5/NAND→兆易创新/北京君正/江波龙/澜起科技等）；MLCC 无免费源标 DATA_GAP + 商业供应商建议 |
+| 隐蔽 bug 修复 | ✅ | `EXTRA_US_SECIDS` 市场前缀错误(100.→105/106/107/251) + `_fetch_extra_us_tickers` 匹配bug → **此前 fetch_us_sector_data 从未成功补充 MU/NVDA** |
+| memory_chip 注册 | ✅ | `_env_enabled_sources` 增 `memory_chip` token（R-C 无法改被占用文件，由本会话补上） |
+
+**第三轮联合回归：150 passed**；生产启用：`AI_STOCK_LEAD_SOURCES=futures_spot,us_stock,memory_chip`
+
 ## 遗留项修复状态（2026-08-06 第二批，5 Agent 并行）
 
 | 遗留项 | 状态 | 验证 |

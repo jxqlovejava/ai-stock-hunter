@@ -314,6 +314,96 @@ class TestEntryStopDerivation:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# ③c 剩余 generate_signal 调用点接线（signal_writer / quick 路径 → risk-budget cap）
+# ══════════════════════════════════════════════════════════════════════
+
+def _quote(price: float = 100.0):
+    from src.data.schema import Quote
+    return Quote(symbol="600519", name="贵州茅台", price=price, source="test")
+
+
+def _plain_orchestrator():
+    """轻量 Orchestrator：纯线性定位（无 Kelly）+ 无投资者画像，保证乘数链确定性 0.608。"""
+    from src.routing.orchestrator import Orchestrator
+    from src.routing.positioning import PositioningEngine
+    orch = Orchestrator()
+    orch.positioning = PositioningEngine(kelly_sizer=None)
+    orch._get_investor_prefs = lambda: (None, True, 0.0, [])
+    return orch
+
+
+class TestSignalWriterRiskBudget:
+    """_signal_writer_produce 路径：analysis_result 注入 quote/t0_result → risk-budget cap 生效。"""
+
+    def test_signal_writer_cap_applies_with_t0_stop(self):
+        orch = _plain_orchestrator()
+        analysis_result = {
+            "verdict": _verdict(),  # score=88 → 乘数链 0.608
+            "quote": _quote(price=100.0),
+            "t0_result": {"stop_loss": 60.0},  # 每股风险 = 40
+        }
+        out = orch._signal_writer_produce("600519", "贵州茅台", analysis_result)
+        # cap = 0.02 × 100 / (100 − 60) = 0.05 → min(0.608, 0.05) = 0.05
+        assert out["signal"].target_weight == pytest.approx(0.05)
+
+    def test_signal_writer_fallback_without_stop(self):
+        """无 quote/t0_result → suggested_stop=(0,0)，回退乘数链不报错。"""
+        orch = _plain_orchestrator()
+        analysis_result = {"verdict": _verdict()}
+        out = orch._signal_writer_produce("600519", "贵州茅台", analysis_result)
+        assert out["signal"].target_weight == pytest.approx(0.608)
+
+
+class TestQuickPathRiskBudget:
+    """_run_pipeline_parallel 快速路径：quote + investor limits → risk-budget cap 生效。"""
+
+    def _run(self, monkeypatch, quote, resolve_limits=None):
+        orch = _plain_orchestrator()
+        # Phase 1 数据获取桩
+        monkeypatch.setattr(orch.data, "get_cross_validated_quote",
+                            lambda symbol, market: (quote, True, False))
+        monkeypatch.setattr(orch.data, "get_financials", lambda symbol, market, n: [])
+        monkeypatch.setattr(orch, "_get_macro_regime", lambda: None)
+        monkeypatch.setattr(orch, "_get_northbound_profile", lambda: None)
+        monkeypatch.setattr(orch, "_get_earnings_revision", lambda symbol: None)
+        monkeypatch.setattr(orch, "_get_executive_context", lambda symbol: None)
+        monkeypatch.setattr(orch, "_get_block_trade_profile", lambda symbol: None)
+        # Phase 2 分析器桩（全部返回 None）
+        orch._get_investor_prefs = lambda: (object(), True, 1.0, [])
+        monkeypatch.setattr(orch.gt_analyzer, "analyze", lambda *a, **k: None)
+        monkeypatch.setattr(orch.imm_analyzer, "analyze", lambda *a, **k: None)
+        monkeypatch.setattr(orch.perspective_analyzer, "debate", lambda *a, **k: None)
+        monkeypatch.setattr(orch.mental_model_matcher, "match_models", lambda *a, **k: None)
+        # 诊断/裁决桩
+        from types import SimpleNamespace
+        monkeypatch.setattr(orch.diagnosis, "analyze", lambda *a, **k: SimpleNamespace())
+        monkeypatch.setattr(orch.verdict_engine, "judge", lambda report: _verdict())
+        # investor → position_limits 解析桩
+        import src.learner.preference.adapter as _adapter
+        if resolve_limits is not None:
+            monkeypatch.setattr(_adapter, "resolve_position_limits", lambda inv: resolve_limits)
+        return orch._run_pipeline_parallel("600519", "SH", name="贵州茅台")
+
+    def test_quick_path_cap_applies(self, monkeypatch):
+        """传止损后 risk-budget cap 生效：stop_loss=-40% → cap=0.05 < 乘数链 0.608。"""
+        result = self._run(
+            monkeypatch,
+            _quote(price=100.0),
+            resolve_limits={"stop_loss": -0.40},  # stop=60, 每股风险=40
+        )
+        assert result.signal.target_weight == pytest.approx(0.05)
+
+    def test_quick_path_fallback_without_price(self, monkeypatch):
+        """quote 无有效价格 → (0,0) 回退乘数链，不报错。"""
+        result = self._run(
+            monkeypatch,
+            _quote(price=0.0),
+            resolve_limits={"stop_loss": -0.40},
+        )
+        assert result.signal.target_weight == pytest.approx(0.608)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # ④ ctx 注入 consecutive_stops（orchestrator → 军规 r017）
 # ══════════════════════════════════════════════════════════════════════
 
