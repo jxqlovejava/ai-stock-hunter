@@ -2008,5 +2008,105 @@
     "panic_count": 0,
     "greed_count": 1,
     "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T14:24:04.021068",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T14:40:01.751986",
+    "score": 21,
+    "level": "PANIC",
+    "confidence": 0.94,
+    "percentile": 1.7,
+    "panic_count": 4,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-05T14:41:11.201230",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T14:42:14.570237",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T14:53:10.295571",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 48.3,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T15:03:49.922240",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 46.7,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T15:06:02.024877",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 45.0,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T15:15:55.864044",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.96,
+    "percentile": 43.3,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-05T15:27:24.148178",
+    "score": 21,
+    "level": "PANIC",
+    "confidence": 0.86,
+    "percentile": 1.7,
+    "panic_count": 4,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-05T15:28:18.653691",
+    "score": 68,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 41.7,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 1
   }
 ]
