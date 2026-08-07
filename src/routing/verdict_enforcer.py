@@ -46,6 +46,8 @@ class PriceRange:
     buy_below: Optional[float] = None  # 低于此价可买入
     buy_target: Optional[float] = None  # 理想买入价
     buy_max: Optional[float] = None  # 最高买入价（超过不买）
+    reachable: bool = False  # 买点是否在现价可达范围（距现价≤~10%，技术支撑位）
+    valuation_buy: Optional[float] = None  # 估值安全边际目标价（长期，非当前可买点）
 
     # 卖出区间
     sell_above: Optional[float] = None  # 高于此价考虑卖出
@@ -257,21 +259,45 @@ class VerdictEnforcer:
         pe = quote.get("pe_ttm", quote.get("pe", 0)) or 0
         pb = quote.get("pb", 0) or 0
 
-        # Buy range: target 20% margin of safety from current
-        # If current PE < industry median → buy below current
+        # ── 技术买点 (可达): 近端支撑优先 ──
+        # quote_dict 已携带 ma20/ma60/close_series (orchestrator 注入)。用最近支撑做
+        # 可达买点，替代"锚定现价 15-30% 折扣"（后者在上涨趋势中结构性不可达）。
+        ma20 = quote.get("ma20") or 0
+        ma60 = quote.get("ma60") or 0
+        close_series = quote.get("close_series") or []
+        recent_low = 0.0
+        if close_series:
+            try:
+                recent_low = min(float(x) for x in close_series[-10:] if x)
+            except (TypeError, ValueError):
+                recent_low = 0.0
+        # 支撑候选（须在现价下方或现价附近 ≤ +2%）：入场低 > MA20 > MA60 > 10日低
+        support_candidates = [
+            x for x in (ma20, ma60, recent_low)
+            if x and x > 0 and x <= pr.current_price * 1.02
+        ]
+        tech_level = max(support_candidates) if support_candidates else 0.0
+
+        # 估值安全边际（保留，作为"理想/更便宜"参考，标注为估值目标）
         if pe > 0 and pe < 30:
-            pr.buy_below = round(pr.current_price * 0.85, 2)  # 15% below current
-            pr.buy_target = round(pr.current_price * 0.80, 2)  # 20% below
-            pr.buy_max = round(pr.current_price * 0.95, 2)  # 5% below
+            pr.valuation_buy = round(pr.current_price * 0.85, 2)
         elif pe > 0:
-            pr.buy_below = round(pr.current_price * 0.70, 2)
-            pr.buy_target = round(pr.current_price * 0.60, 2)
-            pr.buy_max = round(pr.current_price * 0.85, 2)
+            pr.valuation_buy = round(pr.current_price * 0.70, 2)
         else:
-            # PE negative → use PB
-            pr.buy_below = round(pr.current_price * 0.75, 2)
-            pr.buy_target = round(pr.current_price * 0.65, 2)
-            pr.buy_max = round(pr.current_price * 0.90, 2)
+            pr.valuation_buy = round(pr.current_price * 0.75, 2)
+
+        if tech_level > 0:
+            # 可达买点: 支撑位附近（正常回踩能触及，非 15-30% 深度折扣）
+            pr.buy_below = round(tech_level, 2)
+            pr.buy_max = round(min(pr.current_price, tech_level * 1.03), 2)
+            pr.buy_target = round(tech_level * 0.97, 2)
+            pr.reachable = tech_level >= pr.current_price * 0.90  # 距现价 ≤10% 视为可达
+        else:
+            # 无近端支撑（强趋势无参考/数据不足）→ 回退估值折扣
+            pr.buy_below = pr.valuation_buy
+            pr.buy_target = round(pr.valuation_buy * 0.95, 2) if pr.valuation_buy else None
+            pr.buy_max = round(pr.current_price * 0.95, 2)
+            pr.reachable = False
 
         # Sell range
         pr.sell_above = round(pr.current_price * 1.30, 2)  # 30% profit

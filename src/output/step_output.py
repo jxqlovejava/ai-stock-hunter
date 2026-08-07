@@ -516,7 +516,12 @@ def print_verdict(verdict: Any | None, enforced_verdict: dict | None = None, sce
         print(f"\n  💡 {enforced_verdict.get('one_line_conclusion','')}")
         pr = enforced_verdict.get("price_range", {})
         if pr:
-            print(f"  当前 {pr.get('current_price')}  买入≤{pr.get('buy_below')}  卖出≥{pr.get('sell_above')}  [🔮推测]")
+            cur = pr.get("current_price")
+            bb = pr.get("buy_below")
+            dist = f"{(bb / cur - 1) * 100:+.1f}%" if bb and cur else ""
+            tag = (f"[✓可达 距现价{dist}]" if pr.get("reachable")
+                   else f"[✗远离 距现价{dist} 估值目标]")
+            print(f"  当前 {cur}  买入≤{bb} {tag}  卖出≥{pr.get('sell_above')}  [🔮推测]")
 
     # 三情景估值
     sv = scenario_valuation

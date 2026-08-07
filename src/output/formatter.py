@@ -221,8 +221,13 @@ def format_analysis_result(result: OrchestratorResult) -> str:
         lines.append(f"  💡 {enforced.get('one_line_conclusion','')}")
         pr = enforced.get("price_range", {})
         if pr:
-            lines.append(f"  当前 {pr.get('current_price')}  "
-                         f"买入≤{pr.get('buy_below')}  "
+            cur = pr.get("current_price")
+            bb = pr.get("buy_below")
+            dist = f"{(bb / cur - 1) * 100:+.1f}%" if bb and cur else ""
+            tag = (f"[✓可达 距现价{dist}]" if pr.get("reachable")
+                   else f"[✗远离 距现价{dist} 估值目标]")
+            lines.append(f"  当前 {cur}  "
+                         f"买入≤{bb} {tag}  "
                          f"卖出≥{pr.get('sell_above')}  [🔮推测]")
 
     # 信息可得性分级

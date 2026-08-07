@@ -1621,8 +1621,11 @@ class Orchestrator:
                 "current_price": enforced.price_range.current_price,
                 "buy_below": enforced.price_range.buy_below,
                 "buy_target": enforced.price_range.buy_target,
+                "buy_max": enforced.price_range.buy_max,
                 "sell_above": enforced.price_range.sell_above,
                 "position_pct": enforced.price_range.position_pct,
+                "reachable": enforced.price_range.reachable,
+                "valuation_buy": enforced.price_range.valuation_buy,
             },
         }
         if enforced.level.value == "FAIL" or enforced.is_abstain:
