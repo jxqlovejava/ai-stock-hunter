@@ -454,7 +454,7 @@ class MonetaryCreditAnalyzer:
     def _try_eastmoney_sf(cache_key: str) -> Optional[float]:
         """通过东方财富 API 获取社融数据。"""
         try:
-            import requests
+            from src.utils.proxy import direct_session
             url = (
                 "https://datacenter-web.eastmoney.com/api/data/v1/get"
                 "?reportName=RPT_ECONOMY_SOCIAL_FINANCING"
@@ -462,7 +462,10 @@ class MonetaryCreditAnalyzer:
                 "&sortColumns=REPORT_DATE&sortTypes=-1"
                 "&pageSize=10&pageNumber=1&source=WEB&client=WEB"
             )
-            r = requests.get(url, timeout=15, proxies={"http": None, "https": None})
+            session = direct_session()
+            if session is None:
+                return None
+            r = session.get(url, timeout=15)
             if r.status_code == 200:
                 data = r.json()
                 if data.get("success") and data.get("result", {}).get("data"):

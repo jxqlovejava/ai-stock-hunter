@@ -183,16 +183,19 @@ class EarningsRevisionAnalyzer:
     def _fetch_ths_forecast(symbol: str) -> list:
         """Fetch 同花顺一致预期EPS from basic.10jqka.com.cn."""
         try:
-            import requests
             import pandas as pd
+
+            from src.utils.proxy import direct_session
 
             url = f"https://basic.10jqka.com.cn/new/{symbol}/worth.html"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                 "Referer": "https://basic.10jqka.com.cn/",
             }
-            r = requests.get(url, headers=headers, timeout=15,
-                             proxies={"http": None, "https": None})
+            session = direct_session()
+            if session is None:
+                return []
+            r = session.get(url, headers=headers, timeout=15)
             r.encoding = "gbk"
             dfs = pd.read_html(StringIO(r.text))
             return list(dfs)

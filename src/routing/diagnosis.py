@@ -1126,7 +1126,11 @@ class DiagnosisEngine:
         """质量评分（增强版）：ROE + 盈利修正因子。"""
         if not financials:
             return 50.0
+        # .get("roe", 10) 仅在 key 缺失时返回 10；key 存在但值为 None
+        # （降级数据源常见）时 roe=None，导致 roe * 4 报 NoneType * int
         roe = financials[-1].get("roe", 10) if isinstance(financials[-1], dict) else 10
+        if roe is None:
+            roe = 10.0
         roe_score = max(0, min(100, roe * 4))
 
         # Blend with earnings revision if available

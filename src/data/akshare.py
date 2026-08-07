@@ -62,21 +62,32 @@ def _bypass_system_proxy() -> None:
 def _em_no_proxy():
     """临时禁用 requests 代理，用于东财域名请求。
 
-    部分环境系统代理（如本地 Clash）未运行时会导致 requests 直接连接失败。
-    此上下文管理器把 requests.get 替换为 trust_env=False 的 Session.get，
+    部分环境系统代理（如本地 Clash）会把东财请求注入代理并被 WAF 拦截。
+    此上下文管理器把 requests.get/post 替换为 trust_env=False 的 Session 方法，
     请求结束后自动恢复。
+
+    同时注入浏览器 UA（缓解东财 WAF 对 requests 指纹/UA 的拦截）。
     """
     import requests
 
     original_get = requests.get
+    original_post = requests.post
     session = requests.Session()
     session.trust_env = False
     session.proxies = {"http": None, "https": None}
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+    })
     requests.get = session.get
+    requests.post = session.post
     try:
         yield
     finally:
         requests.get = original_get
+        requests.post = original_post
 
 
 def _check_push2_connectivity(timeout: float = 8.0) -> bool:
@@ -105,7 +116,7 @@ def _check_push2_connectivity(timeout: float = 8.0) -> bool:
         )
         return r.status_code == 200 and len(r.text) > 10
     except Exception as e:
-        logger.warning("push2.eastmoney.com API 连通性探测失败: %s", e)
+        logger.debug("push2.eastmoney.com API 连通性探测失败: %s", e)
         return False
 
 
@@ -114,8 +125,10 @@ _bypass_system_proxy()
 _PUSH2_UNAVAILABLE: bool = not _check_push2_connectivity()
 
 if _PUSH2_UNAVAILABLE:
-    logger.warning(
-        "⚠️  push2.eastmoney.com 不可达 — AKShare 实时行情/历史K线(东财源)将降级到 mootdx/腾讯"
+    # 降级为 debug：push2 是 AKShare 东财行情源，探测失败是正常降级路径
+    # （系统已通过腾讯/mootdx 兜底），模块加载时打印 warning 会造成误导。
+    logger.debug(
+        "push2.eastmoney.com 探测不可达 — AKShare 行情/历史K线自动走腾讯/mootdx 降级"
     )
 
 # 延迟导入 AKShare（在 _bypass_system_proxy 之后）
@@ -125,42 +138,56 @@ from .base import DataProvider  # noqa: E402
 from .schema import Financials, Quote  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# AKShare 猴子补丁 — 为 push2 不可达环境自动降级
+# AKShare 猴子补丁 — K线源优先级「腾讯优先，东财最后 fallback」
 # ---------------------------------------------------------------------------
 
-if _PUSH2_UNAVAILABLE:
-    _orig_stock_zh_a_hist = ak.stock_zh_a_hist
+# 保存原始东财实现（腾讯源不可用时的最后 fallback）
+_orig_stock_zh_a_hist = ak.stock_zh_a_hist
 
-    def _patched_stock_zh_a_hist(
-        symbol: str = "000001",
-        period: str = "daily",
-        start_date: str = "19700101",
-        end_date: str = "20500101",
-        adjust: str = "",
-        timeout: float | None = None,
-    ) -> pd.DataFrame:
-        """stock_zh_a_hist 的降级包装 — push2 不可达时自动走腾讯源。
 
-        AKShare 原版走 push2his.eastmoney.com，该 CDN 在部分网络环境被 WAF 封堵。
-        此补丁在原调用失败后自动降级到 stock_zh_a_hist_tx（腾讯源）。
-        """
-        # push2 不可达时直接走腾讯源，避免超时
-        try:
-            tx_symbol = _to_tx_symbol(symbol)
-            df = ak.stock_zh_a_hist_tx(
-                symbol=tx_symbol, start_date=start_date, end_date=end_date,
+def _patched_stock_zh_a_hist(
+    symbol: str = "000001",
+    period: str = "daily",
+    start_date: str = "19700101",
+    end_date: str = "20500101",
+    adjust: str = "",
+    timeout: float | None = None,
+) -> pd.DataFrame:
+    """stock_zh_a_hist 的降级包装 — 优先腾讯源，东财仅作最后 fallback。
+
+    东财 push2 CDN 在部分网络环境间歇性不可达（连接重置/超时）。
+    若以它为优先源，每次调用都会在超时重试上浪费大量时间。
+    此补丁恒生效（不依赖一次性连通性探测）：先走稳定免费的腾讯源，
+    腾讯源失败后再退回东财原实现。
+    """
+    # 1) 腾讯源优先（稳定、免费）
+    try:
+        tx_symbol = _to_tx_symbol(symbol)
+        df = ak.stock_zh_a_hist_tx(
+            symbol=tx_symbol, start_date=start_date, end_date=end_date,
+        )
+        # 统一列名：amount → volume
+        if "amount" in df.columns:
+            df = df.rename(columns={"amount": "volume"})
+        # 腾讯源仅日线 — weekly/monthly 必须聚合，防止上游把日线误当周线
+        return _resample_tx_daily(df, period)
+    except Exception:
+        logger.debug("stock_zh_a_hist_tx failed, falling back to eastmoney", exc_info=True)
+    # 2) 东财原实现作为最后 fallback（保留 adjust 复权支持）
+    #    用 _em_no_proxy 包裹：东财对 requests 走系统代理会连不上，需直连。
+    try:
+        with _em_no_proxy():
+            return _orig_stock_zh_a_hist(
+                symbol=symbol, period=period,
+                start_date=start_date, end_date=end_date, adjust=adjust,
             )
-            # 统一列名：amount → volume
-            if "amount" in df.columns:
-                df = df.rename(columns={"amount": "volume"})
-            # 腾讯源仅日线 — weekly/monthly 必须聚合，防止上游把日线误当周线
-            return _resample_tx_daily(df, period)
-        except Exception:
-            logger.debug("stock_zh_a_hist_tx also failed for %s", symbol, exc_info=True)
-            return pd.DataFrame()
+    except Exception:
+        logger.debug("stock_zh_a_hist (eastmoney) failed for %s", symbol, exc_info=True)
+        return pd.DataFrame()
 
-    ak.stock_zh_a_hist = _patched_stock_zh_a_hist
-    logger.info("akshare.stock_zh_a_hist 已打补丁 → 自动降级到腾讯源")
+
+ak.stock_zh_a_hist = _patched_stock_zh_a_hist
+logger.info("akshare.stock_zh_a_hist 已打补丁 → 腾讯优先，东财最后 fallback")
 
 
 def _to_tx_symbol(symbol: str) -> str:
@@ -521,33 +548,19 @@ class AKShareProvider(DataProvider):
     ) -> pd.DataFrame:
         """获取历史 K 线。
 
-        push2.eastmoney.com 不可用时跳过东财源，直接使用腾讯源。
+        K线源优先级由模块级补丁实现「腾讯优先、东财最后 fallback」，
+        避免东财间歇性故障导致超时挂起。
         """
         # aggregator 标准化链会传入 "day"/"week"/"month"，akshare 东财接口
         # 只认 daily/weekly/monthly — 归一化避免 KeyError 白异常
         period = {"day": "daily", "week": "weekly", "month": "monthly"}.get(period, period)
-        # push2 CDN 被阻断时直接走腾讯源，避免 60s 超时等待
-        if not _PUSH2_UNAVAILABLE:
-            try:
-                return ak.stock_zh_a_hist(
-                    symbol=symbol, period=period,
-                    start_date=start_date, end_date=end_date,
-                )
-            except Exception:
-                logger.debug("stock_zh_a_hist (push2) failed, falling back to tx", exc_info=True)
-        # 降级：腾讯源 — symbol 需要市场前缀
         try:
-            tx_symbol = _to_tx_symbol(symbol)
-            df = ak.stock_zh_a_hist_tx(
-                symbol=tx_symbol, start_date=start_date, end_date=end_date,
+            return ak.stock_zh_a_hist(
+                symbol=symbol, period=period,
+                start_date=start_date, end_date=end_date,
             )
-            # 腾讯源列名: date/open/close/high/low/amount → 统一为 volume
-            if "amount" in df.columns:
-                df = df.rename(columns={"amount": "volume"})
-            # 腾讯源仅日线 — weekly/monthly 必须聚合，防止上游把日线误当周线
-            return _resample_tx_daily(df, period)
         except Exception:
-            logger.debug("stock_zh_a_hist_tx failed for %s", symbol, exc_info=True)
+            logger.debug("stock_zh_a_hist failed for %s", symbol, exc_info=True)
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
@@ -558,7 +571,8 @@ class AKShareProvider(DataProvider):
         """获取今日龙虎榜数据（独有）。"""
         try:
             today = datetime.now().strftime("%Y%m%d")
-            return _akshare_call(ak.stock_lhb_detail_em, start_date=today, end_date=today)
+            with _em_no_proxy():
+                return _akshare_call(ak.stock_lhb_detail_em, start_date=today, end_date=today)
         except Exception:
             return pd.DataFrame()
 
@@ -572,7 +586,8 @@ class AKShareProvider(DataProvider):
     def get_northbound_flow(self) -> pd.DataFrame:
         """获取北向资金流向。"""
         try:
-            return _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
+            with _em_no_proxy():
+                return _akshare_call(ak.stock_hsgt_fund_flow_summary_em)
         except Exception:
             return pd.DataFrame()
 
@@ -597,7 +612,8 @@ class AKShareProvider(DataProvider):
             code = symbol.strip()[-6:]
             first = code[0]
             market = "sh" if first in ("6", "9") else "sz"
-            return _akshare_call(ak.stock_individual_fund_flow, stock=code, market=market)
+            with _em_no_proxy():
+                return _akshare_call(ak.stock_individual_fund_flow, stock=code, market=market)
         except Exception:
             return pd.DataFrame()
 
@@ -623,7 +639,8 @@ class AKShareProvider(DataProvider):
             except Exception:
                 return False
         try:
-            df = ak.stock_zh_a_spot()
+            with _em_no_proxy():
+                df = ak.stock_zh_a_spot()
             return df is not None and len(df) > 1000
         except Exception:
             return False
@@ -652,7 +669,8 @@ class AKShareProvider(DataProvider):
         # Tier 1: AKShare stock_zh_a_spot (push2 可用时)
         if not _PUSH2_UNAVAILABLE:
             try:
-                self._spot_cache = ak.stock_zh_a_spot()
+                with _em_no_proxy():
+                    self._spot_cache = ak.stock_zh_a_spot()
                 self._spot_cache_time = now
                 if self._spot_cache is not None and len(self._spot_cache) > 0:
                     return self._spot_cache

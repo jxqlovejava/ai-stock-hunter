@@ -245,13 +245,17 @@ class IrmAnalyzer:
                 except ValueError:
                     pass
 
+            from src.utils.proxy import direct_session
+            session = direct_session()
+            if session is None:
+                return []
+
             # Step 1: get orgId
-            r1 = requests.post(
+            r1 = session.post(
                 "https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
                 data={"keyWord": symbol},
                 headers={"User-Agent": UA},
                 timeout=10,
-                proxies={"http": None, "https": None},
             )
             d1 = r1.json().get("data") or []
             if not d1:
@@ -268,12 +272,11 @@ class IrmAnalyzer:
                     "pageSize": page_size, "pageNum": page,
                     "keyWord": "", "startDay": "", "endDay": "",
                 }
-                r2 = requests.post(
+                r2 = session.post(
                     "https://irm.cninfo.com.cn/newircs/company/question",
                     params=params,
                     headers={"User-Agent": UA},
                     timeout=10,
-                    proxies={"http": None, "https": None},
                 )
                 data = r2.json()
                 rows = data.get("rows") or []

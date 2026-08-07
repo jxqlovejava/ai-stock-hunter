@@ -231,8 +231,11 @@ class TopicManager:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
             }
-            r = requests.get(url, headers=headers, timeout=10,
-                             proxies={"http": None, "https": None})
+            from src.utils.proxy import direct_session
+            session = direct_session()
+            if session is None:
+                return []
+            r = session.get(url, headers=headers, timeout=10)
             data = r.json()
             if data.get("errocode", 0) != 0:
                 return []

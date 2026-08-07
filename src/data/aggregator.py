@@ -179,6 +179,39 @@ class DataAggregator:
                 return q
         return None
 
+    @staticmethod
+    def _normalize_kline_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """统一 K 线列名为英文并数值化 OHLCV。
+
+        不同 loader（国信/腾讯/mootdx）返回的列名与类型不一：
+        国信会改回中文列名（日期/开盘/收盘…），且降级时部分字段为字符串。
+        此归一化保证下游（军规/技术面/回测）拿到一致的数值型英文列，
+        避免 str/int 比较报错。
+        """
+        if df is None or df.empty:
+            return df
+        col_map: dict[str, str] = {}
+        for col in df.columns:
+            cl = str(col).lower().strip()
+            if cl in ("date", "日期", "datetime", "trade_date", "tradedate"):
+                col_map[col] = "date"
+            elif cl in ("open", "开盘", "开盘价"):
+                col_map[col] = "open"
+            elif cl in ("high", "最高", "最高价"):
+                col_map[col] = "high"
+            elif cl in ("low", "最低", "最低价"):
+                col_map[col] = "low"
+            elif cl in ("close", "收盘", "收盘价"):
+                col_map[col] = "close"
+            elif cl in ("volume", "成交量", "vol"):
+                col_map[col] = "volume"
+        if col_map:
+            df = df.rename(columns=col_map)
+        for c in ("open", "high", "low", "close", "volume"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
+
     def _walk_history_chain(
         self,
         symbol: str,
@@ -208,6 +241,8 @@ class DataAggregator:
                 kwargs["as_of"] = as_of
             df = loader.get_history(symbol, start_date, end_date, period, **kwargs)
             if df is not None and not df.empty:
+                # 统一列名与数值类型（国信中文列名 + 降级源字符串列在此修复）
+                df = self._normalize_kline_columns(df)
                 if "source_citation" not in df.attrs:
                     df.attrs["source_citation"] = make_citation(
                         provider=loader.name,

@@ -18,6 +18,11 @@ try:
 except ImportError:  # pragma: no cover
     import requests  # type: ignore[no-redef]
 
+# 东财 push2 域名直连绕过系统代理（curl_cffi 由 libcurl 读 no_proxy env）
+from src.utils.proxy import configure_no_proxy
+
+configure_no_proxy()
+
 from src.data.source_citation import SourceCitation, make_citation
 
 logger = logging.getLogger(__name__)

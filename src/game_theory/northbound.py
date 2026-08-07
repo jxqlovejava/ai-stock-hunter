@@ -310,10 +310,12 @@ class NorthboundAnalyzer:
             return cached
 
         try:
-            import requests
-            r = requests.get("https://data.hexin.cn/market/hsgtApi/method/dayChart/",
-                             headers=HSGT_HEADERS, timeout=10,
-                             proxies={"http": None, "https": None})
+            from src.utils.proxy import direct_session
+            session = direct_session()
+            if session is None:
+                return None
+            r = session.get("https://data.hexin.cn/market/hsgtApi/method/dayChart/",
+                            headers=HSGT_HEADERS, timeout=10)
             if r.status_code != 200:
                 return None
             d = r.json()
