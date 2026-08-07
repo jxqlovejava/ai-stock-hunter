@@ -166,13 +166,26 @@ def signed_power(df: pd.DataFrame, p: float) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def vwap(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """成交量加权平均价。"""
+def vwap(panel: dict[str, pd.DataFrame], window: int = 20) -> pd.DataFrame:
+    """N 周期成交量加权平均价（滚动 VWAP）。
+
+    典型价(typical price) × 成交量 的滚动加权平均。原实现 rolling(window=1)
+    退化为单日典型价（等于无用），已修复为跨 N 周期滚动。
+    数据无 amount 字段时以 typical price 近似（同 arxiv_factors.vwap_momentum）。
+    """
     close = panel.get("close")
     volume = panel.get("volume")
     if close is None or volume is None:
         raise ValueError("vwap requires 'close' and 'volume'")
     typical = panel.get("typical") or (panel["high"] + panel["low"] + panel["close"]) / 3.0
-    return (typical * volume).rolling(window=1, min_periods=1).sum() / volume.rolling(
-        window=1, min_periods=1
-    ).sum()
+    amt = (typical * volume).rolling(window=window, min_periods=1).sum()
+    vol = volume.rolling(window=window, min_periods=1).sum()
+    return safe_div(amt, vol)
+
+
+def vwap_deviation(close: pd.DataFrame, vwap_n: pd.DataFrame) -> pd.DataFrame:
+    """现价对 N 周期 VWAP 的偏离百分比 (close/vwap - 1)。
+
+    >0 现价高于 VWAP（市场整体浮盈，追进偏贵）；<0 低于 VWAP（成本线下，捡便宜）。
+    """
+    return safe_div(close, vwap_n) - 1.0

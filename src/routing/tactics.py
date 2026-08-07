@@ -867,6 +867,10 @@ class TacticalSnapshot:
     chanlun_score: float = 50.0
     chanlun_result: Optional[dict] = None
 
+    # ── 📊 VWAP 成本带（独立维度，不改 6 维 composite）──
+    vwap_band: Optional[dict] = None          # compute_vwap_band 输出
+    vwap_signals: list[dict] = field(default_factory=list)   # detect_vwap_events 信号
+
     # ── 💰 资金面 ──
     margin_balance: Optional[float] = None         # 融资余额(亿)
     margin_trend: str = "stable"                   # increasing/decreasing/stable
@@ -919,6 +923,8 @@ class TacticalSnapshot:
             "weekly_direction": self.weekly_direction,
             "projected_target": self.projected_target,
             "chase_blocked": self.chase_blocked,
+            "vwap_band": self.vwap_band,
+            "vwap_signals": self.vwap_signals,
             "data_gaps": self.data_gaps,
         }
 
@@ -1457,6 +1463,32 @@ def run_tactics(
             _chanlun_state.update(_apply_chanlun_snapshot(snapshot, chanlun_res))
         except Exception:
             snapshot.data_gaps.append("[DATA_GAP] 缠论分析")
+
+        # VWAP 成本带独立维度 (利用点 1/2/3/4, 决策A: 并表信号不改 composite)
+        try:
+            from src.analysis.vwap_band import band_vs_ma
+            px = float(quote_dict.get("price") or 0)
+            if px <= 0:
+                px = float(c_col.iloc[-1]) if c_col is not None and len(c_col) else 0.0
+            vb = band_vs_ma(df, price=px, symbol=symbol, name=name)
+            snapshot.vwap_band = vb.to_dict()
+            snapshot.vwap_signals = [
+                {"direction": s.direction, "weight": s.weight,
+                 "description": s.description, "price": s.price, "zone": s.zone}
+                for s in vb.signals
+            ]
+            # VWAP 信号并表到 entry/exit（独立维度，不改 composite）
+            for s in vb.signals:
+                sig = {"type": f"VWAP_{s.direction.upper()}",
+                       "description": s.description, "confidence": 0.7,
+                       "zone_low": round(s.price * 0.99, 2),
+                       "zone_high": round(s.price * 1.01, 2)}
+                if s.direction == "bull":
+                    snapshot.entry_signals.append(sig)
+                else:
+                    snapshot.exit_signals.append({**sig, "urgency": "NORMAL"})
+        except Exception:
+            snapshot.data_gaps.append("[DATA_GAP] VWAP 成本带")
 
         # 周线方向过滤级信号 (P1-5 跨周期过滤, 日线信号与周线相反时降权)
         try:
@@ -2255,6 +2287,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         print(f"\n  📦 持仓状态: {loss_icon} 浮盈{loss_str}  "
               f"成本价 {s.position_entry:.2f}")
 
+    # ── 📊 VWAP 成本带 ──
+    _print_vwap_band(s)
+
     # 数据缺口
     if s.data_gaps:
         print(f"\n  {'─'*60}")
@@ -2262,6 +2297,45 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         for g in s.data_gaps[:5]:
             print(f"     {g}")
     print()
+
+
+def _print_vwap_band(s: "TacticalSnapshot") -> None:
+    """渲染 VWAP 成本带块 — 现价 vs 真实持仓成本 + 四类信号。"""
+    vb = s.vwap_band
+    if not vb:
+        return
+    print(f"\n  {'─'*60}")
+    print(f"  📊 VWAP 成本带")
+    print(f"  {'─'*60}")
+    # 核心数值
+    v20 = vb.get("vwap20", 0) or 0
+    v60 = vb.get("vwap60", 0) or 0
+    p20 = vb.get("price_vs_vwap20", 0) or 0
+    if v20 > 0:
+        band_pos = vb.get("band_position", "")
+        pos_tag = f" | 位于成本带{band_pos}" if band_pos else ""
+        print(f"  现价 {vb.get('price', 0):.2f} | 20日VWAP {v20:.2f} "
+              f"({p20:+.1f}%){pos_tag}")
+        if v60 > 0:
+            p60 = vb.get("price_vs_vwap60", 0) or 0
+            print(f"  60日VWAP {v60:.2f} ({p60:+.1f}%) | "
+                  f"MA5 {vb.get('band_ma5', 0):.2f} | MA20 {vb.get('band_ma20', 0):.2f}")
+        br = vb.get("band_range", 0) or 0
+        if br > 0:
+            bw = "⚠️ 收窄=变盘临近" if br < 3 else "正常"
+            print(f"  成本带 [{vb.get('band_low', 0):.2f}—{vb.get('band_high', 0):.2f}] "
+                  f"带宽{br:.1f}% {bw}")
+    # 信号
+    sigs = s.vwap_signals or []
+    if sigs:
+        for sig in sigs:
+            icon = "🟢" if sig.get("direction") == "bull" else "🔴"
+            print(f"  {icon} {sig.get('description', '')}")
+            zone = sig.get("zone", "")
+            if zone:
+                print(f"     ⓘ {zone}")
+    if vb.get("summary"):
+        print(f"  📝 {vb['summary']}")
 
 
 # ═══════════════════════════════════════════════════════════════════

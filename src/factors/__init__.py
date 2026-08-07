@@ -20,6 +20,7 @@ from src.factors.base import (
     ts_rank_value,
     ts_std,
     vwap,
+    vwap_deviation,
 )
 from src.factors.registry import Registry, RegistryState, SkipAlpha, get_default_registry
 
@@ -46,4 +47,5 @@ __all__ = [
     "signed_power",
     "safe_div",
     "vwap",
+    "vwap_deviation",
 ]
