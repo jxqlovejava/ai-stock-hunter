@@ -114,6 +114,48 @@ def test_weekly_neutral_leaves_signals_unchanged():
     assert "market_gate" not in snap.entry_signals[0]
 
 
+# ═══════════════════════════════════════════════════════════════════
+# P4: 均值回归信号周线保护 (周线 BEAR 降权, 防接飞刀)
+# ═══════════════════════════════════════════════════════════════════
+def _mean_reversion_sig(sig_type="OVERSOLD_BOUNCE", conf=0.55):
+    return {
+        "type": sig_type, "description": "均值回归信号",
+        "zone_low": 10.0, "zone_high": 10.5, "confidence": conf,
+    }
+
+
+def test_weekly_bear_downgrades_oversold_bounce():
+    """P4: OVERSOLD_BOUNCE 在周线 BEAR 下降权 ×0.5 (此前无任何周线保护)。"""
+    snap = TacticalSnapshot(symbol=SYMBOL, name="测试")
+    snap.entry_signals.append(_mean_reversion_sig("OVERSOLD_BOUNCE", 0.55))
+    snap.best_entry = dict(snap.entry_signals[0])
+    _apply_cross_period_filter(snap, "BEAR")
+    assert snap.entry_signals[0]["confidence"] == round(0.55 * 0.5, 3)
+    assert snap.entry_signals[0].get("market_gate") == "WEEKLY_BEAR_DIVERGE"
+    assert snap.best_entry["confidence"] == round(0.55 * 0.5, 3)
+
+
+def test_weekly_bear_pullback_downgraded_once_only():
+    """P4: PULLBACK_SUPPORT 移入 _MEAN_REVERSION_SIGNALS 后仅降权一次 (×0.5, 非双重)。"""
+    snap = TacticalSnapshot(symbol=SYMBOL, name="测试")
+    snap.entry_signals.append(_mean_reversion_sig("PULLBACK_SUPPORT", 0.6))
+    snap.best_entry = dict(snap.entry_signals[0])
+    _apply_cross_period_filter(snap, "BEAR")
+    assert snap.entry_signals[0]["confidence"] == round(0.6 * 0.5, 3)
+    assert snap.best_entry["confidence"] == round(0.6 * 0.5, 3)
+
+
+def test_range_gate_does_not_downgrade_mean_reversion():
+    """P4 副作用确认: RANGE 门控不再降权均值回归信号 (回踩/超卖在震荡市是合理策略)。"""
+    for sig_type, conf in (("PULLBACK_SUPPORT", 0.6), ("OVERSOLD_BOUNCE", 0.55)):
+        snap = TacticalSnapshot(symbol=SYMBOL, name="测试")
+        snap.entry_signals.append(_mean_reversion_sig(sig_type, conf))
+        snap.best_entry = dict(snap.entry_signals[0])
+        _apply_market_state_gate(snap, "RANGE")
+        assert snap.entry_signals[0]["confidence"] == conf
+        assert "market_gate" not in snap.entry_signals[0]
+
+
 def test_weekly_direction_downtrend_bear():
     idx = pd.date_range("2024-01-01", periods=300, freq="D")
     closes = [float(200 - i * 0.2) for i in range(300)]

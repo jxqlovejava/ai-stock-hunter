@@ -4709,7 +4709,7 @@ def cmd_technical(args: list[str]):
                 print(f"  🔴 {es.type} [{es.urgency}]: {es.description[:80]}")
         if timing.suggested_stop > 0:
             print(f"\n🛑 止损: {timing.suggested_stop:.2f} (ATR={timing.atr_stop:.2f})")
-            print(f"🎯 目标: T1={timing.target_1:.2f} T2={timing.target_2:.2f}")
+            print(f"🎯 参考目标(非强制离场): T1={timing.target_1:.2f} T2={timing.target_2:.2f}")
             print(f"⏱️ 时间止损: {timing.time_stop_days}天")
 
     except Exception as e:

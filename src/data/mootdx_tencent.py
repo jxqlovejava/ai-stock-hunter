@@ -8,6 +8,7 @@ mootdx (TCP 7709): K线 + 五档盘口 + 逐笔成交 + 财务快照 + F10
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import time
@@ -228,8 +229,16 @@ class MootdxTencentProvider(DataProvider):
         频率映射: daily=9, weekly=5, monthly=6
         ⚠️ mootdx bars 返回不复权原始价
         as_of: 历史回测日期 (YYYY-MM-DD)，替代 datetime.now()
+
+        降级: mootdx TCP 不可达 / 返回空时，自动降级到腾讯 HTTP K线接口
+        (web.ifzq.gtimg.cn/appstock/app/fqkline/get，免费不封IP)，
+        避免整个 fallback 链因 TCP 源失效而返回 0 根。
         """
-        freq_map = {"daily": 9, "weekly": 5, "monthly": 6, "1min": 8, "5min": 0}
+        # 兼容 _PERIOD_MAP 标准化后的 day/week/month
+        freq_map = {
+            "daily": 9, "day": 9, "weekly": 5, "week": 5,
+            "monthly": 6, "month": 6, "1min": 8, "5min": 0,
+        }
         frequency = freq_map.get(period, 9)
 
         # Determine offset — use as_of as reference point if provided
@@ -253,14 +262,22 @@ class MootdxTencentProvider(DataProvider):
         else:
             offset = 200
 
+        # 分钟级数据不支持腾讯 HTTP 降级 → mootdx 失败直接返回空
+        def _fallback_tencent():
+            if period in ("1min", "5min"):
+                return pd.DataFrame()
+            return self._fetch_tencent_kline(
+                symbol, period, start_date, end_date, as_of,
+            )
+
         try:
             client = self._get_tdx_client()
             if client is None:
-                return pd.DataFrame()
+                return _fallback_tencent()
 
             bars = client.bars(symbol=symbol, frequency=frequency, offset=offset)
             if bars is None or len(bars) == 0:
-                return pd.DataFrame()
+                return _fallback_tencent()
 
             df = pd.DataFrame(bars)
             df = df.rename(columns={
@@ -274,7 +291,94 @@ class MootdxTencentProvider(DataProvider):
             return df
         except Exception as e:
             logger.debug("mootdx history failed for %s: %s", symbol, e)
+            return _fallback_tencent()
+
+    def _fetch_tencent_kline(
+        self, symbol: str, period: str = "daily",
+        start_date: str = "", end_date: str = "", as_of: str = "",
+    ) -> pd.DataFrame:
+        """腾讯 HTTP 历史K线降级源 — 免费不封IP，零鉴权。
+
+        接口: web.ifzq.gtimg.cn/appstock/app/fqkline/get
+        频率: daily→day / weekly→week / monthly→month
+        复权: qfq 前复权
+        返回列与 mootdx 路径一致（中文列名，升序），供下游 _CN_COL_MAP 映射。
+        as_of: 历史回测日期，作为 end 过滤（腾讯仅返回当前全量，靠过滤实现历史回看）。
+        """
+        # aggregator _PERIOD_MAP 会把 daily/weekly/monthly 标准化为 day/week/month
+        freq_map = {
+            "daily": "day", "day": "day",
+            "weekly": "week", "week": "week",
+            "monthly": "month", "month": "month",
+        }
+        tfreq = freq_map.get(period)
+        if tfreq is None:
             return pd.DataFrame()
+
+        prefix = self._tencent_prefix(symbol)
+
+        # 按 start_date 到 as_of/now 的天数估算所需根数（约 0.8×自然日≈交易日）
+        ref = datetime.now()
+        if as_of:
+            try:
+                ref = datetime.strptime(as_of, "%Y-%m-%d")
+            except ValueError:
+                pass
+        count = 400
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, "%Y%m%d")
+                days = max((ref - start_dt).days, 30)
+                count = min(int(days * 0.8) + 60, 2000)
+            except ValueError:
+                pass
+
+        try:
+            url = (
+                "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                f"?param={prefix},{tfreq},,,{count},qfq"
+            )
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", UA)
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            logger.debug("tencent kline failed for %s: %s", symbol, e)
+            return pd.DataFrame()
+
+        node = data.get("data", {}).get(prefix, {}) or {}
+        raw = node.get(f"qfq{tfreq}") or node.get(tfreq) or []
+        if not raw:
+            return pd.DataFrame()
+
+        # 每行: [date, open, close, high, low, volume, (amount)]
+        rows = [r[:6] for r in raw if len(r) >= 6]
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows, columns=["日期", "开盘", "收盘", "最高", "最低", "成交量"])
+        df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
+        df = df.dropna(subset=["日期"]).sort_values("日期").reset_index(drop=True)
+
+        # 日期过滤
+        if start_date:
+            try:
+                start = datetime.strptime(start_date, "%Y%m%d")
+                df = df[df["日期"] >= start]
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                end = datetime.strptime(end_date, "%Y%m%d")
+                df = df[df["日期"] <= end]
+            except ValueError:
+                pass
+        elif as_of:
+            try:
+                end = datetime.strptime(as_of, "%Y-%m-%d")
+                df = df[df["日期"] <= end]
+            except ValueError:
+                pass
+        return df.reset_index(drop=True)
 
     def get_all_quotes(self) -> list[Quote]:
         """全市场扫描 — mootdx 不支持，返回空列表（走 AKShare 降级）。"""

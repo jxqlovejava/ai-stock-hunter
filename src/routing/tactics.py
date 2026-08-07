@@ -94,9 +94,28 @@ def _apply_chanlun_snapshot(snapshot: "TacticalSnapshot", chanlun_res) -> dict:
 # 趋势跟随类信号：RANGE 态 / 周线方向相反时降权。
 # 缠论买卖点信号(CHANLUN_*)、博弈/风控动作(REDUCE/CLOSE)不在此列 → 不受影响。
 _TREND_FOLLOW_SIGNALS = frozenset({
-    "MA_GOLDEN_CROSS", "BREAKOUT", "PULLBACK_SUPPORT",
+    "MA_GOLDEN_CROSS", "BREAKOUT",
     "MA_BREAKDOWN",
 })
+
+# 均值回归类信号：周线 BEAR 时降权（防接飞刀）。PULLBACK_SUPPORT 曾属
+# _TREND_FOLLOW_SIGNALS，2026-08 移入此处统一归为均值回归 —— RANGE 态不再降权
+# （回踩支撑/超卖反弹在震荡市是合理均值回归策略），仅周线 BEAR 降权。
+_MEAN_REVERSION_SIGNALS = frozenset({
+    "PULLBACK_SUPPORT", "OVERSOLD_BOUNCE",
+})
+
+# 海龟启发 (P2): 已持仓浮盈 ≥ 2×ATR 允许金字塔加仓。
+PYRAMID_ADD_ATR_MULT = 2.0
+
+# P1-7 周线突破结构阈值（回测校准 2026-08-07）
+_BREAKOUT_PLATFORM_W = 26        # 平台高点回看周数（半年）
+_BREAKOUT_VOL_RATIO = 1.5        # 突破量能: 周量 > 1.5×前13周均量
+_BREAKOUT_FRESH_W = 2            # 突破后 N 周内视为"刚突破"（抑制追入）
+_PULLBACK_LOOKBACK_W = 52        # "近一年内有过突破"回看周数
+_PULLBACK_TOUCH_BAND = 0.02      # 回踩触线带: 低点 ≤ MA10w×(1+2%)
+_LOCK_RUN_UP = 0.20              # 锁利: 近60日累计涨幅阈值
+_LOCK_WINDOW_D = 60              # 锁利: 涨幅回看窗口（交易日）
 
 
 def _map_regime_to_state(regime_value: str) -> str:
@@ -288,7 +307,7 @@ def _apply_market_state_gate(snapshot: "TacticalSnapshot", market_state: str) ->
         snapshot.best_entry["confidence"] = round(
             float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3)
         snapshot.best_entry["market_gate"] = "RANGE"
-    snapshot.notes.append("[P1-1] RANGE 态: 金叉/均线突破等趋势信号已降权")
+    snapshot.notes.append("[P1-1] RANGE 态: 金叉/均线突破等趋势信号已降权（均值回归信号不受 RANGE 门控）")
 
 
 def _to_datetime_index(df) -> object:
@@ -359,17 +378,19 @@ def _apply_cross_period_filter(snapshot: "TacticalSnapshot", weekly_direction: s
     """P1-5 跨周期过滤 — 日线信号与周线方向相反时降权(×0.5)。
 
     weekly BULL → 日线看空信号降权; weekly BEAR → 日线看多信号降权。
-    与 RANGE 门控独立, 叠加时置信度连乘(更保守)。
+    覆盖趋势跟随(_TREND_FOLLOW_SIGNALS) + 均值回归(_MEAN_REVERSION_SIGNALS)，
+    防周线 BEAR 下"接飞刀"(P4)。与 RANGE 门控独立, 叠加时置信度连乘(更保守)。
     """
     if weekly_direction not in ("BULL", "BEAR"):
         return
     tag = f"WEEKLY_{weekly_direction}_DIVERGE"
     if weekly_direction == "BEAR":
+        downgrade_set = _TREND_FOLLOW_SIGNALS | _MEAN_REVERSION_SIGNALS
         for sig in snapshot.entry_signals:
-            if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+            if sig.get("type") in downgrade_set:
                 sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
                 sig.setdefault("market_gate", tag)
-        if snapshot.best_entry and snapshot.best_entry.get("type") in _TREND_FOLLOW_SIGNALS:
+        if snapshot.best_entry and snapshot.best_entry.get("type") in downgrade_set:
             snapshot.best_entry["confidence"] = round(
                 float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3)
             snapshot.best_entry.setdefault("market_gate", tag)
@@ -380,6 +401,120 @@ def _apply_cross_period_filter(snapshot: "TacticalSnapshot", weekly_direction: s
                 sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
                 sig.setdefault("market_gate", tag)
         snapshot.notes.append(f"[P1-5] 周线{weekly_direction}, 日线卖点降权")
+
+
+def _weekly_breakout_structure(df) -> dict:
+    """P1-7 周线突破结构判定 — 追突破抑制 / 回踩二波 / 锁利触发。
+
+    回测依据（scripts/weekly_structure_event_study.py + multitimeframe_confluence_study.py）:
+      - 周线放量突破当周/次周追入: 历史超额约 -5pp（三信号里最差）
+      - 突破后回踩缩量企稳(二波): 13周净收益 +1.3% vs 追突破 -2.9%（文章"第二波"被验证）
+      - 近60日涨≥20% + MA5死叉MA10: 后60日净收益 -3.3%, 超额 -5.6pp（锁利规则被验证）
+
+    Returns: {"fresh_breakout", "pullback_reclaim", "lock_profit", "note"}
+    """
+    import pandas as pd
+    out = {"fresh_breakout": False, "pullback_reclaim": False, "lock_profit": False, "note": ""}
+    if df is None or getattr(df, "empty", True) or len(df) < 120:
+        return out
+    d = _to_datetime_index(df)
+    if not isinstance(getattr(d, "index", None), pd.DatetimeIndex):
+        return out
+    try:
+        w = d.resample("W-FRI").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+        ).dropna(subset=["close"])
+    except Exception:
+        return out
+    if len(w) < 30:
+        return out
+
+    closes = w["close"].astype(float)
+    vols = w["volume"].astype(float)
+    ma10w = closes.rolling(10).mean()
+    platform_high = closes.rolling(_BREAKOUT_PLATFORM_W).max().shift(1)
+    vol_ma = vols.rolling(13).mean().shift(1)
+
+    # 周线放量突破（无前视: 平台高与均量都取前值）
+    s2 = (closes > platform_high) & (vols > _BREAKOUT_VOL_RATIO * vol_ma) & (vol_ma > 0)
+    last_s2_pos = None
+    for i in range(len(w) - 1, -1, -1):
+        if bool(s2.iloc[i]):
+            last_s2_pos = i
+            break
+    if last_s2_pos is not None and len(w) - 1 - last_s2_pos <= _BREAKOUT_FRESH_W:
+        out["fresh_breakout"] = True
+
+    # 回踩二波: 近52周有过突破 + 当前低点触及MA10w带内 + 收回MA10w + 缩量
+    breakout_any_52 = (
+        s2.fillna(False).rolling(_PULLBACK_LOOKBACK_W, min_periods=1).max().shift(1) > 0
+    )
+    touch = w["low"] <= ma10w * (1 + _PULLBACK_TOUCH_BAND)
+    reclaim = closes >= ma10w
+    shrink = vols <= vol_ma
+    s3 = breakout_any_52 & touch & reclaim & shrink
+    out["pullback_reclaim"] = bool(s3.iloc[-1]) if len(w) else False
+
+    # 锁利: 近60日涨≥20% 且 日线 MA5 死叉 MA10（统一转 Python bool）
+    if "close" in d.columns and len(d) >= _LOCK_WINDOW_D + 10:
+        dc = d["close"].astype(float)
+        base = dc.iloc[-_LOCK_WINDOW_D - 1]
+        run_up = (dc.iloc[-1] / base - 1.0) if base > 0 else 0.0
+        ma5 = dc.rolling(5).mean()
+        ma10 = dc.rolling(10).mean()
+        death = bool(ma5.iloc[-1] < ma10.iloc[-1] and ma5.iloc[-2] >= ma10.iloc[-2])
+        out["lock_profit"] = bool(run_up >= _LOCK_RUN_UP) and death
+
+    parts = []
+    if out["fresh_breakout"] and not out["pullback_reclaim"]:
+        parts.append("周线放量突破刚发生")
+    if out["pullback_reclaim"]:
+        parts.append("突破后回踩MA10周缩量企稳")
+    if out["lock_profit"]:
+        parts.append("近60日涨≥20%且MA5死叉MA10")
+    out["note"] = "; ".join(parts)
+    return out
+
+
+def _apply_breakout_chase_suppressor(snapshot: "TacticalSnapshot", structure: dict) -> None:
+    """P1-7 追突破抑制 + 锁利降权（回测依据见 _weekly_breakout_structure docstring）。
+
+    与 _apply_cross_period_filter 同构: 命中条件时对入场信号降权并打 market_gate 标签,
+    不清空信号（置信度由下游裁决继续处理）。
+    """
+    if not structure:
+        return
+    if structure.get("fresh_breakout") and not structure.get("pullback_reclaim"):
+        tag = "WEEKLY_BREAKOUT_SUPPRESS"
+        for sig in snapshot.entry_signals:
+            if sig.get("type") in _TREND_FOLLOW_SIGNALS:
+                sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+                sig.setdefault("market_gate", tag)
+        if snapshot.best_entry and snapshot.best_entry.get("type") in _TREND_FOLLOW_SIGNALS:
+            snapshot.best_entry["confidence"] = round(
+                float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3
+            )
+            snapshot.best_entry.setdefault("market_gate", tag)
+        snapshot.notes.append(
+            f"[P1-7] {structure['note']} — 周线追突破历史超额约-5pp, 等待回踩缩量企稳再评估"
+        )
+    if structure.get("lock_profit"):
+        tag = "LOCK_PROFIT"
+        for sig in snapshot.entry_signals:
+            sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
+            sig.setdefault("market_gate", tag)
+        if snapshot.best_entry:
+            snapshot.best_entry["confidence"] = round(
+                float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3
+            )
+            snapshot.best_entry.setdefault("market_gate", tag)
+        snapshot.notes.append(
+            f"[P1-7] {structure['note']} — 回测: 该信号后60日净收益约-3.3%(超额-5.6pp), 锁利/不追入"
+        )
+    elif structure.get("pullback_reclaim") and not structure.get("fresh_breakout"):
+        snapshot.notes.append(
+            "[P1-7] 突破后回踩缩量企稳 — 回测优于追突破(13周+4.2pp), 可作二波入场确认"
+        )
 
 
 def _mm_projected_target(lo: float, hi: float, direction: str) -> Optional[float]:
@@ -527,8 +662,9 @@ def _enhance_market_state(
     index_bars,
     stock_close_series: list[float],
     sentiment,
+    daily_df=None,
 ) -> None:
-    """P1-1/P1-5 串行增强 — 市场状态分类 + 门控 + 跨周期过滤。
+    """P1-1/P1-5/P1-7 串行增强 — 市场状态分类 + 门控 + 跨周期过滤 + 追突破抑制。
 
     必须在四个维度并行计算完成后调用 (依赖技术面缠论 / 资金面 / 市场背景)。
     """
@@ -563,6 +699,13 @@ def _enhance_market_state(
     # P1-5 跨周期过滤: 周线方向相反时降权 (weekly_direction 在 _dim_technical 计算)
     if snapshot.weekly_direction:
         _apply_cross_period_filter(snapshot, snapshot.weekly_direction)
+
+    # P1-7 周线突破结构: 追突破抑制 + 回踩二波确认 + 锁利降权 (回测验证 2026-08-07)
+    try:
+        structure = _weekly_breakout_structure(daily_df) if daily_df is not None else {}
+        _apply_breakout_chase_suppressor(snapshot, structure)
+    except Exception as e:
+        logger.debug("tactics breakout suppressor: %s", e)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -608,7 +751,8 @@ class TacticalSnapshot:
     best_entry: Optional[dict] = None
     suggested_stop: float = 0.0
     atr_stop: float = 0.0           # ATR 移动止损价
-    target_prices: list[float] = field(default_factory=list)
+    atr: float = 0.0                # ATR 原始值 (供浮盈阶梯加仓)
+    target_prices: list[float] = field(default_factory=list)   # ATR 参考目标位 (非强制离场, 主离场走 exit_signals)
     time_stop_days: int = 10
     macd_kdj: Optional[dict] = None
     technical_note: str = ""
@@ -1189,6 +1333,7 @@ def run_tactics(
                     }
                 snapshot.suggested_stop = _timing_result.suggested_stop
                 snapshot.atr_stop = _timing_result.atr_stop
+                snapshot.atr = _timing_result.atr
                 snapshot.target_prices = [_timing_result.target_1, _timing_result.target_2]
                 snapshot.time_stop_days = _timing_result.time_stop_days
         except Exception:
@@ -1359,7 +1504,7 @@ def run_tactics(
 
     # ── P1-1/P1-5: 市场状态前置判定 + 门控 + 跨周期过滤 (串行, 依赖各维度就绪) ──
     try:
-        _enhance_market_state(snapshot, _index_bars, _close_series, _sentiment)
+        _enhance_market_state(snapshot, _index_bars, _close_series, _sentiment, _bars_df)
     except Exception as e:
         logger.debug("tactics market enhance: %s", e)
 
@@ -1815,7 +1960,7 @@ def run_tactics(
     if snapshot.suggested_stop > 0:
         print(f"  止损: {snapshot.suggested_stop:.2f}{atr_info}", end="")
         if snapshot.target_prices and snapshot.target_prices[0] > 0:
-            print(f" | 目标: {snapshot.target_prices[0]:.2f}/{snapshot.target_prices[1]:.2f}")
+            print(f" | 参考目标: {snapshot.target_prices[0]:.2f}/{snapshot.target_prices[1]:.2f} (非强制离场)")
         else:
             print()
     if snapshot.projected_target > 0:
@@ -1933,7 +2078,7 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
             stops.append(f"ATR止损 {s.atr_stop:.2f}")
         print(f"  🛑 {' | '.join(stops)}")
     if s.target_prices and s.target_prices[0] > 0:
-        print(f"  🎯 目标价: T1={s.target_prices[0]:.2f}  T2={s.target_prices[1]:.2f}")
+        print(f"  🎯 参考目标: T1={s.target_prices[0]:.2f}  T2={s.target_prices[1]:.2f} (非强制离场)")
     if s.projected_target > 0:
         tag = " (接近目标不追单)" if s.chase_blocked else ""
         print(f"  📐 MM投影止盈: {s.projected_target:.2f}{tag}")
@@ -2386,6 +2531,32 @@ def _resolve_final_action(
         result.action = advice.action
         return
 
+    # P2: 盈利阶梯加仓 (海龟金字塔启发) — 已持仓浮盈 ≥ PYRAMID_ADD_ATR_MULT×ATR、
+    # 周线非 BEAR、无 URGENT 离场信号、博弈/KJD 放行时允许加仓。
+    # 金字塔是与评分驱动 ADD 并存的补充通道，仅在基础动作为 HOLD/ADD 时生效
+    # (REDUCE/EXIT 已由卖点优先 + rec 映射提前处理)。
+    pyramid_add = False
+    pyramid_atr_mult = 0.0
+    if held and snapshot.atr > 0 and snapshot.position_entry:
+        entry = float(snapshot.position_entry)
+        if entry > 0 and snapshot.current_price > entry:
+            pyramid_atr_mult = (snapshot.current_price - entry) / snapshot.atr
+            no_exit = not (advice and advice.action in ("EXIT", "REDUCE"))
+            no_urgent = not any(
+                s.get("urgency") == "URGENT" for s in snapshot.exit_signals
+            )
+            no_bear = snapshot.weekly_direction != "BEAR"
+            gt_ok = not advice or getattr(advice, "entry_allowed", True)
+            kdj_ok = not (
+                snapshot.macd_kdj
+                and snapshot.macd_kdj.get("action") == "AVOID_ENTRY"
+            )
+            if (
+                pyramid_atr_mult >= PYRAMID_ADD_ATR_MULT
+                and no_exit and no_urgent and no_bear and gt_ok and kdj_ok
+            ):
+                pyramid_add = True
+
     rec = result.verdict_recommendation
     if rec in ("STRONG_BUY", "BUY"):
         result.action = "ENTER" if not held else "HOLD"
@@ -2401,6 +2572,13 @@ def _resolve_final_action(
             else ("HOLD" if held else "WAIT")
         )
 
+    # P2: 浮盈阶梯加仓 — 把评分驱动的 HOLD 升级为 ADD (趋势延续金字塔加仓)
+    if pyramid_add and result.action == "HOLD":
+        result.action = "ADD"
+        result.warnings.append(
+            f"浮盈阶梯加仓: 浮盈≥{pyramid_atr_mult:.1f}×ATR, 趋势延续金字塔加仓(海龟启发)"
+        )
+
     # 博弈阻止
     if advice and not getattr(advice, 'entry_allowed', True) and result.action == "ENTER":
         result.action = "WAIT"
@@ -2413,7 +2591,10 @@ def _resolve_final_action(
             result.action = "WAIT"
             result.warnings.append("KDJ: AVOID_ENTRY → WAIT")
 
-    # MM 投影目标位不追单 (P1-6)
+    # MM 投影目标位不追单 (P1-6) — 金字塔加仓豁免 (加已有盈利仓 ≠ 追新仓)
     if snapshot.chase_blocked and result.action in ("ENTER", "ADD"):
-        result.action = "WAIT"
-        result.warnings.append(f"接近MM投影目标位 {snapshot.projected_target:.2f} → 不追单")
+        if pyramid_add:
+            result.warnings.append("浮盈阶梯加仓不受追单限制(已有盈利仓加仓)")
+        else:
+            result.action = "WAIT"
+            result.warnings.append(f"接近MM投影目标位 {snapshot.projected_target:.2f} → 不追单")

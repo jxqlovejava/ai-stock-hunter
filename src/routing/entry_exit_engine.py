@@ -66,8 +66,9 @@ class TimingResult:
     # 止损/止盈建议
     suggested_stop: float = 0.0    # 建议止损价
     atr_stop: float = 0.0          # ATR 止损价
-    target_1: float = 0.0          # 第一目标位
-    target_2: float = 0.0          # 第二目标位
+    atr: float = 0.0               # ATR 原始值 (供浮盈阶梯加仓/展示)
+    target_1: float = 0.0          # 参考目标位 (非强制离场触发; 主离场走 exit_signals)
+    target_2: float = 0.0          # 参考目标位 (同上, 非强制离场触发)
     time_stop_days: int = 10       # 时间止损天数
     # 溯源
     confidence: float = 0.5
@@ -204,6 +205,7 @@ class EntryExitEngine:
 
         # --- 止损/止盈 ---
         atr = self._compute_atr(high, low, close, period=14)
+        result.atr = atr  # 供浮盈阶梯加仓 / 展示
         if time_config and time_config.is_short_term:
             atr_mult = getattr(time_config, "atr_stop_multiplier", 2.0)
             result.atr_stop = round(current_price - atr * atr_mult, 2)

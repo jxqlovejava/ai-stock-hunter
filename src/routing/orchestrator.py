@@ -232,6 +232,61 @@ class Orchestrator:
         except Exception as exc:
             logger.warning("Deep research engines unavailable: %s", exc)
 
+    # ------------------------------------------------------------------
+    # P3: 行业暴露注入 — 复活 risk_control._check_sector_cap
+    # ------------------------------------------------------------------
+    def _inject_sector_exposure(self, portfolio: dict, symbol: str, name: str) -> None:
+        """按申万一级行业聚合既有持仓暴露，写入 portfolio["sector_pct"]。
+
+        _check_sector_cap (risk_control.py) 读 sector_pct 做行业上限校验，此前
+        全库无写入方 → 规则形同虚设。此处把"目标股票所属行业内其余持仓市值 / 组合权益"
+        填充进去；无持仓/分类失败时静默回退（规则保持惰性，等同现状）。
+
+        排除目标自身市值（weight 已是目标的完整目标仓位，避免重复计数）。
+        """
+        try:
+            classifier = self._sector_classifier
+            if classifier is None:
+                return
+            target = classifier.classify(symbol, name)
+            target_sw1 = getattr(target, "sw1_name", "") or ""
+            if not target_sw1 or target_sw1 == "未分类":
+                return
+
+            positions = self.position_state_mgr.get_all()
+            if not positions:
+                return
+            # 一次性拿目标 + 全部持仓的 SW1 映射（classify 有内存缓存，不重复网络）
+            all_codes = [symbol] + [p.symbol for p in positions if p.symbol != symbol]
+            sw1_map = classifier.classify_batch(all_codes)
+
+            same_industry_value = 0.0
+            total_value = 0.0
+            for p in positions:
+                px = float(p.last_price or 0) or float(p.entry_price or 0)
+                value = float(p.quantity or 0) * px
+                total_value += value
+                if p.symbol == symbol:
+                    continue  # 排除目标自身
+                mapped = sw1_map.get(p.symbol)
+                if mapped is not None and mapped.sw1_name == target_sw1:
+                    same_industry_value += value
+
+            equity = float(portfolio.get("total_equity", 0) or 0)
+            if equity <= 0:
+                equity = total_value
+            if equity <= 0:
+                return
+            sector_pct = same_industry_value / equity
+            portfolio["sector_pct"] = round(sector_pct, 4)
+            portfolio["sector_exposure"] = {target_sw1: round(sector_pct, 4)}
+            logger.debug(
+                "sector exposure %s → %s=%.1f%% (equity=%.0f)",
+                symbol, target_sw1, sector_pct * 100, equity,
+            )
+        except Exception as exc:
+            logger.debug("sector exposure injection skipped: %s", exc)
+
     @staticmethod
     def _entry_stop_for_sizing(
         t0: Optional[dict],
@@ -1734,6 +1789,9 @@ class Orchestrator:
                 (datetime.now() - existing_pos.entry_date).days if existing_pos.entry_date else 0,
             )
             enriched_portfolio["position_state"] = existing_pos  # 完整状态供下游使用
+
+        # P3: 注入同行业持仓暴露 → 复活 _check_sector_cap 行业上限校验
+        self._inject_sector_exposure(enriched_portfolio, symbol, name)
 
         # Phase 8: 观测权益更新 HWM / 自动熔断
         eq = (enriched_portfolio or {}).get("total_equity", 0)
