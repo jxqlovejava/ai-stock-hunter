@@ -1,0 +1,53 @@
+[
+  {
+    "record_id": "748ed4fb61d8422aa31277b5abb351ad",
+    "symbol": "600744",
+    "name": "华银电力",
+    "date": "2026-08-07",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.6,
+    "risk_score": 62.0,
+    "price_at_detection": 7.88,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T14:56:20.772516"
+  },
+  {
+    "record_id": "d88c8cdfe1ce47f4a2f9951a31094878",
+    "symbol": "600744",
+    "name": "华银电力",
+    "date": "2026-08-07",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.6,
+    "risk_score": 62.0,
+    "price_at_detection": 7.88,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T15:03:09.409180"
+  },
+  {
+    "record_id": "d126a304814148a3ac6e5f285d1e77ec",
+    "symbol": "600744",
+    "name": "华银电力",
+    "date": "2026-08-07",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.6,
+    "risk_score": 62.0,
+    "price_at_detection": 7.88,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T15:12:48.677166"
+  }
+]

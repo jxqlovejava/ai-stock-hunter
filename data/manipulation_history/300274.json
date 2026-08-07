@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "50c0cc7844c24e538392aa6284b42ffe",
+    "symbol": "300274",
+    "name": "阳光电源",
+    "date": "2026-08-07",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 62.0,
+    "price_at_detection": 114.16,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T15:15:18.472868"
+  }
+]

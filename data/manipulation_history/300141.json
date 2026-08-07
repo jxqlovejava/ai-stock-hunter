@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "d88f71fdf0cb4282a50e357e27d5202b",
+    "symbol": "300141",
+    "name": "和顺电气",
+    "date": "2026-08-07",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 67.0,
+    "price_at_detection": 10.22,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T23:16:48.956449"
+  }
+]

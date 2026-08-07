@@ -36,5 +36,187 @@
       "last_triggered_price": 0.0,
       "triggered_count": 0
     }
+  ],
+  "002916": [
+    {
+      "symbol": "002916",
+      "name": "深南电路",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": "2026-08-08T00:20:40.519724",
+      "last_triggered_price": 382.63,
+      "triggered_count": 1
+    }
+  ],
+  "600183": [
+    {
+      "symbol": "600183",
+      "name": "生益科技",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": "2026-08-08T00:20:40.519724",
+      "last_triggered_price": 139.98,
+      "triggered_count": 1
+    }
+  ],
+  "002080": [
+    {
+      "symbol": "002080",
+      "name": "中材科技",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": "2026-08-08T00:20:40.519724",
+      "last_triggered_price": 56.56,
+      "triggered_count": 1
+    }
+  ],
+  "603256": [
+    {
+      "symbol": "603256",
+      "name": "宏和科技",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": "2026-08-08T00:20:40.519724",
+      "last_triggered_price": 158.8,
+      "triggered_count": 1
+    }
+  ],
+  "002463": [
+    {
+      "symbol": "002463",
+      "name": "沪电股份",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": "2026-08-08T00:20:40.519724",
+      "last_triggered_price": 125.87,
+      "triggered_count": 1
+    }
+  ],
+  "600875": [
+    {
+      "symbol": "600875",
+      "name": "东方电气",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "601985": [
+    {
+      "symbol": "601985",
+      "name": "中国核电",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "002130": [
+    {
+      "symbol": "002130",
+      "name": "沃尔核材",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "600089": [
+    {
+      "symbol": "600089",
+      "name": "特变电工",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "002518": [
+    {
+      "symbol": "002518",
+      "name": "科士达",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "600406": [
+    {
+      "symbol": "600406",
+      "name": "国电南瑞",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "002270": [
+    {
+      "symbol": "002270",
+      "name": "华明装备",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
+  ],
+  "000400": [
+    {
+      "symbol": "000400",
+      "name": "许继电气",
+      "alert_type": "change_pct",
+      "priority": "medium",
+      "threshold": 5.0,
+      "direction": "cross",
+      "enabled": true,
+      "last_triggered_at": null,
+      "last_triggered_price": 0.0,
+      "triggered_count": 0
+    }
   ]
 }

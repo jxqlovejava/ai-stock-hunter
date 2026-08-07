@@ -1,0 +1,36 @@
+[
+  {
+    "record_id": "91bf4e284c134fbbbb949a5ed4a9c6de",
+    "symbol": "603256",
+    "name": "宏和科技",
+    "date": "2026-08-07",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.3,
+    "risk_score": 27.0,
+    "price_at_detection": 158.8,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T15:07:41.317647"
+  },
+  {
+    "record_id": "0c260eb55a384050a23b89bacf0e0beb",
+    "symbol": "603256",
+    "name": "宏和科技",
+    "date": "2026-08-08",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.3,
+    "risk_score": 27.0,
+    "price_at_detection": 158.8,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-08T01:15:02.139920"
+  }
+]

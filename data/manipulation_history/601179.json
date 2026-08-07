@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "379b4cd3d7644c6cb96940378e74c7e8",
+    "symbol": "601179",
+    "name": "中国西电",
+    "date": "2026-08-07",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.3,
+    "risk_score": 27.0,
+    "price_at_detection": 14.07,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-07T23:16:46.002544"
+  }
+]
