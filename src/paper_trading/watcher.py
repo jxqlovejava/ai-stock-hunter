@@ -389,22 +389,73 @@ def mode_premarket(force: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _today_trades(engine) -> list:
+    """今日成交明细 (从 trades.jsonl 按今日过滤)。"""
+    from src.paper_trading.scheduler import today_str
+    today = today_str()
+    try:
+        trades = engine.get_recent_trades(limit=50)
+        return [t for t in trades if str(getattr(t, "timestamp", ""))[:10] == today]
+    except Exception:
+        return []
+
+
 def mode_close(force: bool = False) -> str:
-    """15:05 盘后复盘。"""
+    """15:05 盘后复盘 (每日复盘: 当日成交明细 + 持仓盈亏 + 明日关注)。"""
     from src.sentinel.channels import ChannelConfig, run_channel
+    from src.paper_trading.engine import PaperTradingEngine
+
+    engine = PaperTradingEngine()
+    state = engine.state
+    lines = ["🌆 每日复盘 15:05"]
+
+    # ① 今日成交明细 + 当日已实现盈亏
+    today_trades = _today_trades(engine)
+    realized = 0.0
+    if today_trades:
+        lines.append("📋 今日成交:")
+        for t in today_trades:
+            action_zh = "买入" if t.action == "buy" else "卖出"
+            costs = t.commission + t.stamp_tax + t.transfer_fee
+            if t.action == "sell" and t.pnl_pct > -1:
+                # 已实现盈亏 = 卖出净得 - 持仓成本
+                entry_est = t.price / (1.0 + t.pnl_pct)
+                realized += t.notional - costs - entry_est * t.quantity
+                lines.append(
+                    f"  · {t.symbol} {t.name} 卖出 {t.quantity}股 @{t.price:.2f}"
+                    f" 成本{costs:.2f}元 盈亏{t.pnl_pct * 100:+.2f}%"
+                )
+            else:
+                lines.append(
+                    f"  · {t.symbol} {t.name} 买入 {t.quantity}股 @{t.price:.2f}"
+                    f" 成本{costs:.2f}元"
+                )
+        lines.append(f"  → 当日已实现盈亏 {realized:+,.2f} 元")
+    else:
+        lines.append("📋 今日无成交")
+
+    # ② 账户状态 (权益/收益/持仓)
+    pnl_total = state.total_equity - state.initial_capital
+    lines.append(
+        f"💰 权益 ¥{state.total_equity:,.2f} "
+        f"(累计{pnl_total:+,.2f} {state.total_return_pct:+.2%}) "
+        f"| 现金 ¥{state.cash:,.2f} | 持仓 {state.position_count}只"
+    )
+    if state.positions:
+        for sym, pos in state.positions.items():
+            entry = getattr(pos, "entry_price", 0)
+            last = getattr(pos, "last_price", entry)
+            p = (last - entry) / entry * 100 if entry > 0 else 0
+            lines.append(f"  · {sym} {getattr(pos,'name','')}: {pos.quantity}股 成本{entry:.2f} 现价{last:.2f} {p:+.2f}%")
+
+    # ③ 大盘背景
     try:
         msg = run_channel("close", ChannelConfig(force=force))
+        if msg:
+            lines.append(msg)
     except Exception:
-        msg = ""
-    lines = ["🌆 盘后复盘 15:05"]
-    if msg:
-        lines.append(msg)
-    # 模拟账户状态
-    try:
-        from src.paper_trading.engine import PaperTradingEngine
-        lines.append(PaperTradingEngine().status())
-    except Exception as e:
-        logger.debug("paper status: %s", e)
+        pass
+
     return "\n".join(lines)
 
 
