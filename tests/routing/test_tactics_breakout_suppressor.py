@@ -215,3 +215,95 @@ def test_enhance_market_state_no_daily_df_is_noop():
     snap = _snap_with_signals("MA_GOLDEN_CROSS")
     _enhance_market_state(snap, None, [], None)
     assert not any("P1-7" in n for n in snap.notes)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# P1-7 ⑥ 突破质量子检查 — 四假突破形态 (0xToni 量价帖)
+# ═══════════════════════════════════════════════════════════════════
+def _failed_breakout_df():
+    """40周平盘100 → 突破周125(量3M) → 4周跌回96(破平台)。"""
+    rows = _flat_weeks(40, px=100.0)
+    for c in (110.0, 118.0, 123.0, 125.0, 125.0):
+        rows.append((c, 3_000_000.0))
+    for c in (116.0, 112.0, 108.0, 104.0, 100.0, 99.0, 98.0, 97.0,
+              96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0, 96.0):
+        rows.append((c, 1_000_000.0))
+    return _mk_df([r[0] for r in rows], [r[1] for r in rows])
+
+
+def _low_quality_df():
+    """40周平盘100 → 突破周 长上影(open100/high130/close102/low99, 量3M) → 放量滞涨。"""
+    rows = _flat_weeks(40, px=100.0)
+    n = len(rows)
+    closes = [r[0] for r in rows] + [102.0] * 5
+    vols = [r[1] for r in rows] + [3_000_000.0] * 5
+    opens = [r[0] * 0.99 for r in rows] + [100.0] * 5
+    highs = [r[0] * 1.02 for r in rows] + [130.0] * 5
+    lows = [r[0] * 0.98 for r in rows] + [99.0] * 5
+    idx = pd.date_range("2023-01-02", periods=len(closes), freq="B")
+    return pd.DataFrame({
+        "date": idx, "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": vols,
+    })
+
+
+def _no_follow_df():
+    """40周平盘100 → 突破周125(量3M) → 4周120(未创新高, 未破平台)。"""
+    rows = _flat_weeks(40, px=100.0)
+    for c in (110.0, 118.0, 123.0, 125.0, 125.0):
+        rows.append((c, 3_000_000.0))
+    for c in (122.0, 121.0, 121.0, 120.0, 120.0, 120.0, 119.0, 119.0,
+              120.0, 120.0, 121.0, 120.0, 120.0, 119.0, 120.0, 120.0,
+              120.0, 120.0, 120.0, 120.0):
+        rows.append((c, 1_000_000.0))
+    return _mk_df([r[0] for r in rows], [r[1] for r in rows])
+
+
+def test_failed_breakout_flag():
+    st = _weekly_breakout_structure(_failed_breakout_df())
+    assert st["failed_breakout"] is True
+    assert st["fresh_breakout"] is False
+    assert "突破失败" in st["note"]
+
+
+def test_low_quality_breakout_flag():
+    st = _weekly_breakout_structure(_low_quality_df())
+    assert st["low_quality"] is True
+    assert st["fresh_breakout"] is True
+    assert st["failed_breakout"] is False
+    assert "滞涨" in st["note"]
+
+
+def test_no_follow_through_flag():
+    st = _weekly_breakout_structure(_no_follow_df())
+    assert st["no_follow_through"] is True
+    assert st["failed_breakout"] is False
+    assert st["fresh_breakout"] is False
+    assert "未创新高" in st["note"]
+
+
+def test_failed_breakout_downgrades_trend_signals():
+    """突破失败 → 趋势跟随信号降权 + BREAKOUT_FAILED 标签。"""
+    snap = _snap_with_signals("MA_GOLDEN_CROSS", "CHANLUN_BUY")
+    _apply_breakout_chase_suppressor(snap, {
+        "fresh_breakout": False, "failed_breakout": True,
+        "low_quality": False, "no_follow_through": True,
+        "pullback_reclaim": False, "lock_profit": False, "note": "突破失败: 跌回突破平台下方",
+    })
+    assert snap.entry_signals[0]["confidence"] == round(0.65 * 0.5, 3)
+    assert snap.entry_signals[0]["market_gate"] == "BREAKOUT_FAILED"
+    assert snap.entry_signals[1]["confidence"] == 0.65  # 缠论不受影响
+    assert any("突破失败" in n for n in snap.notes)
+
+
+def test_high_quality_reclaim_not_suppressed():
+    """回踩缩量企稳(二波) 且无失败/低质 → 不降权。"""
+    snap = _snap_with_signals("MA_GOLDEN_CROSS")
+    _apply_breakout_chase_suppressor(snap, {
+        "fresh_breakout": False, "failed_breakout": False,
+        "low_quality": False, "no_follow_through": False,
+        "pullback_reclaim": True, "lock_profit": False, "note": "突破后回踩MA10周缩量企稳",
+    })
+    assert snap.entry_signals[0]["confidence"] == 0.65
+    assert "market_gate" not in snap.entry_signals[0]
+    assert any("二波" in n for n in snap.notes)

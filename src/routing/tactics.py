@@ -117,6 +117,13 @@ _PULLBACK_TOUCH_BAND = 0.02      # 回踩触线带: 低点 ≤ MA10w×(1+2%)
 _LOCK_RUN_UP = 0.20              # 锁利: 近60日累计涨幅阈值
 _LOCK_WINDOW_D = 60              # 锁利: 涨幅回看窗口（交易日）
 
+# P1-7 突破质量子检查（0xToni 四假突破形态, 2026-08-07）
+_BREAKOUT_QUALITY_LOOKBACK_W = 13  # 突破质量回看窗口（周）
+_LOW_QUALITY_GAIN = 0.03           # 放量滞涨阈值: 突破周涨幅 < 3%
+_LOW_QUALITY_SHADOW = 0.50         # 长上影阈值: 上影 / (高-低) > 50%
+_NO_FOLLOW_MIN_W = 3               # 突破至少 N 周后才判定"未创新高"
+_BROKE_LEVEL_BAND = 0.995          # 收盘跌破平台带（跌破即失败）
+
 
 def _map_regime_to_state(regime_value: str) -> str:
     """MarketRegime 6 态 → 三态 (BULL_TRENDING/BEAR_TRENDING/RANGE)。
@@ -455,6 +462,12 @@ def _weekly_breakout_structure(df) -> dict:
     s3 = breakout_any_52 & touch & reclaim & shrink
     out["pullback_reclaim"] = bool(s3.iloc[-1]) if len(w) else False
 
+    # 突破质量: 四假突破形态 (0xToni 量价帖)
+    quality = _breakout_quality_flags(w, s2, platform_high, vol_ma)
+    out["failed_breakout"] = quality["failed_breakout"]
+    out["low_quality"] = quality["low_quality"]
+    out["no_follow_through"] = quality["no_follow_through"]
+
     # 锁利: 近60日涨≥20% 且 日线 MA5 死叉 MA10（统一转 Python bool）
     if "close" in d.columns and len(d) >= _LOCK_WINDOW_D + 10:
         dc = d["close"].astype(float)
@@ -468,6 +481,12 @@ def _weekly_breakout_structure(df) -> dict:
     parts = []
     if out["fresh_breakout"] and not out["pullback_reclaim"]:
         parts.append("周线放量突破刚发生")
+    if out["failed_breakout"]:
+        parts.append("突破失败: 跌回突破平台下方")
+    if out["low_quality"] and not out["pullback_reclaim"]:
+        parts.append("突破周放量滞涨/长上影(质量存疑)")
+    if out["no_follow_through"] and not out["pullback_reclaim"]:
+        parts.append("突破后未创新高(无跟风接力)")
     if out["pullback_reclaim"]:
         parts.append("突破后回踩MA10周缩量企稳")
     if out["lock_profit"]:
@@ -476,16 +495,76 @@ def _weekly_breakout_structure(df) -> dict:
     return out
 
 
+def _breakout_quality_flags(w, s2, platform_high, vol_ma) -> dict:
+    """四假突破形态检测（0xToni《散户生存法则·量价》）→ 突破质量评估。
+
+    在最近一次周线放量突破(S2)上判定:
+      failed_breakout   假突破①④: 收盘跌回突破平台下方 / 突破后任一周放量跌破平台
+      low_quality       假突破②  : 突破周放量滞涨(涨幅<3%) 或 长上影(上影/振幅>50%)
+      no_follow_through 假突破③  : 突破≥3周后仍未再创新高（且未进入回踩二波）
+
+    仅对 _BREAKOUT_QUALITY_LOOKBACK_W 周内的突破评估；更早的突破质量已无意义。
+    """
+    n = len(w)
+    out = {"failed_breakout": False, "low_quality": False, "no_follow_through": False}
+    if n < 2:
+        return out
+    # 最近一次 S2 突破
+    last_b = None
+    for i in range(n - 1, -1, -1):
+        if bool(s2.iloc[i]):
+            last_b = i
+            break
+    if last_b is None or n - 1 - last_b > _BREAKOUT_QUALITY_LOOKBACK_W:
+        return out
+
+    level = float(platform_high.iloc[last_b])  # 被突破的平台高
+    cur_close = float(w["close"].iloc[-1])
+
+    # 假突破①: 收盘已跌回平台下方
+    out["failed_breakout"] = cur_close < level * _BROKE_LEVEL_BAND
+    # 假突破④: 突破后任一周低点破平台且放量（突破买盘集中离场）
+    if not out["failed_breakout"]:
+        for i in range(last_b + 1, n):
+            vol_ref = float(vol_ma.iloc[i])
+            if (float(w["low"].iloc[i]) < level
+                    and vol_ref > 0
+                    and float(w["volume"].iloc[i]) > _BREAKOUT_VOL_RATIO * vol_ref):
+                out["failed_breakout"] = True
+                break
+
+    # 假突破②: 突破周放量滞涨 或 长上影
+    o = float(w["open"].iloc[last_b])
+    h = float(w["high"].iloc[last_b])
+    c = float(w["close"].iloc[last_b])
+    lo = float(w["low"].iloc[last_b])
+    gain = (c - o) / o if o > 0 else 0.0
+    rng = h - lo
+    shadow = (h - c) / rng if rng > 0 else 0.0
+    out["low_quality"] = gain < _LOW_QUALITY_GAIN or shadow > _LOW_QUALITY_SHADOW
+
+    # 假突破③: 突破≥3周后仍未再创新高（且当前非回踩二波）
+    if last_b < n - 1 and (n - 1 - last_b) >= _NO_FOLLOW_MIN_W:
+        best_after = float(w["close"].iloc[last_b + 1:].max())
+        out["no_follow_through"] = best_after <= float(w["close"].iloc[last_b]) * 1.005
+
+    return out
+
+
 def _apply_breakout_chase_suppressor(snapshot: "TacticalSnapshot", structure: dict) -> None:
-    """P1-7 追突破抑制 + 锁利降权（回测依据见 _weekly_breakout_structure docstring）。
+    """P1-7 追突破抑制 + 突破失败降权 + 锁利降权（回测依据见 _weekly_breakout_structure docstring）。
 
     与 _apply_cross_period_filter 同构: 命中条件时对入场信号降权并打 market_gate 标签,
     不清空信号（置信度由下游裁决继续处理）。
     """
     if not structure:
         return
-    if structure.get("fresh_breakout") and not structure.get("pullback_reclaim"):
-        tag = "WEEKLY_BREAKOUT_SUPPRESS"
+    fresh = structure.get("fresh_breakout") and not structure.get("pullback_reclaim")
+    failed = structure.get("failed_breakout")
+
+    if fresh or failed:
+        # 追突破 / 突破失败 → 趋势跟随入场信号降权
+        tag = "WEEKLY_BREAKOUT_SUPPRESS" if fresh else "BREAKOUT_FAILED"
         for sig in snapshot.entry_signals:
             if sig.get("type") in _TREND_FOLLOW_SIGNALS:
                 sig["confidence"] = round(float(sig.get("confidence", 0.5)) * 0.5, 3)
@@ -495,9 +574,11 @@ def _apply_breakout_chase_suppressor(snapshot: "TacticalSnapshot", structure: di
                 float(snapshot.best_entry.get("confidence", 0.5)) * 0.5, 3
             )
             snapshot.best_entry.setdefault("market_gate", tag)
-        snapshot.notes.append(
-            f"[P1-7] {structure['note']} — 周线追突破历史超额约-5pp, 等待回踩缩量企稳再评估"
+        reason = (
+            "周线追突破历史超额约-5pp, 等待回踩缩量企稳再评估"
+            if fresh else "突破失败(跌回平台/回踩放量跌破), 追入胜率差"
         )
+        snapshot.notes.append(f"[P1-7] {structure.get('note', '')} — {reason}")
     if structure.get("lock_profit"):
         tag = "LOCK_PROFIT"
         for sig in snapshot.entry_signals:
@@ -511,7 +592,7 @@ def _apply_breakout_chase_suppressor(snapshot: "TacticalSnapshot", structure: di
         snapshot.notes.append(
             f"[P1-7] {structure['note']} — 回测: 该信号后60日净收益约-3.3%(超额-5.6pp), 锁利/不追入"
         )
-    elif structure.get("pullback_reclaim") and not structure.get("fresh_breakout"):
+    elif structure.get("pullback_reclaim") and not fresh and not failed:
         snapshot.notes.append(
             "[P1-7] 突破后回踩缩量企稳 — 回测优于追突破(13周+4.2pp), 可作二波入场确认"
         )
