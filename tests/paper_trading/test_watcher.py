@@ -18,6 +18,36 @@ from src.paper_trading.watcher import (
 
 
 # ══════════════════════════════════════════════════════════════════
+# 净盈亏 (扣摩擦成本)
+# ══════════════════════════════════════════════════════════════════
+def _net_sell_pnl(price, entry, qty, total_cost):
+    """与 engine._execute_single 相同的净盈亏公式 (卖出扣佣金+印花+过户)。"""
+    gross_yuan = (price - entry) * qty
+    net_yuan = gross_yuan - total_cost
+    return net_yuan / (entry * qty) if entry > 0 and qty > 0 else 0.0
+
+
+class TestNetPnl:
+    def test_net_pnl_below_gross(self):
+        # 卖 100股 20→20.5, 摩擦 6.05 → 净 +2.20% < 毛 +2.50%
+        net = _net_sell_pnl(20.5, 20.0, 100, 6.05)
+        assert round(net * 100, 2) == 2.20
+        assert net < (20.5 / 20.0 - 1)  # 净 < 毛
+
+    def test_small_gain_net_loss(self):
+        # 毛利微正但成本高 → 净亏损 (胜率应计为负)
+        net = _net_sell_pnl(20.05, 20.0, 100, 6.05)  # 毛利+5元, 成本6.05
+        assert net < 0  # 净亏损
+
+    def test_costs_always_deducted(self):
+        # 成本永远被扣除, 无论盈亏方向
+        net_profit = _net_sell_pnl(22.0, 20.0, 100, 6.05)
+        gross = (22.0 - 20.0) / 20.0
+        assert net_profit < gross
+        assert net_profit > 0
+
+
+# ══════════════════════════════════════════════════════════════════
 # 缠论买点时效过滤
 # ══════════════════════════════════════════════════════════════════
 class TestChanlunRecent:

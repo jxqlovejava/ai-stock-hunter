@@ -809,12 +809,14 @@ class PaperTradingEngine:
             net_amount = notional - cost.total_cost
             new_cash = cash + net_amount
 
-            # 计算实现盈亏
+            # 计算实现盈亏 — 净盈亏: 扣除该笔卖出摩擦成本 (佣金+印花+过户, 2026-08-08)
             if order.symbol in positions:
                 pos = positions[order.symbol]
                 entry = getattr(pos, "entry_price", order.price)
-                if entry > 0:
-                    pnl_pct = (order.price - entry) / entry
+                if entry > 0 and order.quantity > 0:
+                    gross_yuan = (order.price - entry) * order.quantity
+                    net_yuan = gross_yuan - cost.total_cost
+                    pnl_pct = net_yuan / (entry * order.quantity)
                 else:
                     pnl_pct = 0.0
             else:
