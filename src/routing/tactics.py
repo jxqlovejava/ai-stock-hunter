@@ -579,6 +579,18 @@ def _apply_breakout_chase_suppressor(snapshot: "TacticalSnapshot", structure: di
             if fresh else "突破失败(跌回平台/回踩放量跌破), 追入胜率差"
         )
         snapshot.notes.append(f"[P1-7] {structure.get('note', '')} — {reason}")
+
+    # P1-7 突破失败 → 持仓者离场触发 (回测: 突破失败后13周期望-9.75%, 胜率21%; 回避=避灾)
+    if failed:
+        snapshot.breakout_failed = True
+        snapshot.breakout_failed_note = structure.get("note", "")
+        snapshot.exit_signals.append({
+            "type": "BREAKOUT_FAILED",
+            "description": "周线突破失败(跌回突破平台下方), 回测后续13周期望约-9.8%, 建议减仓/离场",
+            "zone_low": 0, "zone_high": 0,
+            "confidence": 0.6,
+            "urgency": "URGENT",
+        })
     if structure.get("lock_profit"):
         tag = "LOCK_PROFIT"
         for sig in snapshot.entry_signals:
@@ -846,6 +858,10 @@ class TacticalSnapshot:
     projected_target: float = 0.0          # MM 等距投影止盈参考位 (不覆盖 target_prices)
     chase_blocked: bool = False            # 现价接近投影目标位 → 不追单
     notes: list[str] = field(default_factory=list)   # 门控/投影等辅助说明
+
+    # ── 🚨 P1-7 突破结构 (追突破抑制 / 突破失败离场 / 锁利) ──
+    breakout_failed: bool = False          # 周线突破失败(跌回平台下方) → 持仓者减仓/离场
+    breakout_failed_note: str = ""         # 失败详情 (含 low_quality / no_follow_through)
 
     # ── 🥋 缠论结构（独立维度，不改 6 维 composite）──
     chanlun_score: float = 50.0
@@ -2651,6 +2667,13 @@ def _resolve_final_action(
         result.action = (
             getattr(advice, 'action', 'HOLD') if advice
             else ("HOLD" if held else "WAIT")
+        )
+
+    # P1-7 突破失败 → 持仓者减仓 (回测: 突破失败后13周期望-9.75%, 胜率21%)
+    if snapshot.breakout_failed and held and result.action in ("HOLD", "ADD"):
+        result.action = "REDUCE"
+        result.warnings.append(
+            f"周线突破失败(跌回平台下方): {snapshot.breakout_failed_note or '追突破结构破坏'}, 建议减仓"
         )
 
     # P2: 浮盈阶梯加仓 — 把评分驱动的 HOLD 升级为 ADD (趋势延续金字塔加仓)

@@ -14,8 +14,10 @@ import pandas as pd
 
 from src.routing.tactics import (
     TacticalSnapshot,
+    TacticsResult,
     _apply_breakout_chase_suppressor,
     _enhance_market_state,
+    _resolve_final_action,
     _weekly_breakout_structure,
 )
 
@@ -307,3 +309,57 @@ def test_high_quality_reclaim_not_suppressed():
     assert snap.entry_signals[0]["confidence"] == 0.65
     assert "market_gate" not in snap.entry_signals[0]
     assert any("二波" in n for n in snap.notes)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# P1-7 ⑦ 突破失败 → 离场触发 (REDUCE)
+# ═══════════════════════════════════════════════════════════════════
+def _failed_structure():
+    return {"fresh_breakout": False, "failed_breakout": True,
+            "low_quality": False, "no_follow_through": True,
+            "pullback_reclaim": False, "lock_profit": False,
+            "note": "突破失败: 跌回突破平台下方"}
+
+
+def test_failed_breakout_sets_exit_signal_and_flag():
+    """failed_breakout → snapshot 标记 + BREAKOUT_FAILED exit_signal(URGENT)。"""
+    snap = _snap_with_signals("MA_GOLDEN_CROSS")
+    _apply_breakout_chase_suppressor(snap, _failed_structure())
+    assert snap.breakout_failed is True
+    assert "突破失败" in snap.breakout_failed_note
+    exit_types = [s.get("type") for s in snap.exit_signals]
+    assert "BREAKOUT_FAILED" in exit_types
+    failed_sig = next(s for s in snap.exit_signals if s["type"] == "BREAKOUT_FAILED")
+    assert failed_sig["urgency"] == "URGENT"
+
+
+def test_failed_breakout_forces_reduce_when_held():
+    """突破失败 + 持仓 + HOLD/ADD 裁决 → 动作 REDUCE + 警告。"""
+    snap = TacticalSnapshot(symbol="000001", name="测试")
+    snap.breakout_failed = True
+    snap.breakout_failed_note = "突破失败: 跌回突破平台下方"
+    result = TacticsResult(symbol="000001", name="测试")
+    result.verdict_recommendation = "HOLD"
+    _resolve_final_action(result, snap, advice=None, held=True)
+    assert result.action == "REDUCE"
+    assert any("突破失败" in w for w in result.warnings)
+
+
+def test_failed_breakout_no_effect_when_not_held():
+    """突破失败但未持仓 → 不触发 REDUCE (入场已由抑制器降权)。"""
+    snap = TacticalSnapshot(symbol="000001", name="测试")
+    snap.breakout_failed = True
+    result = TacticsResult(symbol="000001", name="测试")
+    result.verdict_recommendation = "BUY"
+    _resolve_final_action(result, snap, advice=None, held=False)
+    assert result.action == "ENTER"  # 未持仓, 不受离场触发影响
+
+
+def test_failed_breakout_preserves_stronger_exit():
+    """突破失败 + 持仓 + 裁决 SELL → 保持 EXIT (不降级为 REDUCE)。"""
+    snap = TacticalSnapshot(symbol="000001", name="测试")
+    snap.breakout_failed = True
+    result = TacticsResult(symbol="000001", name="测试")
+    result.verdict_recommendation = "SELL"
+    _resolve_final_action(result, snap, advice=None, held=True)
+    assert result.action == "EXIT"
