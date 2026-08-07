@@ -72,11 +72,22 @@ class AShareCostCalculator:
         transfer_fee_rate: float | None = None,
         slippage_rate: float | None = None,
     ):
-        self.commission_rate = commission_rate or self.DEFAULT_COMMISSION_RATE
-        self.commission_min = commission_min or self.DEFAULT_COMMISSION_MIN
-        self.stamp_tax_rate = stamp_tax_rate or self.DEFAULT_STAMP_TAX_RATE
-        self.transfer_fee_rate = transfer_fee_rate or self.DEFAULT_TRANSFER_FEE_RATE
-        self.slippage_rate = slippage_rate or self.DEFAULT_SLIPPAGE_RATE
+        # 用 is not None 判断: `or` 会把显式传 0.0 (如滑点=0) 误判为未传 → 回退默认
+        self.commission_rate = (
+            commission_rate if commission_rate is not None else self.DEFAULT_COMMISSION_RATE
+        )
+        self.commission_min = (
+            commission_min if commission_min is not None else self.DEFAULT_COMMISSION_MIN
+        )
+        self.stamp_tax_rate = (
+            stamp_tax_rate if stamp_tax_rate is not None else self.DEFAULT_STAMP_TAX_RATE
+        )
+        self.transfer_fee_rate = (
+            transfer_fee_rate if transfer_fee_rate is not None else self.DEFAULT_TRANSFER_FEE_RATE
+        )
+        self.slippage_rate = (
+            slippage_rate if slippage_rate is not None else self.DEFAULT_SLIPPAGE_RATE
+        )
 
     # ------------------------------------------------------------------
     # 单笔成本计算

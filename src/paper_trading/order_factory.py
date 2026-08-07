@@ -21,8 +21,8 @@ from src.routing.positioning import TradeSignal
 
 logger = logging.getLogger(__name__)
 
-# 用户指定的佣金费率: 万1.3
-PAPER_COMMISSION_RATE = 0.00013
+# 用户指定的佣金费率: 万1.154 (2026-08-08 用户确认) + 最低5元 + 印花千0.5卖 + 过户万0.1
+PAPER_COMMISSION_RATE = 0.0001154
 
 
 @dataclass
@@ -70,9 +70,10 @@ class OrderFactory:
         self._max_single_pct = max_single_pct
         self._min_order_value = min_order_value
 
-        # 复用现有成本计算器，覆盖佣金率为万 1.3
+        # 复用现有成本计算器，覆盖佣金率为万 1.154；用户费率不含滑点 → slippage=0
         self._cost_calc = AShareCostCalculator(
             commission_rate=PAPER_COMMISSION_RATE,
+            slippage_rate=0.0,
         )
 
     # ------------------------------------------------------------------

@@ -70,8 +70,8 @@ class PaperTradingEngine:
         print(f"今日执行 {result.orders_executed} 笔交易")
     """
 
-    # 每日最大分析候选数
-    MAX_CANDIDATES_PER_DAY = 5
+    # 每日最大分析候选数 (2026-08-08: 12 支自选全覆盖, 原 5 支只覆盖部分)
+    MAX_CANDIDATES_PER_DAY = 12
 
     # P2-3: 事件驱动复盘触发阈值
     EVENT_REVIEW_LOSS_TRIGGER = 1      # 当日亏损平仓 ≥ N 笔触发即时复盘（正常止盈平仓不触发）
@@ -98,9 +98,12 @@ class PaperTradingEngine:
         )
         self._reporter = ReportGenerator(base_dir=self._data_dir)
 
-        # 复用现有模块
+        # 复用现有模块 (佣金万1.154, 用户费率不含滑点 → slippage=0 精确匹配)
         self._data = DataAggregator()
-        self._cost_calc = AShareCostCalculator(commission_rate=PAPER_COMMISSION_RATE)
+        self._cost_calc = AShareCostCalculator(
+            commission_rate=PAPER_COMMISSION_RATE,
+            slippage_rate=0.0,
+        )
 
         # 延迟初始化 (避免导入时触发重依赖)
         self._orchestrator: Optional[Orchestrator] = None
@@ -267,6 +270,62 @@ class PaperTradingEngine:
             result.errors.append(str(e))
 
         return result
+
+    def execute_symbol(
+        self,
+        symbol: str,
+        name: str = "",
+        force: bool = False,
+    ) -> list[PaperTrade]:
+        """对单支股票执行 分析→订单→成交（盘中/强信号触发用，2026-08-08）。
+
+        与 run_daily_cycle 的区别: 只针对单支（非整日批量），返回实际成交的交易。
+
+        Returns:
+            实际执行的 PaperTrade 列表（无成交则空列表）
+        """
+        today = today_str()
+        if not force and not is_trading_day():
+            logger.info("%s 非交易日，跳过 %s", today, symbol)
+            return []
+
+        # 重置当日去重（与每日循环隔离，避免跨时段误判重复）
+        market = "SH" if symbol.startswith(("6", "68")) else "SZ"
+        state = self.state
+
+        # 1. 同步该股持仓行情
+        state = self._sync_positions(state)
+
+        # 2. 全链路分析单支
+        logger.info("🔍 execute_symbol %s %s ...", symbol, name)
+        try:
+            orch_result = self.orchestrator.run(
+                symbol=symbol, market=market, name=name,
+                mode="daily", skip_t0=False,
+            )
+        except Exception as e:
+            logger.exception("分析 %s 异常: %s", symbol, e)
+            return []
+
+        if not (orch_result.passed or orch_result.verdict):
+            logger.info("%s 无有效裁决，跳过", symbol)
+            return []
+
+        # 3. 生成订单并执行
+        orders = self._create_orders([orch_result], state)
+        if not orders:
+            logger.info("%s 无订单（裁决 HOLD / 信号不足）", symbol)
+            return []
+
+        state, trades = self._execute_orders(orders, state)
+        self._state = state
+        self._save_all(state, trades)
+        for t in trades:
+            logger.info(
+                "✅ %s %s %d股 @%.2f 盈亏%.2f%%",
+                t.symbol, t.action, t.quantity, t.price, t.pnl_pct * 100,
+            )
+        return trades
 
     # ------------------------------------------------------------------
     # 步骤 2: 同步行情
