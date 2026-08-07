@@ -453,7 +453,11 @@ class Orchestrator:
             if _bars_df_cache is not None and not _bars_df_cache.empty:
                 c_col = _bars_df_cache["close"] if "close" in _bars_df_cache.columns else None
                 if c_col is not None and len(c_col) > 0:
-                    _close_series_cache = c_col.tolist()
+                    # 防御: 降级数据源可能返回字符串/NaN close，统一转 float 并剔除无效值
+                    _close_series_cache = [
+                        float(v) for v in c_col.tolist()
+                        if v is not None and str(v).strip().lower() not in ("", "nan", "none")
+                    ]
             try:
                 fins = self.data.get_financials(symbol, market, count=12)
                 _fin_cache = [f.model_dump() for f in (fins or [])] if fins else []
@@ -500,6 +504,10 @@ class Orchestrator:
             try:
                 _global_market = self.data.get_global_market()
             except Exception:
+                pass
+            # get_global_market 优雅返回 None（数据源不可用）时也要兜底到 get_us_overnight，
+            # 否则 US 隔夜上下文会被静默丢弃
+            if _global_market is None:
                 try:
                     _global_market = self.data.get_us_overnight()
                 except Exception:
@@ -556,6 +564,21 @@ class Orchestrator:
         step_done("✅", f"价格 {quote.price:.2f}  {cv_label} | "
                   f"K线{len(_close_series_cache)}根 财务{len(_fin_cache)}期 "
                   f"IO并行{len(io_tasks)}路")
+
+        # 全球市场(美股隔夜)提前注入 — 市场上下文对所有分析结果都有价值，
+        # 即使后续军规/准入 BLOCK 短路也保留在 result 上（非个股归因，属大盘背景）
+        if _global_market:
+            try:
+                gm_dict = _global_market.to_dict()
+                # 两种快照结构归一: GlobalMarketSnapshot 用 "us" 键；
+                # USOvernightSnapshot(兜底源) 的 sp500/nasdaq/dow 在顶层
+                us_data = gm_dict.get("us")
+                if not isinstance(us_data, dict) and "sp500" in gm_dict:
+                    us_data = {k: gm_dict.get(k) for k in ("sp500", "nasdaq", "dow")}
+                if us_data:
+                    result.us_overnight = us_data
+            except Exception as e:
+                logger.debug("us overnight early injection: %s", e)
 
         # 加载投资者偏好
         investor, result.using_default_profile, result.profile_completeness, result.profile_missing = self._get_investor_prefs()
@@ -734,14 +757,8 @@ class Orchestrator:
 
         # ---- Phase 2.5: 宏观事件因果链分析 ----
         step_start(4, "增强上下文 (宏观/北向/盈利修正/反操纵)")
-        # 复用 Phase 0 预拉结果 + 全球市场
-        us_overnight_val = None
-        if _global_market:
-            gm_dict = _global_market.to_dict()
-            us_data = gm_dict.get("us", {})
-            if us_data:
-                us_overnight_val = us_data
-                result.us_overnight = us_data
+        # 复用 Phase 0 预拉结果 + 全球市场 (result.us_overnight 已在 Phase 0 提前注入)
+        us_overnight_val = result.us_overnight
         if us_overnight_val is None:
             result.data_gaps.append("[DATA_GAP] 全球市场数据不可用")
 

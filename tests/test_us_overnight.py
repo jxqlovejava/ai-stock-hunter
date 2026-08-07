@@ -218,6 +218,7 @@ class TestDiagnosisMacroScoring:
 
 class TestOrchestratorUSOvernightIntegration:
     @patch("src.routing.orchestrator.DataAggregator.get_us_overnight")
+    @patch("src.routing.orchestrator.DataAggregator.get_global_market")
     @patch("src.routing.orchestrator.DataAggregator.get_cross_validated_quote")
     @patch("src.routing.orchestrator.DataAggregator.get_financials")
     @patch("src.routing.orchestrator.DataAggregator.get_fundamental_metrics")
@@ -232,6 +233,7 @@ class TestOrchestratorUSOvernightIntegration:
         mock_fundamental_metrics,
         mock_financials,
         mock_quote,
+        mock_global_market,
         mock_us_overnight,
     ):
         from src.data.schema import Quote
@@ -255,6 +257,8 @@ class TestOrchestratorUSOvernightIntegration:
         mock_industry_pe_pb.return_value = (None, None)
         mock_earnings_growth.return_value = None
         mock_dividend.return_value = None
+        # orchestrator 优先取 get_global_market；mock 返回 None → 强制走 get_us_overnight 注入路径
+        mock_global_market.return_value = None
 
         snapshot = USOvernightSnapshot(
             trade_date=date(2026, 7, 10),

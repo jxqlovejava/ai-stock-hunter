@@ -61,10 +61,20 @@ class TestMiaoXiangAdapter:
     def test_run_skill_success(self, mock_run):
         """_run_skill 成功执行并解析 JSON。"""
         import json
+        from pathlib import Path
+        from unittest.mock import patch as patch2
+
+        from src.data import miaoxiang_adapter as mxa
+
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = "test output"
         mock_run.return_value = mock_result
+
+        # 脚本存在性检查需要真实的脚本文件 — 用临时 stub 覆写 _SCRIPT_PATHS
+        stub = Path("/tmp/test_mx/mx-data/mx_data.py")
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text("#!/usr/bin/env python3\nprint('stub')\n", encoding="utf-8")
 
         adapter = MiaoXiangAdapter(api_key="test_key", output_dir="/tmp/test_mx")
         # 创建一个模拟的输出 JSON 文件
@@ -73,7 +83,8 @@ class TestMiaoXiangAdapter:
         with open("/tmp/test_mx/mx-data/mx_data_test_raw.json", "w") as f:
             json.dump(test_data, f)
 
-        result = adapter._run_skill("mx-data", "test query")
+        with patch2.dict(mxa._SCRIPT_PATHS, {"mx-data": stub}):
+            result = adapter._run_skill("mx-data", "test query")
         assert result == test_data
 
     @patch("subprocess.run")
