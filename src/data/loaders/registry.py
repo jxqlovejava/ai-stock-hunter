@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 import time
 from typing import Any, Type
 
@@ -38,6 +39,11 @@ VALID_SOURCES: set[str] = set(FALLBACK_CHAINS.get("a_share", [])) | {"local", "a
 _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"verified_cache", "local"})
 
 _registered: bool = False
+# 冷启动竞态锁：tactics Phase 0 并行 8 路首次调用 _ensure_registered 时，
+# 若 _registered 在 import 循环完成前置 True，其它线程读到 True 直接 return，
+# 此时 LOADER_REGISTRY 尚未填充 → 全部 no-cls → K线/财务静默空。
+# 双检锁保证 import 完成前其它线程阻塞等待。
+_registry_lock = threading.Lock()
 
 
 def register(cls: Type[DataLoader]) -> Type[DataLoader]:
@@ -47,25 +53,34 @@ def register(cls: Type[DataLoader]) -> Type[DataLoader]:
 
 
 def _ensure_registered() -> None:
-    """懒加载所有 loader 模块，确保注册表被填充。"""
+    """懒加载所有 loader 模块，确保注册表被填充（双检锁线程安全）。
+
+    原实现将 `_registered = True` 置于 import 循环之前：并发首调时，
+    先到线程设 True 后进入 import（需网络探测的模块耗时可达数百 ms），
+    其它线程读到 True 直接 return，LOADER_REGISTRY 仍为空 → 静默丢数据。
+    修复：锁内完成全部 import 后再置 True，其它线程在锁上等待。
+    """
     global _registered
     if _registered:
         return
-    _registered = True
-
-    modules = [
-        "src.data.loaders.cache_loader",
-        "src.data.loaders.huatai_loader",
-        "src.data.loaders.guosen_loader",
-        "src.data.loaders.tencent_loader",
-        "src.data.loaders.mootdx_loader",
-        "src.data.loaders.akshare_loader",
-    ]
-    for mod_name in modules:
-        try:
-            importlib.import_module(mod_name)
-        except Exception as exc:
-            logger.debug("loader module %s import failed: %s", mod_name, exc)
+    with _registry_lock:
+        # 双检：等待锁期间可能已有线程完成初始化
+        if _registered:
+            return
+        modules = [
+            "src.data.loaders.cache_loader",
+            "src.data.loaders.huatai_loader",
+            "src.data.loaders.guosen_loader",
+            "src.data.loaders.tencent_loader",
+            "src.data.loaders.mootdx_loader",
+            "src.data.loaders.akshare_loader",
+        ]
+        for mod_name in modules:
+            try:
+                importlib.import_module(mod_name)
+            except Exception as exc:
+                logger.debug("loader module %s import failed: %s", mod_name, exc)
+        _registered = True
 
 
 def resolve_loader(market: str) -> DataLoader:
