@@ -17,6 +17,7 @@ from src.routing.tactics import (
     TacticsResult,
     _apply_breakout_chase_suppressor,
     _enhance_market_state,
+    _entry_zone_hint,
     _resolve_final_action,
     _weekly_breakout_structure,
 )
@@ -363,3 +364,39 @@ def test_failed_breakout_preserves_stronger_exit():
     result.verdict_recommendation = "SELL"
     _resolve_final_action(result, snap, advice=None, held=True)
     assert result.action == "EXIT"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# P1-7 ⑧ 买点可达性通俗提示 (2026-08-08)
+# ═══════════════════════════════════════════════════════════════════
+def test_entry_zone_hint_inside_zone():
+    """现价在买点区间内 → 可直接参考。"""
+    h = _entry_zone_hint(10.0, 9.9, 10.5)
+    assert "在买点区间" in h and "✅" in h
+
+
+def test_entry_zone_hint_below_zone():
+    """现价低于买点区间 → 更便宜但提示留意接刀。"""
+    h = _entry_zone_hint(8.0, 9.9, 10.5)
+    assert "还低" in h and "💡" in h
+    assert "更便宜" in h
+
+
+def test_entry_zone_hint_just_above_zone():
+    """现价略高于区间上沿(≤3%) → 基本到位。"""
+    h = _entry_zone_hint(10.7, 9.9, 10.5)
+    assert "只差" in h and "✅" in h
+
+
+def test_entry_zone_hint_far_above_zone():
+    """现价高出区间>3% → 别追高，等回踩。"""
+    h = _entry_zone_hint(12.0, 9.9, 10.5)
+    assert "高出" in h and "⏳" in h
+    assert "别追高" in h
+
+
+def test_entry_zone_hint_invalid_data():
+    """数据缺失 → 返回空串（不破坏显示）。"""
+    assert _entry_zone_hint(0, 9.9, 10.5) == ""
+    assert _entry_zone_hint(10.0, 0, 10.5) == ""
+    assert _entry_zone_hint(10.0, 9.9, 0) == ""

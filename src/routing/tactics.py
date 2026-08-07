@@ -2084,8 +2084,9 @@ def run_tactics(
           f" | 风控: {'PASS' if result.risk_passed else '⚠️'}")
     if snapshot.best_entry:
         be = snapshot.best_entry
+        hint = _entry_zone_hint(snapshot.current_price, be['zone_low'], be['zone_high'])
         print(f"  入场: {be['type']} [{be['zone_low']:.2f}-{be['zone_high']:.2f}] "
-              f"c={be['confidence']:.0%}")
+              f"c={be['confidence']:.0%} {hint}")
     if snapshot.suggested_stop > 0:
         print(f"  止损: {snapshot.suggested_stop:.2f}{atr_info}", end="")
         if snapshot.target_prices and snapshot.target_prices[0] > 0:
@@ -2117,6 +2118,26 @@ def run_tactics(
 # ═══════════════════════════════════════════════════════════════════
 # Phase 1 输出
 # ═══════════════════════════════════════════════════════════════════
+
+
+def _entry_zone_hint(current: float, zone_low: float, zone_high: float) -> str:
+    """通俗化买点可达提示 — 现价相对入场区间的距离（大白话，2026-08-08）。
+
+    Returns:
+        空串(数据缺失) 或 "✅现价就在买点区间" / "💡现价比买点还便宜X%" /
+        "✅离买点只差X%" / "⏳高出买点X%别追高等回踩"
+    """
+    if current <= 0 or zone_low <= 0 or zone_high <= 0:
+        return ""
+    if zone_low <= current <= zone_high:
+        return "✅ 现价正好在买点区间里，可以直接参考"
+    if current < zone_low:
+        pct = (zone_low - current) / current * 100.0
+        return f"💡 现价比买点区间还低 {pct:.0f}%，更便宜（留意别在下跌趋势里接刀）"
+    pct = (current - zone_high) / zone_high * 100.0
+    if pct <= 3.0:
+        return f"✅ 现价离买点区间只差 {pct:.1f}%，基本到位"
+    return f"⏳ 现价高出买点区间 {pct:.0f}%，别追高，等回踩到区间再考虑"
 
 
 def _print_snapshot(s: TacticalSnapshot) -> None:
@@ -2180,8 +2201,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
     if s.entry_signals:
         print(f"\n  🟢 入场信号 ({len(s.entry_signals)}个):")
         for es in s.entry_signals:
+            hint = _entry_zone_hint(s.current_price, es['zone_low'], es['zone_high'])
             print(f"     · {es['type']}: {es['description']}")
-            print(f"       入场区间 [{es['zone_low']:.2f} — {es['zone_high']:.2f}]  置信度 {es['confidence']:.0%}")
+            print(f"       入场区间 [{es['zone_low']:.2f} — {es['zone_high']:.2f}]  置信度 {es['confidence']:.0%}  {hint}")
     else:
         print(f"\n  🟢 入场信号: 暂无 — 尚未触发技术买点")
 
@@ -2198,8 +2220,9 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
     # 最佳入场/止损/目标
     if s.best_entry:
         be = s.best_entry
+        hint = _entry_zone_hint(s.current_price, be['zone_low'], be['zone_high'])
         print(f"\n  🎯 最佳入场: {be['type']} [{be['zone_low']:.2f}—{be['zone_high']:.2f}] "
-              f"置信度 {be['confidence']:.0%}")
+              f"置信度 {be['confidence']:.0%}  {hint}")
         print(f"     {be['description']}")
     if s.suggested_stop > 0:
         stops = [f"建议止损 {s.suggested_stop:.2f}"]
