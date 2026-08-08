@@ -350,12 +350,21 @@ class PaperTradingEngine:
 
                 # 复用 PositionState.observe_price() 更新 HWM + PnL
                 new_pos = pos.observe_price(quote.price)
+
+                # ATR 动态止损/止盈 (2026-08-08): 每次同步重算 ATR
+                try:
+                    atr = self._fetch_atr(symbol)
+                    new_pos = self._apply_atr_management(new_pos, quote.price, atr)
+                except Exception:
+                    pass
+
                 if new_pos is not pos:
                     positions[symbol] = new_pos
                     updated = True
                     logger.debug(
-                        "%s: ¥%.2f (PnL %+.2f%%)",
+                        "%s: ¥%.2f (PnL %+.2f%%) 止损%.2f",
                         symbol, quote.price, new_pos.unrealized_pnl_pct * 100,
+                        new_pos.stop_price,
                     )
 
                     # 检查止损触发
@@ -372,6 +381,51 @@ class PaperTradingEngine:
         if updated:
             state = state.with_positions(positions)
         return state
+
+    # ------------------------------------------------------------------
+    # ATR 动态止损/止盈 (2026-08-08)
+    # ------------------------------------------------------------------
+
+    def _fetch_atr(self, symbol: str, period: int = 14) -> float:
+        """14 日 ATR (True Range 均值)。失败返回 0.0 (回退固定止损)。"""
+        try:
+            import pandas as pd
+            bars = self._data.get_history(symbol)
+            if bars is None or getattr(bars, "empty", True):
+                return 0.0
+            if not all(c in bars.columns for c in ("high", "low", "close")):
+                return 0.0
+            h = bars["high"].astype(float)
+            l = bars["low"].astype(float)
+            c = bars["close"].astype(float)
+            prev_c = c.shift(1)
+            tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+            atr = tr.rolling(period).mean().iloc[-1]
+            return float(atr) if atr > 0 and math.isfinite(atr) else 0.0
+        except Exception:
+            return 0.0
+
+    def _apply_atr_management(self, pos, price: float, atr: float):
+        """ATR 动态止损/止盈:
+          - 到达止盈目标 (≥ entry + 3×ATR) → 收紧止损到 price - 0.5×ATR 锁利
+          - 否则常规追踪: 止损上移到 price - 3×ATR (随上涨移动)
+        返回更新后的 PositionState (复用现有 stop_price 触发机制自动卖)。
+        """
+        from src.routing.position_state import StopStage
+        if atr <= 0 or price <= 0:
+            return pos
+        target = pos.entry_price + 3.0 * atr
+        if price >= target:
+            tp_stop = price - 0.5 * atr
+            if tp_stop > pos.stop_price:
+                logger.info("🎯 %s 到达 ATR止盈目标(≥%.2f), 止损收紧到 %.2f 锁利",
+                            pos.symbol, target, tp_stop)
+                return pos.with_stop(StopStage.TRAILING, tp_stop, "ATR止盈目标触发锁利")
+        else:
+            trail = price - pos.trailing_atr_multiplier * atr
+            if trail > pos.stop_price:
+                return pos.with_stop(StopStage.TRAILING, trail, "ATR追踪止损上移")
+        return pos
 
     # ------------------------------------------------------------------
     # 步骤 3: 候选筛选
@@ -718,9 +772,10 @@ class PaperTradingEngine:
                             old_pos, quantity=new_qty, entry_price=round(new_entry, 2),
                         )
                     else:
-                        # 新建仓: 创建 PositionState
-                        from src.routing.position_state import PositionState
-                        positions[order.symbol] = PositionState.initial(
+                        # 新建仓: 创建 PositionState — ATR 止损优先, 回退固定%
+                        from src.routing.position_state import PositionState, StopStage
+                        atr_v = getattr(order, "atr", 0) or 0
+                        new_pos = PositionState.initial(
                             symbol=order.symbol,
                             name=order.name,
                             entry_price=order.price,
@@ -728,7 +783,19 @@ class PaperTradingEngine:
                             stop_config={
                                 "initial_stop_pct": -self.config.position_limits.single_stop_loss_pct,
                             },
+                            atr_value=atr_v if atr_v > 0 else None,
                         )
+                        if atr_v > 0:
+                            # ATR 止损有效化: entry - 2×ATR (比固定2%更贴合波动),
+                            # 10% 最大亏损上限兜底 (ATR 极端大时不让单笔亏超10%)
+                            atr_stop = order.price - 2.0 * atr_v
+                            floor = order.price * 0.90
+                            new_pos = new_pos.with_stop(
+                                StopStage.INITIAL,
+                                round(max(atr_stop, floor), 2),
+                                "ATR止损(2×ATR, 上限10%)",
+                            )
+                        positions[order.symbol] = new_pos
 
                 elif order.action == "sell":
                     # 减仓或清仓

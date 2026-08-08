@@ -38,6 +38,7 @@ class PaperOrder:
     signal_score: float = 0.0        # 裁决评分
     signal_confidence: float = 0.0   # 信号置信度
     stop_price: float = 0.0          # 建议止损价
+    atr: float = 0.0                 # ATR 值 (用于 ATR 动态止损, 2026-08-08)
     cost_estimate: float = 0.0       # 预估交易成本
     created_at: str = ""
 
@@ -164,6 +165,12 @@ class OrderFactory:
 
         stop_price = getattr(signal, "suggested_stop", 0.0)
 
+        # ATR: 优先取 signal.atr; 否则从 atr_stop 反推 (atr_stop = price - 2×ATR)
+        atr = getattr(signal, "atr", 0) or 0
+        atr_stop = getattr(signal, "atr_stop", 0) or 0
+        if atr <= 0 and atr_stop > 0 and price > 0:
+            atr = (price - atr_stop) / 2.0
+
         return PaperOrder(
             symbol=signal.symbol,
             name=getattr(signal, "name", ""),
@@ -175,6 +182,7 @@ class OrderFactory:
             signal_score=score,
             signal_confidence=getattr(signal, "confidence", 0.5),
             stop_price=stop_price,
+            atr=atr,
             cost_estimate=cost.total_cost,
         )
 

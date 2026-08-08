@@ -277,3 +277,37 @@ class TestFastCheck:
         r = w._fast_check("600089", "特变电工")
         assert r["sell_candidate"] is True
         assert r["below_ma20"] is True
+
+
+# ══════════════════════════════════════════════════════════════════
+# ATR 动态止损/止盈 (2026-08-08)
+# ══════════════════════════════════════════════════════════════════
+class TestATRManagement:
+    def _pos(self, entry=20.0, atr=1.0):
+        from src.paper_trading.engine import PaperTradingEngine
+        from src.routing.position_state import PositionState, StopStage
+        pos = PositionState.initial(symbol="600089", entry_price=entry, quantity=100,
+                                    stop_config={"initial_stop_pct": -0.02}, atr_value=atr)
+        return pos.with_stop(StopStage.INITIAL,
+                             round(max(entry - 2 * atr, entry * 0.9), 2), "ATR止损")
+
+    def test_take_profit_tightens_stop(self):
+        from src.paper_trading.engine import PaperTradingEngine
+        eng = PaperTradingEngine()
+        pos = self._pos(20.0, 1.0)  # stop=18
+        p = eng._apply_atr_management(pos, 24.0, 1.0)  # 24 ≥ 20+3 → 收紧到 23.5
+        assert p.stop_price == 23.5
+
+    def test_trailing_moves_stop_up(self):
+        from src.paper_trading.engine import PaperTradingEngine
+        eng = PaperTradingEngine()
+        pos = self._pos(20.0, 1.0)
+        p = eng._apply_atr_management(pos, 21.5, 1.0)  # trail=18.5 > 18 → 上移
+        assert p.stop_price == 18.5
+
+    def test_no_atr_no_change(self):
+        from src.paper_trading.engine import PaperTradingEngine
+        eng = PaperTradingEngine()
+        pos = self._pos(20.0, 1.0)
+        p = eng._apply_atr_management(pos, 21.5, 0.0)
+        assert p.stop_price == 18.0  # ATR=0 不动
