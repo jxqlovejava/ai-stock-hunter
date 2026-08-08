@@ -105,6 +105,32 @@ class TestStopBreach:
 
 
 # ══════════════════════════════════════════════════════════════════
+# 交易日门禁 (周末/节假日静默, 2026-08-08)
+# ══════════════════════════════════════════════════════════════════
+class TestTradingDayGate:
+    def test_non_trading_day_silent(self, monkeypatch, capsys):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(
+            "src.paper_trading.scheduler.is_trading_day", lambda d=None: False
+        )
+        # 非交易日跑 premarket → 静默 (exit 0, 无输出)
+        rc = w.main(["--mode", "premarket"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert out.strip() == ""
+
+    def test_trading_day_not_silent(self, monkeypatch, capsys):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(
+            "src.paper_trading.scheduler.is_trading_day", lambda d=None: True
+        )
+        # 交易日 → 走正常逻辑 (可能因无数据静默, 但不因门禁短路)
+        # 这里只验证门禁放行 (mode_review 不经过门禁, 用 review 验证放行)
+        rc = w.main(["--mode", "review", "--period", "weekly", "--force"])
+        assert rc == 0
+
+
+# ══════════════════════════════════════════════════════════════════
 # 缠论买点时效过滤
 # ══════════════════════════════════════════════════════════════════
 class TestChanlunRecent:

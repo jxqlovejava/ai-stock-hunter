@@ -624,6 +624,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="忽略交易时段")
     args = parser.parse_args(argv)
 
+    # 交易日门禁: 非交易日 (周末/节假日) 的盘前/盘中/盘后/强信号一律静默,
+    # 即使 cron 在周中节假日误触发也不推送陈旧简报。复盘模式自含边界判断。
+    if not args.force and args.mode in ("premarket", "intraday", "strong", "close"):
+        from src.paper_trading.scheduler import is_trading_day
+        if not is_trading_day():
+            return 0  # 静默
+
     try:
         if args.mode == "intraday":
             msg = mode_intraday(force=args.force)
