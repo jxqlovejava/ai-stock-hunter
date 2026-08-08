@@ -4,7 +4,7 @@
 
 > **投资不是赌博，是概率游戏。系统帮你算概率，军规帮你管住手。**
 
-124,000+ 行 Python · 980+ 个测试用例 · 40 个模块 · 6 层路由管道 · 41 个量化因子 · 39 条军规 · 分钟级数据管道 · T+0 日内时机 · 宏观事件因果链
+138,000+ 行 Python · 1470+ 个测试用例（106 个测试文件）· 40 个模块 · 6 层路由管道 · 50 个量化因子 · 45 条军规 · 分钟级数据管道 · T+0 日内时机 · 短线战术 & 缠论 · 宏观事件因果链
 
 ---
 
@@ -30,7 +30,7 @@ A 股最致命的不是买贵了，是**追了已经被充分定价的"好故事
 | 维度 | 🔭 长线价值投资 | ⚡ 短线波段套利 |
 |------|---------------|---------------|
 | **分析引擎** | 基本面为主（宏观/价值/质量） | 技术面为主（趋势/反转/量价/波动/均线/打板） |
-| **因子库** | 10 个基本面因子（value/quality/growth/composite） | 18 个技术因子（MACD/RSI/KDJ/DMI/布林/ATR/OBV/MFI…） |
+| **因子库** | 11 个基本面因子（value/quality/growth/expectation/composite） | 18 个技术因子（MACD/RSI/KDJ/DMI/布林/ATR/OBV/MFI/急涨缓跌…） |
 | **入场** | 估值合理 + ROE 稳定 | 放量突破 / 金叉 / 回踩支撑 / 超卖反弹 |
 | **止损** | 固定 -2% | ATR 倍率 + 时间止损 + 移动止损 |
 | **盯盘** | 按需手动 | 实时后台盯盘（机会发现 + 风险速报） |
@@ -50,7 +50,7 @@ A 股最致命的不是买贵了，是**追了已经被充分定价的"好故事
 ```python
 # 每一个数据点强制携带来源引用
 SourceCitation(
-    provider="guosen",       # 国信/mootdx/akshare/tencent/huatai
+    provider="tencent",       # 腾讯/mootdx/akshare/huatai/baostock
     confidence=0.90,         # 来源置信度
     data_freshness="5min",   # 数据新鲜度
     tier="primary",          # primary/secondary/tertiary
@@ -75,6 +75,20 @@ SourceCitation(
 | **关键位** | 近期支撑/阻力 | 斐波那契 0.382/0.5/0.618 回撤 |
 
 → 输出：🟢加仓 / 🟡观望 / 🟠减仓 / 🔴坚决减仓 + 具体操作价位 + 止损 + 触发条件
+
+### ⚡ 短线战术 + 战术叠加 — 选股之后，胜负在时机
+
+选股管道选出"好公司"后，买卖时机才是胜负手。短线战术管道（`python -m src tactics`）4-Phase 快速确认买卖时机：盘面全景 → 军规/四大师辩论/芒格/T+0 → 裁决。战术叠加把 8 篇文章共识落地为 **F1-F5 共识信号**，注入 diagnose/analyze/模拟交易全链路：
+
+| 信号 | 内容 | 作用 |
+|------|------|------|
+| F1 | 涨停次日低开位置解读 | 高位=出货嫌疑 / 底部=吸筹观察 |
+| F2 | 封板时点 + 尾盘跳水/急拉 | 弱封次日易低开 / 尾盘异动次日反向 |
+| F3 | 突破三分类强度 | 弱势突破不追 / 强势可进 |
+| F4 | 高管增减持 | 净增持加分 / 净减持红旗 |
+| F5 | 急涨缓跌 / 急跌缓涨形态 | 洗盘偏多 / 出货偏空 |
+
+→ 输出 doctrine_flags（军规门禁）+ score_delta（裁决加减分）+ 信号清单，纯函数静默降级，任一信号缺失不阻断主流程。缠论结构分析（分型/笔/中枢/背驰/买卖点）作为独立维度并表 tactics 与军规消费（r037/r038）。
 
 ### 🌍 宏观事件因果链分析 — 先看天再下地
 
@@ -113,16 +127,17 @@ SourceCitation(
 ### 6 层路由管道 + 军规前置
 
 ```
-CLI → 军规(39条) → 准入检查 → 宏观事件因果链 → 多维诊断 → 综合裁决 → 仓位调度 → 风控执行
+CLI → 军规(45条) → 准入检查 → 宏观事件因果链 → 多维诊断 → 综合裁决 → 仓位调度 → 风控执行
         ↑ Phase 3: MacroRegime / Northbound / EarningsRevision / TopicLifecycle
         ↑ Phase 2.5: 宏观事件→8条传导路径→影响估计→策略建议
         ↑ Phase 4: Alpha Lens 四维评估（信息层级/共识缺口/叙事生命周期/紫苏叶供应链深度）
+        ↑ P1-8: 短线战术叠加 F1-F5 共识信号 → doctrine_flags + verdict score_delta
         ↑ Phase 9: T+0 日内时机(日线+分钟线双维度)
 ```
 
 | 阶段 | 中文名 | 英文名（类名） | 职责 | AI 参与度 |
 |------|--------|-------------|------|----------|
-| **军规** | 投资军规 | `DoctrineChecker` | 39 条硬性门禁（block/warn/info），行为偏差拦截 | 0% |
+| **军规** | 投资军规 | `DoctrineChecker` | 45 条硬性门禁（block/warn/info），行为偏差拦截 | 0% |
 | **准入检查** | 准入检查 | `AdmissionCheck` | ST/\*ST 否决、次新股冷静、流动性过滤、涨跌停/停牌排除 | 0% |
 | **多维诊断** | 多维诊断 | `DiagnosisEngine` | 宏观+价值+质量+动量+估值+周期+情绪+高管+博弈论+思维模型 10+ 维打分 | 30% |
 | **综合裁决** | 综合裁决 | `VerdictEngine` | 加权评分 + 置信度校准 + 反共识检验 + 主题生命周期调整 + 四视角辩论分歧降权 + 紫苏叶标的加分 | 20% |
@@ -136,7 +151,7 @@ CLI → 军规(39条) → 准入检查 → 宏观事件因果链 → 多维诊�
 | Agent | 职责 | 权限 |
 |-------|------|------|
 | `orchestrator-agent` | 全链路编排，加载投资者画像并注入管道 | 只读协调 |
-| `data-worker` | 数据获取（mootdx/腾讯/国信/AKShare/华泰/妙想） | 只读 |
+| `data-worker` | 数据获取（腾讯/mootdx/AKShare/华泰/Baostock 财务兜底/东财/妙想） | 只读 |
 | `analysis-worker` | 军规→准入检查→多维诊断→综合裁决 分析管道 | 只读分析 |
 | `signal-writer` | 仓位调度→风控执行→最终输出 | **唯一写权限** |
 
@@ -159,29 +174,29 @@ CLI → 军规(39条) → 准入检查 → 宏观事件因果链 → 多维诊�
 
 | 模块 | 路径 | 核心能力 |
 |------|------|---------|
-| 🛤️ 路由 | `src/routing/` | 6 层管道编排 + Agent-Worker 模式 + 护栏执行器 + T+0 时机 + 宏观事件 + 四视角辩论 + Munger 思维模型 + 个股涨跌归因引擎 |
+| 🛤️ 路由 | `src/routing/` | 6 层管道编排 + Agent-Worker 模式 + 护栏执行器 + 短线战术管道(tactics) + 战术叠加(F1-F5 共识信号) + T+0 时机 + 宏观事件 + 四视角辩论 + Munger 思维模型 + 个股涨跌归因引擎 |
 | 🔍 Alpha Lens | `src/alpha/` | 信息层级判定、共识缺口检测、叙事生命周期定位、🍃紫苏叶供应链深度 Alpha、Alpha 衰减追踪、因子回测与排名 |
-| 🗄️ 数据层 | `src/data/` | 5 源聚合 + 交叉验证 + TTL 缓存 + 分钟/tick 级行情 + 数据聚合器(Tick→Bar) + 数据馈送抽象 |
-| ⏱️ T+0 分析 | `src/analysis/` | 日线+分钟线双维度 T+0 时机引擎：均线/VWAP/K线形态/大单方向/斐波那契/分时形态 |
-| ⚡ 量化因子 | `src/factors/` + `src/alphas/` | 41 个因子：36 个 factor zoo（价值/质量/动量/波动/反转/盈利/增长/技术）+ 5 个 alpha 策略（RSI/MACD/MACD-KDJ/EMA 交叉/动量） |
-| 📜 军规 | `src/doctrine/` | 39 条 A 股专属军规 + 232 个 Munger 思维模型动态匹配 |
+| 🗄️ 数据层 | `src/data/` | 多源冗余（腾讯/mootdx/AKShare/华泰，国信主链已停用）+ Baostock 财务兜底 + 东财资金流/龙虎榜 + 交叉验证 + TTL 缓存 + 分钟级行情 + 数据聚合器(Tick→Bar) |
+| ⏱️ T+0 分析 | `src/analysis/` | 日线+分钟线双维度 T+0 时机引擎：均线/VWAP/K线形态/大单方向/斐波那契/分时形态 + 做T信号（共识落地） |
+| ⚡ 量化因子 | `src/factors/` + `src/alphas/` | 50 个因子：45 个 factor zoo（价值/质量/动量/波动/反转/盈利/增长/技术，含急涨缓跌/资金背离/筹码集中）+ 5 个 alpha 策略（RSI/MACD/MACD-KDJ/EMA 交叉/动量） |
+| 📜 军规 | `src/doctrine/` | 45 条 A 股专属军规（含缠论/共识信号军规）+ 232 个 Munger 思维模型动态匹配 |
 | 🔔 盯盘 | `src/monitor/` | 实时预警引擎：机会发现（突破/金叉/放量/龙头）+ 风险速报（炸板/天地板/北向/急跌） |
-| 📊 回测 | `src/backtest/` | Backtrader 引擎 + 网格/贝叶斯优化 + 策略注册中心 + 防过拟合 |
-| 🎲 博弈论 | `src/game_theory/` | 北向画像、公募拥挤度、龙虎榜席位、主导玩家分类、操盘手法识别 |
+| 📊 回测 | `src/backtest/` | Backtrader 引擎 + 网格/贝叶斯优化 + 策略注册中心 + 防过拟合 + 多波洗盘实盘事件研究(wash-backtest) |
+| 🎲 博弈论 | `src/game_theory/` | 北向画像、公募拥挤度、龙虎榜席位、主导玩家分类、操盘手法识别、融资融券余额趋势 |
 | 📈 宏观 | `src/macro/` | 货币-信用双象限 + 宏观事件因果链(8条传导路径) + 历史类比 + 策略建议 |
 | 😱 情绪 | `src/sentiment/` | 恐慌套利引擎、市场情绪信号、过度反应检测 |
-| 🏭 行业 | `src/industry/` | 物理瓶颈分析链、供应链映射、SA 瓶颈阶梯 |
+| 🏭 行业 | `src/industry/` | 物理瓶颈分析链、供应链映射、SA 瓶颈阶梯、行业因子自动提取（供不应求关键词 → 选股8标准） |
 | 📰 政策 | `src/policy/` | NLP 关键词追踪、政策→板块传导映射 |
 | 📡 信息 | `src/information/` | 主题生命周期管理（4 阶段状态机）、互动易问答、信息速度监控 |
 | 🧬 进化 | `src/evolution/` | 论文驱动策略进化，9 状态全生命周期（论文→回测→模拟盘→实战） |
 | 💰 估值 | `src/valuation/` | 多维估值：DCF + 资产重估 + 清算价值，三情景估值 |
 | 📐 凯利 | `src/kelly/` | 凯利公式仓位管理：热启动 f* 计算 + 冷启动线性回退 |
 | 🧠 学习 | `src/learner/` | 反馈闭环、用户能力画像、投资者偏好（时间维度 + 盯盘配置 + 可交易板块） |
-| 💸 模拟交易 | `src/paper_trading/` | 仓位调度信号→mx-moni 模拟账户、批量执行、反馈录入 |
+| 💸 模拟交易 | `src/paper_trading/` | 仓位调度信号→模拟账户（20w/12支自选）+ Hermes 监视器（盘前/盘中/强信号/盘后/复盘五模式微信推送）+ 催化信号监控器 + 盘中急动触发器 + ATR 动态止损止盈 + 交易日门禁 |
 | 🔄 周期 | `src/cycle/` | 经济周期阶段判定 + 行业轮动映射 |
 | 🏟️ 策略竞技场 | `src/arena/` | 内部策略竞技场：多策略对比、基准测试、历史跨期对比 |
-| 🕯️ 技术指标 | `src/indicators/` | 63 种 K 线形态识别 + 25 种技术指标（趋势/震荡/波动/结构） |
-| 🏭 基本面研究 | `src/fundamental/` | 护城河 / 财务红旗 / DCF 估值 / 管理层 / 研报聚合 |
+| 🕯️ 技术指标 | `src/indicators/` | 70 种 K 线形态识别 + 18 种技术指标（趋势/震荡/波动/结构）+ 缠论结构分析（分型/笔/中枢/背驰/买卖点） |
+| 🏭 基本面研究 | `src/fundamental/` | 护城河 / 财务红旗 / DCF 估值 / 管理层 / 研报聚合 / 高管增减持聚合（净增持加分/净减持红旗） |
 | 🧪 质量审查 | `src/quality/` | 借鉴 CogAlpha 论文的多 Agent 质量审查器（新鲜度/一致性/泄露/可解释性） |
 | 📝 投研笔记 | `src/notes/` | 双向触发的长期讨论记录：CRUD、全文搜索、主题分类、状态晋升 |
 | 📊 交互日志 | `src/interaction/` | 轻量级 CLI 使用记录：历史搜索、使用统计 |
@@ -189,6 +204,9 @@ CLI → 军规(39条) → 准入检查 → 宏观事件因果链 → 多维诊�
 | 🔭 股票池 | `src/universe/` | LEAN UniverseSelectionModel 模式股票池筛选 |
 | 🤖 LLM 基础设施 | `src/llm/` | 提供商注册表、上下文压缩器、Token 计数器 |
 | ⏰ 定时任务 | `src/cron/` | 持久化 cron 调度与执行引擎 |
+| 📜 结论时间线 | `src/analysis/conclusion_ledger.py` | 观测层结论账本：每次分析结论落账（时间戳/可证伪/regime 标签），`timeline` CLI 查看演进，绝不自动回填策略参数 |
+| 🧠 记忆系统 | `src/memory/` | Dexter 式长期投研记忆：SQLite+FTS5 全文检索 + 分块 + 向量嵌入 |
+| 💰 财务查询 | `src/finance/` | NL 驱动财务查询（妙想 V4）：自然语言 → 子工具执行 → 格式化输出 |
 
 ---
 
@@ -238,6 +256,8 @@ python -m src diagnose 600519
 
 ### 核心命令
 
+> 💡 **macOS 用户**：依赖安装在项目 `.venv` 时，请用 `.venv/bin/python -m src <command>` 运行（或先 `source .venv/bin/activate`）。
+
 ```bash
 # 🏥 一键诊断（小白入口 — 从这里开始！）
 python -m src diagnose 000858
@@ -259,6 +279,12 @@ python -m src scan --preset value
 
 # 🌍 宏观快照
 python -m src macro
+
+# 📈 大盘市场全景（美股隔夜 + 情绪 + 宏观）
+python -m src market
+
+# 🏥 系统能力自检
+python -m src health
 
 # 😱 情绪信号检测
 python -m src sentiment
@@ -284,6 +310,19 @@ python -m src swing-scan --preset aggressive
 
 # 🔔 实时盯盘（单次扫描）
 python -m src monitor once --symbols 000001,600519,300750
+
+# ⚡ 短线战术管道（选股后确认买卖时机，--fast 极速 2-3s）
+python -m src tactics 002415
+
+# 🕯️ 缠论结构分析（分型/笔/中枢/背驰/买卖点）
+python -m src chanlun 600519
+
+# 🎯 回调入场扫描 / 跟踪
+python -m src pullback-scan
+python -m src pullback-watch 002415
+
+# 📉 持仓 overlay（V1 解套改写 + V2 分桶做T）
+python -m src swing-overlay 002415
 ```
 
 ### 宏观事件分析
@@ -303,9 +342,13 @@ python -m src backtest
 # 📊 因子回测
 python -m src factor-backtest pb_factor
 python -m src factor-scan --category value
+python -m src alpha-rank               # 全市场 Alpha 排名
+
+# 📊 多波洗盘实盘事件研究（wash_then_markup）
+python -m src wash-backtest
 
 # 💰 模拟交易
-python -m src paper-trade
+python -m src paper-trade          # start 启动 / run 执行 / status 持仓 / report 复盘 / history 成交
 
 # 👤 投资者偏好管理
 python -m src preference setup      # 设置向导（含交易风格/持有周期/可交易板块）
@@ -314,6 +357,9 @@ python -m src preference view       # 查看当前配置
 # 🔔 自选股管理
 python -m src alert watch-add 600519 --name 茅台 --stop-price 1800
 python -m src sweep                  # 自选股扫雷
+
+# 🔮 业绩先行研判（锂盐价格 → Q2 业绩测算）
+python -m src preview-earnings 002460
 ```
 
 ### 盯盘 & 深度研究
@@ -328,8 +374,8 @@ python -m src sector-research 半导体    # 行业全景研究
 python -m src deep-research 600519     # 公司深度研究
 
 # 🕯️ K线形态 & 技术指标
-python -m src patterns 000001          # K线形态识别（63种）
-python -m src indicators 000001        # 技术指标计算（25种）
+python -m src patterns 000001          # K线形态识别（70种）
+python -m src indicators 000001        # 技术指标计算（18种）
 
 # 🔗 关联关系
 python -m src related 600519           # 关联关系查询
@@ -367,6 +413,11 @@ python -m src profile
 
 # 🧠 置信度校准
 python -m src calibrate
+
+# 📜 结论时间线（历史分析结论演进，观测层）
+python -m src timeline 600519
+python -m src timeline --market
+python -m src timeline --backfill      # 从历史报告/情绪历史回填
 ```
 
 完整 CLI 参考：[`src/cli.py`](src/cli.py)
@@ -391,20 +442,22 @@ python -m src calibrate
 
 ---
 
-## 📚 39 条投资军规
+## 📚 45 条投资军规
 
 分为 8 大类，严重度 block/warn/info 三级：
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
 | 仓位资金 | 5 条 | 单票 ≤ 20%、总仓位 ≤ 80%、永不满仓 |
-| 选股估值 | 9 条 | ST/\*ST 一票否决、不懂不投、商誉雷预警 |
-| 买卖纪律 | 7 条 | 不追涨停、不接飞刀、不赌财报 |
+| 选股估值 | 10 条 | ST/\*ST 一票否决、不懂不投、商誉雷预警、跌破 200 周均线无条件排除 |
+| 买卖纪律 | 11 条 | 不追涨停、不接飞刀、不赌财报、涨停次日低开看位置、弱势突破不追、亏损后禁止报复性加仓 |
 | 情绪纪律 | 5 条 | 不在恐慌中决策、拒绝爱上持仓 |
-| 信息纪律 | 3 条 | 小作文零信任、信源交叉验证 |
-| 风控止盈 | 7 条 | 单笔止损 2%（短线用 ATR）、组合回撤熔断 15% |
+| 信息纪律 | 4 条 | 小作文零信任、信源交叉验证、信息面冲突即禁止开仓 |
+| 风控止盈 | 7 条 | 单笔止损 2%（短线用 ATR）、组合回撤熔断 15%、操纵历史/筹码集中度/资金背离预警 |
 | 复盘进化 | 2 条 | 决策书面记录、止损后 72h 内更新错题本 |
 | 元风控 | 1 条 | 系统滚动 3 月胜率 < 40% → 全局静默 |
+
+> 🆕 2026-08 新增：缠论军规（r037 中枢破位/三卖、r038 背驰未确认）、信息面冲突禁开仓（r043）、涨停次日低开位置解读（r044）、弱势突破不追（r045）等。
 
 详见：[`src/doctrine/rules.py`](src/doctrine/rules.py)
 
@@ -421,7 +474,12 @@ python -m src calibrate
 | Phase 5 | 技术因子库 + 短线管道 + 实时盯盘 + 入场/出场引擎 + 投资者画像时间维度 | ✅ |
 | Phase 6 | 🍃紫苏叶供应链深度 Alpha + T+0 日内时机 + 宏观事件因果链 + 四视角辩论 + Munger 232 思维模型 | ✅ |
 | Phase 7 | 命名体系重构（L0-L4→准入/诊断/裁决/仓位调度/风控）+ 用户交互 Workflow 调度 | ✅ |
-| Phase 8 | Web 可视界面 + 实盘券商 API 对接 + 跨资产信号 + 组合优化 | 🔜 |
+| Phase 8 | Alpha 挖掘管线（factor-backtest/factor-scan/alpha-rank）+ 缠论结构分析 + 行业/公司深度研究 | ✅ |
+| Phase 9 | 短线战术管道 tactics（4-Phase）+ 突破质量事件研究 + VWAP 成本带全链路 | ✅ |
+| Phase 10 | 8 篇文章共识落地（涨停次日/封板尾盘/突破分级/高管增减持/急涨缓跌/做T信号）+ 战术叠加 F1-F5 全链路注入 | ✅ |
+| Phase 11 | Hermes 模拟交易监视器（五模式微信推送）+ 催化信号监控器 + 盘中急动触发器 + 持仓实时监控 + 回调入场 + ATR 动态止损止盈 + 交易日门禁 | ✅ |
+| Phase 12 | 结论时间线（观测层 ledger + timeline CLI）+ 融资融券余额趋势 + 数据源冗余加固（Baostock 财务兜底 / 国信主链停用） | ✅ |
+| Phase 13 | Web 可视界面 + 实盘券商 API 对接 + 跨资产信号 + 组合优化 | 🔜 |
 
 ---
 
@@ -453,6 +511,7 @@ python -m src calibrate
 | [`.claude/plans/ai-stock-hunter.plan.md`](.claude/plans/ai-stock-hunter.plan.md) | 完整系统设计计划 |
 | [`.claude/rules/guardrails.md`](.claude/rules/guardrails.md) | 统一护栏规则 |
 | [`docs/data-provenance.md`](docs/data-provenance.md) | 数据溯源三要素规范 |
+| [`docs/paper-trading-watcher-design.md`](docs/paper-trading-watcher-design.md) | Hermes 模拟交易监视器设计与决策记录 |
 | [`docs/open-source-credits.md`](docs/open-source-credits.md) | 开源项目参考清单 |
 
 ---
