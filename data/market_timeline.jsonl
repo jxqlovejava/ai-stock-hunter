@@ -1,0 +1,4 @@
+{"ts": "2026-08-08T21:51:02", "date": "2026-08-05", "sentiment_score": 68.0, "level": "EXTREME_GREED", "percentile": 31.7, "confidence": 0.91, "quadrant": "", "position_advice": "", "breadth": null, "limit_up": null, "action": ""}
+{"ts": "2026-08-08T21:51:02", "date": "2026-08-06", "sentiment_score": 68.0, "level": "EXTREME_GREED", "percentile": 30.0, "confidence": 0.91, "quadrant": "", "position_advice": "", "breadth": null, "limit_up": null, "action": ""}
+{"ts": "2026-08-08T21:51:02", "date": "2026-08-07", "sentiment_score": 13.0, "level": "EXTREME_PANIC", "percentile": 0.0, "confidence": 0.86, "quadrant": "", "position_advice": "", "breadth": null, "limit_up": null, "action": ""}
+{"ts": "2026-08-08T21:53:23", "date": "2026-08-08", "sentiment_score": 50.0, "level": "NORMAL", "percentile": 16.7, "confidence": 0.83, "quadrant": "宽货币+紧信用", "position_advice": "", "breadth": null, "limit_up": null, "action": ""}

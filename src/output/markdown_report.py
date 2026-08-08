@@ -24,7 +24,58 @@ def save_markdown_report(result: Any) -> str:
 
     lines = _build_report(result)
     filepath.write_text("\n".join(lines), encoding="utf-8")
+    _append_conclusion(result)
     return str(filepath)
+
+
+def _append_conclusion(result: Any) -> None:
+    """把本次分析结论落账到结论时间线（观测层，只记录不改策略参数）。
+
+    从 AnalysisResult 提取裁决/评分/置信度/证伪条件/价格。缺省字段置 None，
+    由显示层标注为缺失，不脑补。落账失败不影响主分析。
+    """
+    try:
+        from src.analysis.conclusion_ledger import append_stock_conclusion
+        verdict = getattr(result, "verdict", None)
+        score = getattr(verdict, "score", None) if verdict else None
+        rec = getattr(verdict, "recommendation", "") if verdict else ""
+        conf = getattr(verdict, "confidence", None) if verdict else None
+        fals = list(getattr(verdict, "falsifiable", []) or []) if verdict else []
+
+        enforced = getattr(result, "enforced_verdict", None) or {}
+        one_line = ""
+        price = None
+        if isinstance(enforced, dict):
+            one_line = enforced.get("one_line_conclusion", "") or ""
+            price = (enforced.get("price_range") or {}).get("current_price")
+
+        # 宏观象限（regime 标签）— 来自 orchestrator 注入的 macro_regime_info
+        mri = getattr(result, "macro_regime_info", None) or {}
+        regime = mri.get("quadrant", "") if isinstance(mri, dict) else ""
+
+        source = (
+            getattr(result, "mode", "")
+            or getattr(result, "source", "")
+            or "analyze"
+        )
+        append_stock_conclusion(
+            symbol=result.symbol,
+            name=result.name,
+            source=source,
+            score=score,
+            verdict=rec,
+            confidence=conf,
+            falsifiable=fals,
+            price=price,
+            one_line=one_line,
+            regime=regime,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "结论时间线落账失败（不影响主分析）: symbol=%s", getattr(result, "symbol", "?"),
+            exc_info=True,
+        )
 
 
 def _build_report(result: Any) -> list[str]:

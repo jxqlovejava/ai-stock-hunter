@@ -110,6 +110,9 @@ sweep              # 自选股扫雷
 alert watch-add    # 加入自选股
 attribute <code>   # 个股涨跌归因
 alert list         # 查看自选股
+timeline <code>    # 结论时间线（历史分析结论演进，观测层不自动改参数）
+timeline --market  # 大盘结论时间线
+timeline --backfill # 从 data/reports/ 与 sentiment_history 回填存量结论
 
 # 交易 & 风控
 backtest           # 运行回测
@@ -318,6 +321,10 @@ python -m src tactics <code> --no-t0    # 盘后跳过 T+0
 | 13 | Kronos | GitHub | Foundation Model / BSQ Tokenizer / K 线语言建模 / 多粒度时序预训练 / Qlib A 股集成管道 | [分析](docs/reference/kronos-analysis.md) |
 | 14 | adata | GitHub | 纯 Python A 股数据 SDK / 多数据源自动融合 / 概念板块双源交叉验证 / 统一异常层次 / 代理 IP 池 / 分笔成交(Tick) / 龙虎榜 / 北向-分时 / ETF+可转债 | [分析](docs/reference/adata-analysis.md) |
 | 15 | rodya-caijing-studio | GitHub | 财经研究输出契约 / 可证伪结论（研究台账）/ 反向DCF+分位有效性 / 排雷红旗库 / 合规双版本 / 时效门 | [分析](docs/reference/rodya-caijing-analysis.md) |
+
+## 方法论参考
+
+宏观周期判断（个股归因 / 大盘归因 / 建仓 / 危机应对时查阅）：[宏观周期应对综合清单](docs/reference/macro-cycle-playbook.md) — 达利欧五力 + 危机四步法，映射到货币信用象限 / 估值分位 / 信用利差 / 美股隔夜等真实数据，回答"当前处什么周期潮汐、何时守现金、抄底抄什么"。
 
 ## 开发工作流
 

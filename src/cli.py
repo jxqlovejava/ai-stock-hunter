@@ -504,6 +504,10 @@ def cmd_market():
     print("📊 大盘市场全景快照")
     print("=" * 60)
 
+    # 结论时间线捕获对象（函数末尾统一落账）
+    _sentiment = None
+    _regime = None
+
     # ── 1. 美股隔夜 ──
     print("\n🌙 美股隔夜")
     print("-" * 40)
@@ -527,6 +531,7 @@ def cmd_market():
     try:
         detector = SentimentDetector()
         sentiment = detector.detect_market()
+        _sentiment = sentiment
         report = format_sentiment_plain(sentiment)
         print(report)
     except Exception as e:
@@ -539,6 +544,7 @@ def cmd_market():
         from src.macro.monetary_credit import MonetaryCreditAnalyzer
         analyzer = MonetaryCreditAnalyzer()
         regime = analyzer.analyze()
+        _regime = regime
         if regime is not None:
             quadrant_name = regime.quadrant.value
             quadrant_info = QUADRANT_SECTOR_MAP.get(quadrant_name, {})
@@ -616,6 +622,23 @@ def cmd_market():
         print(format_sector_flow_table(flow_df, top_n=3))
     except Exception as e:
         print(f"   [DATA_GAP] 板块资金流向获取失败: {e}")
+
+    # ── 结论时间线落账（观测层，只记录不改策略参数）──
+    try:
+        from src.analysis.conclusion_ledger import append_market_conclusion
+        _qd = getattr(_regime, "quadrant", None) if _regime else None
+        _sl = getattr(_sentiment, "level", None) if _sentiment else None
+        _sl_val = _sl.value if hasattr(_sl, "value") else (_sl or "")
+        append_market_conclusion(
+            sentiment_score=getattr(_sentiment, "score", None) if _sentiment else None,
+            level=_sl_val,
+            percentile=getattr(_sentiment, "percentile", None) if _sentiment else None,
+            confidence=getattr(_sentiment, "confidence", None) if _sentiment else None,
+            quadrant=_qd.value if _qd else "",
+            position_advice="",
+        )
+    except Exception:
+        pass  # 落账失败不影响 market 输出
 
     # ── 数据基础说明 ──
     print("\n" + "=" * 60)
@@ -5771,6 +5794,70 @@ def _run_notes_repl(store: "NoteStore", searcher: "NoteSearch", default_limit: i
             print(f"❌ 执行出错: {e}\n")
 
 
+def cmd_timeline(args: list[str]):
+    """结论时间线 — 查看个股/大盘的历史分析结论演进，支持从存量回填。
+
+    用法:
+      timeline <code>         查看某标的结论演进
+      timeline --market       查看大盘结论演进
+      timeline --backfill     从 data/reports/ 与 sentiment_history 回填存量结论
+      timeline                列出已有时间线概览
+
+    原则: 本命令只读取「观测层」记录，不含任何自动策略调整。
+    """
+    from src.analysis.conclusion_ledger import (
+        format_market_timeline,
+        format_stock_timeline,
+        load_market_timeline,
+        load_stock_timeline,
+        list_timeline_stocks,
+        backfill_market_from_sentiment_history,
+        backfill_stock_from_reports,
+    )
+
+    if "--backfill" in args:
+        n_stock = backfill_stock_from_reports()
+        n_mkt = backfill_market_from_sentiment_history()
+        print(f"✅ 回填完成: 个股结论 {n_stock} 条, 大盘结论 {n_mkt} 条")
+        print("   再运行 `timeline <code>` 或 `timeline --market` 查看。")
+        return
+
+    if "--market" in args:
+        entries = load_market_timeline()
+        if not entries:
+            print("⏳ 大盘时间线为空，正在从 sentiment_history 回填...")
+            backfill_market_from_sentiment_history()
+            entries = load_market_timeline()
+        print(format_market_timeline(entries))
+        return
+
+    if not args:
+        stocks = list_timeline_stocks()
+        if not stocks:
+            print("⏳ 暂无任何结论时间线。可运行 `timeline --backfill` 从历史报告回填。")
+            print("用法: timeline <code> | timeline --market | timeline --backfill")
+            return
+        print("📁 已有时间线的标的:")
+        for s in stocks:
+            n = len(load_stock_timeline(s))
+            print(f"  - {s}  ({n} 条)")
+        print()
+        print("用法: timeline <code> | timeline --market | timeline --backfill")
+        return
+
+    code = args[0]
+    if not (code.isdigit() and len(code) == 6):
+        print(f"❌ 非法代码: {code}（应为 6 位数字）")
+        return
+    entries = load_stock_timeline(code)
+    if not entries:
+        print(f"⏳ {code} 暂无结论记录，正在从历史报告回填...")
+        n = backfill_stock_from_reports(code)
+        print(f"   回填 {n} 条。")
+        entries = load_stock_timeline(code)
+    print(format_stock_timeline(code, entries))
+
+
 def cmd_note(args: list[str]):
     """投研笔记管理 — 长期讨论记录、检索、状态流转。"""
     import argparse
@@ -6268,6 +6355,8 @@ def main():
         "note": lambda: cmd_note(args),
         # 交互日志
         "interaction-log": lambda: cmd_interaction_log(args),
+        # 结论时间线（观测层：历史分析结论演进 + 回填）
+        "timeline": lambda: cmd_timeline(args),
     }
 
     handler = commands.get(cmd)
