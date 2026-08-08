@@ -23,8 +23,9 @@ LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 # 腾讯(免费不封IP) > mootdx(TCP行情免费) > AKShare(爬虫免费) > 华泰(HT_APIKEY) > 国信(GS_API_KEY)
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share": ["verified_cache", "tencent", "mootdx", "akshare", "huatai", "guosen"],
-    # 财务数据：mootdx/tencent 优先（快速失败），akshare 放后面（代理超时风险）
-    "a_share_financials": ["verified_cache", "mootdx", "tencent", "akshare", "huatai", "guosen"],
+    # 财务数据：mootdx/tencent 优先（快速失败），akshare 放后面（代理超时风险），
+    # baostock 免费无日限额，作国信/akshare 耗尽后的财务兜底（无实时行情）
+    "a_share_financials": ["verified_cache", "mootdx", "tencent", "akshare", "baostock", "huatai", "guosen"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }
@@ -74,6 +75,7 @@ def _ensure_registered() -> None:
             "src.data.loaders.tencent_loader",
             "src.data.loaders.mootdx_loader",
             "src.data.loaders.akshare_loader",
+            "src.data.loaders.baostock_loader",
         ]
         for mod_name in modules:
             try:

@@ -99,6 +99,7 @@ class LimitUpSnapshot:
     break_rate: float = 0.0  # 炸板率%
     max_height: int = 0      # 最高连板
     ladder: dict = field(default_factory=dict)  # {板数: 家数}
+    first_seal_before_10_pct: float = 0.0   # 10点前首封占比% (早盘封板=情绪强, 文章共识)
 
 
 # ── Known hot-money seat database (unchanged, domain knowledge) ─────
@@ -267,6 +268,18 @@ class SeatTracker:
                 ladder[days] = ladder.get(days, 0) + 1
             sn.ladder = dict(sorted(ladder.items()))
             sn.max_height = max(ladder.keys()) if ladder else 0
+
+            # 首封时间分布: 10点前封板占比 (文章共识: 早盘封板=情绪强/连板概率大)
+            before_10 = 0
+            total_fbt = 0
+            for s in zt_pool:
+                m = self._parse_fbt_minute(s.get("fbt"))
+                if m is not None:
+                    total_fbt += 1
+                    if m < 600:   # 10:00 = 600 分钟序号
+                        before_10 += 1
+            if total_fbt > 0:
+                sn.first_seal_before_10_pct = round(before_10 / total_fbt * 100, 1)
         except Exception as e:
             logger.warning("Limit-up pool fetch failed: %s", e)
 
@@ -308,13 +321,56 @@ class SeatTracker:
 
     @staticmethod
     def _fetch_daily_dt_market(trade_date: str) -> list[dict]:
-        """全市场龙虎榜 — 东财 datacenter."""
-        return _dc_query(
-            "RPT_DAILYBILLBOARD_DETAILSNEW",
-            filter_str=f"(TRADE_DATE>='{trade_date}')(TRADE_DATE<='{trade_date}')",
-            page_size=500,
-            sort_columns="BILLBOARD_NET_AMT", sort_types="-1",
-        )
+        """全市场龙虎榜 — 东财 datacenter，失败时降级到 efinance.
+
+        东财 datacenter 为 T1 主源；efinance 同源东财，作为网络/反爬不可用时的
+        股票级榜单兜底（无席位明细，仅用于发现上榜股票）。
+        """
+        try:
+            data = _dc_query(
+                "RPT_DAILYBILLBOARD_DETAILSNEW",
+                filter_str=f"(TRADE_DATE>='{trade_date}')(TRADE_DATE<='{trade_date}')",
+                page_size=500,
+                sort_columns="BILLBOARD_NET_AMT", sort_types="-1",
+            )
+            if data:
+                return data
+        except Exception as e:
+            logger.debug("东财龙虎榜 datacenter 失败，降级 efinance: %s", e)
+        return SeatAnalyzer._fetch_daily_lhb_efinance(trade_date)
+
+    @staticmethod
+    def _fetch_daily_lhb_efinance(trade_date: str) -> list[dict]:
+        """efinance 龙虎榜降级 — 股票级榜单（东财同源）。
+
+        返回结构与东财 datacenter 对齐（SECURITY_CODE/SECURITY_NAME_ABBR/TRADE_DATE），
+        下游 analyze_daily 无需改动。无席位明细，net 字段由买卖额推算。
+        """
+        try:
+            import efinance as ef
+        except ImportError:
+            logger.debug("efinance 未安装，龙虎榜降级不可用")
+            return []
+        try:
+            df = ef.stock.get_daily_billboard(start_date=trade_date, end_date=trade_date)
+            if df is None or df.empty:
+                return []
+            # 按上榜日期分组，取当日记录
+            rows: list[dict] = []
+            for _, r in df.iterrows():
+                rows.append({
+                    "SECURITY_CODE": str(r.get("股票代码", "")).zfill(6),
+                    "SECURITY_NAME_ABBR": str(r.get("股票名称", "")),
+                    "TRADE_DATE": str(r.get("上榜日期", trade_date)),
+                    "BILLBOARD_NET_AMT": float(r.get("龙虎榜净买额", 0) or 0),
+                    "BILLBOARD_BUY_AMT": float(r.get("龙虎榜买入额", 0) or 0),
+                    "BILLBOARD_SELL_AMT": float(r.get("龙虎榜卖出额", 0) or 0),
+                    "BILLBOARD_EXPLANATION": str(r.get("解读", "")),
+                })
+            return rows
+        except Exception as e:
+            logger.debug("efinance 龙虎榜降级失败: %s", e)
+            return []
 
     @staticmethod
     def _fetch_seat_details(code: str, trade_date: str, side: str) -> list[dict]:
@@ -354,3 +410,34 @@ class SeatTracker:
             return float(val)
         except (ValueError, TypeError):
             return 0.0
+
+    @staticmethod
+    def _parse_fbt_minute(val) -> Optional[int]:
+        """东财涨停池 fbt(首封时间) → 当日分钟序号 (09:30=570, 10:00=600)。
+
+        兼容东财多种格式: "092504" / 92504 (数字 HHMMSS) / 13 位毫秒时间戳。
+        解析失败返回 None。
+        """
+        if val is None:
+            return None
+        try:
+            if isinstance(val, bool):
+                return None
+            if isinstance(val, (int, float)):
+                v = int(val)
+                if v <= 0:
+                    return None
+                if v > 10_000_000_000:   # 13 位毫秒时间戳
+                    dt = datetime.fromtimestamp(v / 1000)
+                    return dt.hour * 60 + dt.minute
+                s = f"{v:06d}"[-6:]
+            else:
+                digits = "".join(ch for ch in str(val) if ch.isdigit())
+                if not digits:
+                    return None
+                s = digits[-6:]
+            hh = int(s[:2])
+            mm = int(s[2:4])
+            return hh * 60 + mm
+        except Exception:
+            return None

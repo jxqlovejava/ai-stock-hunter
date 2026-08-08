@@ -185,6 +185,10 @@ class TestCapitalFlowProviderWithMock:
     def test_get_money_flow_returns_data_gap_when_all_fail(self, monkeypatch):
         provider = CapitalFlowProvider()
         monkeypatch.setattr(provider, "_fetch_em_daykline", lambda *a, **k: (None, None))
+        monkeypatch.setattr(
+            provider, "_fetch_efinance_fallback",
+            lambda *a, **k: (None, None, "efinance failed"),
+        )
         monkeypatch.setattr(provider, "_fetch_akshare_fallback", lambda *a, **k: (None, None, "all failed"))
 
         snap = provider.get_money_flow("600519", weeks=4)
@@ -195,6 +199,11 @@ class TestCapitalFlowProviderWithMock:
     def test_get_money_flow_akshare_fallback(self, monkeypatch):
         provider = CapitalFlowProvider()
         monkeypatch.setattr(provider, "_fetch_em_daykline", lambda *a, **k: (None, None))
+        # efinance 介于东财与 akshare 之间，模拟其失败以验证 akshare 兜底路径
+        monkeypatch.setattr(
+            provider, "_fetch_efinance_fallback",
+            lambda *a, **k: (None, None, "[DATA_GAP] efinance 不可用"),
+        )
 
         def mock_akshare(*args, **kwargs):
             import pandas as pd

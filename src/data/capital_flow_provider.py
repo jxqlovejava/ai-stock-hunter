@@ -170,7 +170,7 @@ class CapitalFlowProvider:
     def get_money_flow(self, symbol: str, weeks: int = 4) -> Optional[MoneyFlowSnapshot]:
         """获取个股近 N 周主力资金流快照。
 
-        优先东财 push2his 日线接口；失败或不可用时回退到 AKShare。
+        降级链：东财 push2his 日线 → efinance → AKShare。
         """
         symbol = symbol.strip()[-6:]
         if len(symbol) != 6 or not symbol.isdigit():
@@ -184,7 +184,11 @@ class CapitalFlowProvider:
         df, citation = self._fetch_em_daykline(symbol, days)
         data_gap_reason = ""
 
-        # 2. 东财失败或数据为空 → AKShare 降级
+        # 2. 东财失败或数据为空 → efinance 降级
+        if df is None or df.empty:
+            df, citation, data_gap_reason = self._fetch_efinance_fallback(symbol, days)
+
+        # 3. efinance 仍失败 → AKShare 降级
         if df is None or df.empty:
             df, citation, data_gap_reason = self._fetch_akshare_fallback(symbol, days)
 
@@ -400,6 +404,61 @@ class CapitalFlowProvider:
             return float(s) / 100.0
         except ValueError:
             return 0.0
+
+    # ------------------------------------------------------------------
+    # efinance 降级
+    # ------------------------------------------------------------------
+
+    def _fetch_efinance_fallback(
+        self, symbol: str, days: int
+    ) -> tuple[Optional[pd.DataFrame], Optional[SourceCitation], str]:
+        """efinance 降级：get_history_bill 个股历史资金流（东财数据源）。
+
+        efinance 返回金额单位为"元"，此处统一转换为万元，与东财路径对齐。
+        该接口无成交额，total_turnover 置 0 并在 data_gap_reason 标注。
+        """
+        try:
+            import efinance as ef
+        except ImportError:
+            return None, None, "[DATA_GAP] efinance 未安装"
+
+        try:
+            df = ef.stock.get_history_bill(symbol)
+            if df is None or df.empty:
+                return None, None, "[DATA_GAP] efinance 个股资金流为空"
+
+            norm = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(df["日期"]),
+                    "super_large_net": pd.to_numeric(df["超大单净流入"], errors="coerce").fillna(0) / 10000.0,
+                    "large_net": pd.to_numeric(df["大单净流入"], errors="coerce").fillna(0) / 10000.0,
+                    "medium_net": pd.to_numeric(df["中单净流入"], errors="coerce").fillna(0) / 10000.0,
+                    "small_net": pd.to_numeric(df["小单净流入"], errors="coerce").fillna(0) / 10000.0,
+                    "main_net": pd.to_numeric(df["主力净流入"], errors="coerce").fillna(0) / 10000.0,
+                    "total_turnover": 0.0,  # efinance 历史资金流无成交额
+                    "close": pd.to_numeric(df["收盘价"], errors="coerce").fillna(0),
+                    "change_pct": pd.to_numeric(df["涨跌幅"], errors="coerce").fillna(0) / 100.0,
+                    "volume": 0,
+                }
+            )
+            norm = norm.sort_values("date").reset_index(drop=True)
+            # 截断到近 N 天，与东财 days 参数保持一致
+            if len(norm) > days:
+                norm = norm.tail(days).reset_index(drop=True)
+            self._save_csv_cache(symbol, norm)
+            citation = SourceCitation(
+                provider="efinance",
+                field="individual_fund_flow",
+                fetch_timestamp=datetime.now(),
+                data_freshness=timedelta(hours=4),
+                confidence=0.80,
+                source_tier=SOURCE_TIER_T1,
+                nature=NATURE_FACT,
+            )
+            return norm, citation, "[DATA_GAP] efinance 资金流无成交额，仅拆单数据"
+        except Exception as e:
+            logger.warning("efinance 个股资金流失败 %s: %s", symbol, e)
+            return None, None, "[DATA_GAP] efinance 个股资金流不可用"
 
     # ------------------------------------------------------------------
     # AKShare 降级
