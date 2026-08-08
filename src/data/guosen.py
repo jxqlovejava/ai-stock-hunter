@@ -57,6 +57,10 @@ class GuosenProvider(DataProvider):
     # 类级别 Key 耗尽状态 (按 Key 字符串索引，跨实例共享)
     _class_exhausted: set[str] = set()
     _class_last_reset_date: datetime | None = None
+    # 当日全部 Key 耗尽熔断：当天不再发起网络请求，直接短路返回
+    # （国信日限额常耗尽，且主链已移除国信，此处仅保护 fund_positioning/fiscal 等
+    #   兜底调用不再空转浪费配额）
+    _class_exhausted_today: bool = False
 
     @staticmethod
     def _load_dotenv_gs_key() -> str | None:
@@ -114,6 +118,7 @@ class GuosenProvider(DataProvider):
         today = datetime.now().date()
         if cls._class_last_reset_date != today:
             cls._class_exhausted.clear()
+            cls._class_exhausted_today = False
             cls._class_last_reset_date = today
             logger.info("国信: 新的一天，Key 配额已重置")
 
@@ -154,7 +159,8 @@ class GuosenProvider(DataProvider):
                 self._active_idx = i
                 logger.info("国信 → Key #%d", i + 1)
                 return True
-        logger.error("国信: 全部 %d 个 Key 日限额已耗尽", len(self._api_keys))
+        logger.error("国信: 全部 %d 个 Key 日限额已耗尽，当日熔断", len(self._api_keys))
+        self._class_exhausted_today = True
         return False
 
     def _try_request(self, url: str, params: dict, timeout: int = 0) -> tuple[Optional[dict], bool]:
@@ -164,6 +170,10 @@ class GuosenProvider(DataProvider):
         调用方根据返回值决定是否继续。
         """
         timeout = timeout or self.TIMEOUT
+        # 当日熔断：全部 Key 已耗尽且未跨日 → 直接返回失败，不再发起网络请求
+        self._maybe_reset_quota()
+        if self._class_exhausted_today:
+            return None, True
         while True:
             try:
                 r = self._session.get(

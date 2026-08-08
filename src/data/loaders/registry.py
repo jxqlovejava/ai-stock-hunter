@@ -20,12 +20,13 @@ logger = logging.getLogger(__name__)
 LOADER_REGISTRY: dict[str, Type[DataLoader]] = {}
 
 # 市场级 fallback 链：免费源优先，付费源(有日限额)仅作兜底。
-# 腾讯(免费不封IP) > mootdx(TCP行情免费) > AKShare(爬虫免费) > 华泰(HT_APIKEY) > 国信(GS_API_KEY)
+# 腾讯(免费不封IP) > mootdx(TCP行情免费) > AKShare(爬虫免费) > 华泰(HT_APIKEY)
+# 国信(GS_API_KEY) 日限额常耗尽且 API 不可达，已从 A 股链移除（2026-08-08）
 FALLBACK_CHAINS: dict[str, list[str]] = {
-    "a_share": ["verified_cache", "tencent", "mootdx", "akshare", "huatai", "guosen"],
+    "a_share": ["verified_cache", "tencent", "mootdx", "akshare", "huatai"],
     # 财务数据：mootdx/tencent 优先（快速失败），akshare 放后面（代理超时风险），
-    # baostock 免费无日限额，作国信/akshare 耗尽后的财务兜底（无实时行情）
-    "a_share_financials": ["verified_cache", "mootdx", "tencent", "akshare", "baostock", "huatai", "guosen"],
+    # baostock 免费无日限额，作 akshare 耗尽后的财务兜底（无实时行情）
+    "a_share_financials": ["verified_cache", "mootdx", "tencent", "akshare", "baostock", "huatai"],
     "us_equity": ["yahoo", "stooq", "akshare"],
     "hk_equity": ["eastmoney", "yahoo", "akshare"],
 }

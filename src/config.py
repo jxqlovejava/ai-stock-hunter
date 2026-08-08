@@ -123,21 +123,21 @@ class Config:
             self.realtime_priority = (
                 [s.strip() for s in raw.split(",") if s.strip()]
                 if raw
-                else ["huatai", "guosen", "tencent", "mootdx", "akshare"]
+                else ["huatai", "tencent", "mootdx", "akshare"]
             )
         if not self.fundamentals_priority:
             raw = os.environ.get(_ENV_FUNDAMENTALS_PRIORITY, "")
             self.fundamentals_priority = (
                 [s.strip() for s in raw.split(",") if s.strip()]
                 if raw
-                else ["huatai", "guosen", "mootdx", "akshare"]
+                else ["huatai", "mootdx", "akshare", "baostock"]
             )
         if not self.kline_priority:
             raw = os.environ.get(_ENV_KLINE_PRIORITY, "")
             self.kline_priority = (
                 [s.strip() for s in raw.split(",") if s.strip()]
                 if raw
-                else ["guosen", "mootdx", "akshare"]
+                else ["mootdx", "akshare"]
             )
 
     @property
