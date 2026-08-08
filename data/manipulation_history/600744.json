@@ -49,5 +49,22 @@
     "price_after_5d": null,
     "notes": "",
     "created_at": "2026-08-07T15:12:48.677166"
+  },
+  {
+    "record_id": "168faad656d048bdada9a86f70b2cf92",
+    "symbol": "600744",
+    "name": "华银电力",
+    "date": "2026-08-08",
+    "manipulation_type": "涨停诱多链",
+    "source": "daily",
+    "confidence": 0.6,
+    "risk_score": 62.0,
+    "price_at_detection": 7.88,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-08T18:50:11.520987"
   }
 ]
