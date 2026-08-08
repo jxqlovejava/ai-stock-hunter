@@ -52,6 +52,7 @@ class PaperTrade:
     timestamp: str                   # ISO 格式时间戳
     remaining_cash: float            # 交易后剩余现金
     pnl_pct: float = 0.0             # 卖出时实现盈亏%
+    realized_pnl_yuan: float = 0.0   # 卖出时实际盈亏金额(元, 扣成本) — 2026-08-08
 
     def to_dict(self) -> dict:
         return {
@@ -71,6 +72,7 @@ class PaperTrade:
             "timestamp": self.timestamp,
             "remaining_cash": round(self.remaining_cash, 2),
             "pnl_pct": round(self.pnl_pct, 6),
+            "realized_pnl_yuan": round(self.realized_pnl_yuan, 2),
         }
 
     @classmethod
@@ -92,6 +94,7 @@ class PaperTrade:
             timestamp=str(d.get("timestamp", "")),
             remaining_cash=float(d.get("remaining_cash", 0)),
             pnl_pct=float(d.get("pnl_pct", 0)),
+            realized_pnl_yuan=float(d.get("realized_pnl_yuan", 0)),
         )
 
 

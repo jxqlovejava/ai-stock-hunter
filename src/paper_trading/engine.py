@@ -682,7 +682,7 @@ class PaperTradingEngine:
                 if symbol in state.positions:
                     current_qty = state.positions[symbol].quantity
 
-                # 获取当前价格
+                # 获取当前价格: 持仓用 last/entry; 新买入拉真实行情价 (2026-08-08)
                 current_price = 0.0
                 if symbol in state.positions:
                     pos = state.positions[symbol]
@@ -690,6 +690,14 @@ class PaperTradingEngine:
                         getattr(pos, "last_price", 0),
                         getattr(pos, "entry_price", 0),
                     )
+                if current_price <= 0:
+                    try:
+                        market = "SH" if symbol.startswith(("6", "68")) else "SZ"
+                        q = self._data.get_quote(symbol, market)
+                        if q is not None:
+                            current_price = getattr(q, "price", 0) or 0
+                    except Exception:
+                        pass
 
                 # 方式 1: 从 TradeSignal 转换 (PositioningEngine 已产出)
                 if result.signal and hasattr(result.signal, "action"):
@@ -893,6 +901,16 @@ class PaperTradingEngine:
             return None
 
         trade_id = f"{order.symbol}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+
+        # 卖出时实际盈亏金额(元, 扣摩擦成本); 买入为 0
+        realized_yuan = 0.0
+        if order.action == "sell" and order.quantity > 0:
+            _pos = positions.get(order.symbol)
+            entry_used = getattr(_pos, "entry_price", 0) if _pos else 0
+            if entry_used <= 0:
+                entry_used = order.price
+            realized_yuan = (order.price - entry_used) * order.quantity - cost.total_cost
+
         return PaperTrade(
             trade_id=trade_id,
             symbol=order.symbol,
@@ -910,6 +928,7 @@ class PaperTradingEngine:
             timestamp=datetime.now().isoformat(),
             remaining_cash=new_cash,
             pnl_pct=pnl_pct,
+            realized_pnl_yuan=realized_yuan,
         )
 
     # ------------------------------------------------------------------

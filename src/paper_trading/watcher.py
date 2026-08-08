@@ -585,14 +585,41 @@ def mode_review(period: str = "weekly", force: bool = False) -> str:
         return ""
     engine = PaperTradingEngine()
     state = engine.state
-    trades = engine.get_recent_trades(limit=200)
+    trades = engine.get_recent_trades(limit=500)
 
     period_zh = {"weekly": "周", "monthly": "月", "quarterly": "季"}.get(period, "周")
     pnl = state.total_equity - state.initial_capital
+
+    # 本期已实现盈亏 (按 trades 的时间过滤, 2026-08-08)
+    period_realized = 0.0
+    period_sells = 0
+    try:
+        from src.paper_trading.scheduler import trading_days_in_range
+        today = date.today()
+        if period == "weekly":
+            start = today - timedelta(days=7)
+        elif period == "monthly":
+            start = today.replace(day=1)
+        else:  # quarterly
+            qm = ((today.month - 1) // 3) * 3 + 1
+            start = today.replace(month=qm, day=1)
+        for t in trades:
+            try:
+                ts = str(getattr(t, "timestamp", ""))[:10]
+                tsd = datetime.strptime(ts, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if tsd >= start and getattr(t, "action", "") == "sell":
+                period_realized += getattr(t, "realized_pnl_yuan", 0) or 0
+                period_sells += 1
+    except Exception:
+        pass
+
     lines = [
         f"📈 {period_zh}度盈亏复盘",
         f"  初始资金 ¥{state.initial_capital:,.0f} → 当前权益 ¥{state.total_equity:,.2f}",
         f"  累计盈亏 ¥{pnl:+,.2f} ({state.total_return_pct:+.2%})",
+        f"  本期已实现盈亏 ¥{period_realized:+,.2f} ({period_sells}笔卖出)",
         f"  交易 {state.total_trades} 笔 | 胜率 {state.win_rate:.1%} "
         f"({state.winning_trades}W/{state.losing_trades}L)",
         f"  当前回撤 {state.drawdown_pct:.2%} | 持仓 {state.position_count} 只",
