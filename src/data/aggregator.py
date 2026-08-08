@@ -306,14 +306,21 @@ class DataAggregator:
         return primary
 
     @staticmethod
-    def _financials_are_complete(fins: list[Financials]) -> bool:
-        """检查财务报表是否包含所有关键字段。"""
+    def _financials_are_complete(fins: list[Financials], min_periods: int = 3) -> bool:
+        """检查财务报表是否完整：关键字段齐全且期数达标。
+
+        min_periods=3：r032/r033 需要近 3 年 ROE/现金流连续性验证。
+        单期数据即使字段齐全也算不完整，强制继续走补充源，
+        避免 mootdx 1 期数据被误判完整而短路掉 akshare 的多年期数据。
+        """
         if not fins:
             return False
         # 检查第一个报告期是否有关键字段
         fin = fins[0]
         key_fields = [fin.revenue, fin.net_profit, fin.roe, fin.eps]
-        return all(f is not None for f in key_fields)
+        if not all(f is not None for f in key_fields):
+            return False
+        return len(fins) >= min_periods
 
     @staticmethod
     def _enrich_financials(
@@ -343,6 +350,16 @@ class DataAggregator:
         supp_by_period = {}
         for f in supplement:
             supp_by_period[_quarter_key(f.report_period)] = f
+
+        # 合并补充源中主源缺失的历史期数（如 mootdx 仅 1 期、akshare 4 期）
+        # 否则 r032/r033 无法验证 ROE/现金流连续性，被误标 [DATA_GAP]
+        primary_periods = {_quarter_key(p.report_period) for p in primary}
+        for s in supplement:
+            if _quarter_key(s.report_period) not in primary_periods:
+                primary.append(s.model_copy(deep=True))
+                primary_periods.add(_quarter_key(s.report_period))
+        if len(primary) > 1:
+            primary.sort(key=lambda x: _quarter_key(x.report_period), reverse=True)
 
         enriched_fields = []
         # 取补充源的最新数据作为权威 ROE/EPS（不同源报告期格式可能不一致）
