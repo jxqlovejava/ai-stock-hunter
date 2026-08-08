@@ -239,7 +239,7 @@ def _realtime_quote(symbol: str):
     """实时行情快照。"""
     from src.data.aggregator import DataAggregator
     agg = DataAggregator()
-    return agg.get_realtime_quote(symbol, _market_of(symbol))
+    return agg.get_quote(symbol, _market_of(symbol))
 
 
 def _check_fast_move(symbol: str, name: str) -> dict | None:

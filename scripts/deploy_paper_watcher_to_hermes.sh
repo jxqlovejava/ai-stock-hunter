@@ -60,7 +60,10 @@ sys.exit(proc.returncode)
 PYEOF
 chmod +x /home/ubuntu/.hermes/scripts/baize_paper.py"
 
-echo "==> 安装 cron (四条路径)"
+echo "==> 安装催化信号包装器 baize_catalyst.py"
+"${SSH[@]}" "$HOST" "sed 's/src.paper_trading.watcher/src.paper_trading.catalyst/' /home/ubuntu/.hermes/scripts/baize_paper.py > /home/ubuntu/.hermes/scripts/baize_catalyst.py && chmod +x /home/ubuntu/.hermes/scripts/baize_catalyst.py"
+
+echo "==> 安装 cron (四条路径 + 催化信号)"
 "${SSH[@]}" "$HOST" "cat > /home/ubuntu/.hermes/paper_watcher.crontab <<'CEOF'
 # 白泽模拟交易监视器 (CST) — 路径 A/B/C/D
 # 路径 A: 盘前/盘后
@@ -74,6 +77,9 @@ echo "==> 安装 cron (四条路径)"
 # 路径 C: 强信号轮询 (每2分钟 9-15 点)
 */2 9-14 * * 1-5  cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_paper.py --mode strong >> $REMOTE_ROOT/data/paper_trading/watcher.log 2>&1
 0-58/2 15 * * 1-5  cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_paper.py --mode strong >> $REMOTE_ROOT/data/paper_trading/watcher.log 2>&1
+# 催化信号 (价格买点/政策新闻/个股/PMI) — 每30分钟
+5,35 9-14 * * 1-5  cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_catalyst.py --mode all >> $REMOTE_ROOT/data/paper_trading/catalyst.log 2>&1
+5,35 15 * * 1-5    cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_catalyst.py --mode all >> $REMOTE_ROOT/data/paper_trading/catalyst.log 2>&1
 # 路径 D: 周/月/季复盘 (脚本内部判断是否复盘日)
 30 15 * * 5      cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_paper.py --mode review --period weekly >> $REMOTE_ROOT/data/paper_trading/watcher.log 2>&1
 30 15 28-31 * *  cd $REMOTE_ROOT && python3 /home/ubuntu/.hermes/scripts/baize_paper.py --mode review --period monthly >> $REMOTE_ROOT/data/paper_trading/watcher.log 2>&1

@@ -1,0 +1,30 @@
+{
+  "_comment": "催化信号监控配置 (2026-08-08)。命中即微信推送。direction: <= 现价低于阈值触发 / >= 现价高于阈值触发",
+  "price_alerts": [
+    {
+      "symbol": "600089", "name": "特变电工",
+      "threshold": 18.13, "direction": "<=",
+      "message": "特变电工进入买点区 (≤18.13) — 特高压主设备, 回调到位可评估"
+    },
+    {
+      "symbol": "600089", "name": "特变电工",
+      "threshold": 20.28, "direction": ">=",
+      "message": "特变电工放量上行 (≥20.28) — 脱离买点区, 追高风险"
+    }
+  ],
+  "news_keywords": [
+    {"keywords": ["特高压", "招标"], "message": "⚡ 催化: 特高压招标落地"},
+    {"keywords": ["新型电力系统", "细则"], "message": "⚡ 催化: 十五五规划执行细则发布"},
+    {"keywords": ["国网", "资本开支"], "message": "⚡ 催化: 国网资本开支变化"},
+    {"keywords": ["电网", "投资", "5万亿"], "message": "⚡ 催化: 电网投资政策"}
+  ],
+  "stock_signals": [
+    {"symbol": "002130", "name": "沃尔核材", "signal": "margin_reversal", "message": "沃尔核材融资止跌回升"},
+    {"symbol": "002130", "name": "沃尔核材", "signal": "washout_reclaim", "message": "沃尔核材洗盘降档缩量企稳"}
+  ],
+  "pmi": {
+    "enabled": true,
+    "message": "PMI 数据更新 — 关注是否跌破荣枯线 50",
+    "check_day_hint": "每月末~次月初发布"
+  }
+}

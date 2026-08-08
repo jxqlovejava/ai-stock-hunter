@@ -343,7 +343,7 @@ class PaperTradingEngine:
             try:
                 # 推断市场
                 market = "SH" if symbol.startswith(("6", "68")) else "SZ"
-                quote = self._data.get_realtime_quote(symbol, market)
+                quote = self._data.get_quote(symbol, market)
                 if quote is None:
                     logger.warning("无法获取 %s 行情，保持原价", symbol)
                     continue
@@ -773,7 +773,7 @@ class PaperTradingEngine:
         # 检查涨跌停 (简化: 通过 DataAggregator)
         try:
             market = "SH" if order.symbol.startswith(("6", "68")) else "SZ"
-            quote = self._data.get_realtime_quote(order.symbol, market)
+            quote = self._data.get_quote(order.symbol, market)
             if quote:
                 # 涨停买不进
                 if order.action == "buy" and quote.pct_change >= 9.9:
