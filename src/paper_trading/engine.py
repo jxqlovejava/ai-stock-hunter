@@ -289,7 +289,7 @@ class PaperTradingEngine:
             logger.info("%s 非交易日，跳过 %s", today, symbol)
             return []
 
-        # 重置当日去重（与每日循环隔离，避免跨时段误判重复）
+        # 当日去重保留 (与每日循环共享): 防止同标的同日重复买卖
         market = "SH" if symbol.startswith(("6", "68")) else "SZ"
         state = self.state
 
@@ -385,6 +385,15 @@ class PaperTradingEngine:
     # ------------------------------------------------------------------
     # ATR 动态止损/止盈 (2026-08-08)
     # ------------------------------------------------------------------
+
+    def _limit_pct(self, symbol: str) -> float:
+        """板块感知涨跌停幅度: 主板±10% 双创±20% 北交所±30% ST±5%。"""
+        s = symbol.split(".")[0]
+        if s.startswith(("300", "301", "688", "689")):
+            return 20.0
+        if s.startswith(("8", "4")):
+            return 30.0
+        return 10.0
 
     def _fetch_atr(self, symbol: str, period: int = 14) -> float:
         """14 日 ATR (True Range 均值)。失败返回 0.0 (回退固定止损)。"""
@@ -783,6 +792,8 @@ class PaperTradingEngine:
                         # 新建仓: 创建 PositionState — ATR 止损优先, 回退固定%
                         from src.routing.position_state import PositionState, StopStage
                         atr_v = getattr(order, "atr", 0) or 0
+                        if atr_v <= 0:
+                            atr_v = self._fetch_atr(order.symbol)  # signal 无 atr 时直接算
                         new_pos = PositionState.initial(
                             symbol=order.symbol,
                             name=order.name,
@@ -850,12 +861,13 @@ class PaperTradingEngine:
             market = "SH" if order.symbol.startswith(("6", "68")) else "SZ"
             quote = self._data.get_quote(order.symbol, market)
             if quote:
+                lim = self._limit_pct(order.symbol)  # 板块感知: 主板±10% 双创±20% 北交所±30% ST±5%
                 # 涨停买不进
-                if order.action == "buy" and quote.pct_change >= 9.9:
+                if order.action == "buy" and quote.pct_change >= lim - 0.1:
                     logger.warning("%s 接近涨停 (%.1f%%) 买不进", order.symbol, quote.pct_change)
                     return None
                 # 跌停卖不出
-                if order.action == "sell" and quote.pct_change <= -9.9:
+                if order.action == "sell" and quote.pct_change <= -(lim - 0.1):
                     logger.warning("%s 接近跌停 (%.1f%%) 卖不出", order.symbol, quote.pct_change)
                     return None
         except Exception:

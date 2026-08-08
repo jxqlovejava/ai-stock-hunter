@@ -311,3 +311,13 @@ class TestATRManagement:
         pos = self._pos(20.0, 1.0)
         p = eng._apply_atr_management(pos, 21.5, 0.0)
         assert p.stop_price == 18.0  # ATR=0 不动
+
+
+class TestFastMoveBoundary:
+    def test_exact_threshold_triggered(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        from types import SimpleNamespace
+        # 恰好 -2.0 (等号边界) 触发
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: SimpleNamespace(change_pct=-2.0, price=20.0))
+        r = w._check_fast_move("600089", "特变电工")
+        assert r and r["signal"] == "sell"
