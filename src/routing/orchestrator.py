@@ -2202,8 +2202,16 @@ class Orchestrator:
             except Exception:
                 pass
 
-        # 管理层
-        management = self._management_evaluator.evaluate(symbol, name)
+        # 管理层 (P1-8 高管增减持真数据: aggregator.get_executive_trades)
+        _insider_trades = []
+        try:
+            if getattr(self, "data", None) is not None:
+                _insider_trades = self.data.get_executive_trades(symbol) or []
+        except Exception as e:
+            logger.debug("executive trades fetch failed (%s): %s", symbol, e)
+        management = self._management_evaluator.evaluate(
+            symbol, name, executive_trades=_insider_trades
+        )
 
         # 一致预期
         consensus = self._report_aggregator.aggregate(symbol, name)

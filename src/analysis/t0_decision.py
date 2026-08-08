@@ -51,6 +51,11 @@ class T0Signal:
     description: str
 
 
+def _append_pattern(existing: str, new: str) -> str:
+    """向 intraday_pattern 追加分时形态描述。"""
+    return f"{existing} | {new}" if existing else new
+
+
 @dataclass
 class T0Result:
     """T+0 决策结果。"""
@@ -247,7 +252,92 @@ class T0DecisionEngine:
         # ── 综合评分 ──
         self._score(result, chg_3d, chg_5d)
 
+        # P1-8 做T四要点日内信号 (文章共识 @Aw3ff_ 做T技巧): 冲高回落/缩量急跌/三重低点
+        try:
+            if len(minute_bars) >= 10:
+                self._detect_t_signals(result, minute_bars)
+        except Exception as e:
+            logger.debug("t0 t-signals: %s", e)
+
         return result
+
+    # ------------------------------------------------------------------
+    # P1-8 做T四要点日内信号 (文章共识 @Aw3ff_ 做T技巧)
+    # ------------------------------------------------------------------
+
+    def _detect_t_signals(self, result: T0Result, bars: list[Bar]) -> None:
+        """做T四要点 → 日内信号 + 评分微调。
+
+        ① 冲高回落(高抛): 盘中冲高≥3% 且 现价回落至高点下方2% → 减仓保利润
+        ② 缩量急跌(低吸): 后半段较前段高点回撤≥2% 且 后段均量≤前段0.7倍 → 低吸接回
+        ③ 三重低点(正T): 分时低点出现≥3个逐级抬高的局部低点 → 冲高后卖底仓
+        """
+        n = len(bars)
+        if n < 20:
+            return
+        opens = np.array([b.open for b in bars])
+        highs = np.array([b.high for b in bars])
+        lows = np.array([b.low for b in bars])
+        closes = np.array([b.close for b in bars])
+        vols = np.array([float(b.volume or 0) for b in bars])
+        day_open = float(opens[0])
+        cur = float(closes[-1])
+        day_high = float(highs.max())
+        delta = 0
+
+        # ① 冲高回落 (高抛)
+        if day_open > 0 and day_high >= day_open * 1.03 and cur <= day_high * 0.98:
+            result.signals_bear.append(T0Signal(
+                "bear", -8, "intraday",
+                f"冲高回落 — 盘中冲高{(day_high / day_open - 1) * 100:.1f}%后回落至{cur:.2f}, 高抛减仓保利润",
+            ))
+            delta -= 8
+            result.intraday_pattern = _append_pattern(result.intraday_pattern, "冲高回落(高抛)")
+
+        # ② 缩量急跌 (低吸)
+        half = n // 2
+        if half >= 10:
+            pre_high = float(highs[:half].max())
+            post_low = float(lows[half:].min())
+            pre_vol = float(vols[:half].mean())
+            post_vol = float(vols[half:].mean())
+            if pre_high > 0 and post_low <= pre_high * 0.98 and pre_vol > 0 and post_vol <= pre_vol * 0.7:
+                result.signals_bull.append(T0Signal(
+                    "bull", 5, "intraday",
+                    f"缩量急跌 — 较前高回撤{(1 - post_low / pre_high) * 100:.1f}%且缩量, 可低吸接回",
+                ))
+                delta += 5
+                result.intraday_pattern = _append_pattern(result.intraday_pattern, "缩量急跌(低吸)")
+
+        # ③ 三重低点 (正T)
+        asc = self._last_ascending_lows(lows)
+        if asc is not None:
+            result.signals_bull.append(T0Signal(
+                "bull", 8, "intraday",
+                f"三重低点重心上移 ({asc[0]:.2f}<{asc[1]:.2f}<{asc[2]:.2f}) — 正T, 冲高后卖出底仓",
+            ))
+            delta += 8
+            result.intraday_pattern = _append_pattern(result.intraday_pattern, "三重低点(正T)")
+
+        if delta:
+            result.score = max(-100, min(100, result.score + delta))
+            self._map_action(result, result.vwap if result.vwap > 0 else cur)
+
+    @staticmethod
+    def _last_ascending_lows(lows: "np.ndarray") -> Optional[list[float]]:
+        """检测分时低点序列中最后 3 个局部低点是否逐级抬高（三重低点正T）。"""
+        n = len(lows)
+        if n < 4:
+            return None
+        swing = []
+        for i in range(1, n - 1):
+            if lows[i] < lows[i - 1] and lows[i] <= lows[i + 1]:
+                swing.append(float(lows[i]))
+        if len(swing) >= 3:
+            last3 = swing[-3:]
+            if last3[0] < last3[1] < last3[2]:
+                return last3
+        return None
 
     # ------------------------------------------------------------------
     # 日内分析
@@ -681,10 +771,13 @@ class T0DecisionEngine:
             pass  # 操纵检测失败不影响主流程
 
         result.score = score
+        self._map_action(result, curr)
 
-        # ── 决策映射 ──
+    def _map_action(self, result: T0Result, curr: float) -> None:
+        """score → 决策动作映射（含建议价/止损/触发条件）。"""
         vwap_val = result.vwap if result.vwap > 0 else curr
         day_low_val = result.day_low if result.day_low > 0 else result.support_1
+        score = result.score
 
         if score >= 20:
             result.action = T0Action.ADD

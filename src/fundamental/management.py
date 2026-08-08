@@ -60,20 +60,23 @@ class ManagementEvaluator:
     """
 
     def evaluate(
-        self, symbol: str, name: str = ""
+        self, symbol: str, name: str = "", executive_trades: list | None = None
     ) -> ManagementProfile:
         """评估管理层质量。
 
         Args:
             symbol: 股票代码
             name: 公司名称
+            executive_trades: 可选 — aggregator.get_executive_trades 输出，
+                非空时用真数据覆盖 insider_trades 并微调评分（文章共识 @LuBtc888:
+                高管高位增持=加分 / 一涨就减持=红旗）。缺省/空 → neutral 兜底，零回归。
 
         Returns:
             ManagementProfile
         """
         known = _KNOWN_MANAGEMENT.get(symbol)
         if known:
-            return ManagementProfile(
+            profile = ManagementProfile(
                 symbol=symbol, name=name,
                 capital_allocation=known["capital_allocation"],
                 integrity_score=known["integrity"],
@@ -89,12 +92,30 @@ class ManagementEvaluator:
                 ),
                 confidence=0.6,
             )
+        else:
+            profile = ManagementProfile(
+                symbol=symbol, name=name,
+                overall_score=50.0,
+                confidence=0.3,
+            )
 
-        return ManagementProfile(
-            symbol=symbol, name=name,
-            overall_score=50.0,
-            confidence=0.3,
-        )
+        # 真数据覆盖: 高管增减持 → insider 信号 + 评分微调
+        if executive_trades:
+            try:
+                from src.fundamental.insider import aggregate_insider_trades
+                agg = aggregate_insider_trades(executive_trades)
+                if agg["recent_insider_trades"] != "neutral":
+                    profile.recent_insider_trades = agg["recent_insider_trades"]
+                    delta = 3.0 if agg["recent_insider_trades"] == "buying" else -3.0
+                    profile.overall_score = round(
+                        max(0.0, min(100.0, profile.overall_score + delta)), 1
+                    )
+                if agg.get("note"):
+                    logger.info("管理层增减持 (%s): %s", symbol, agg["note"])
+            except Exception as e:
+                logger.debug("insider aggregate failed (%s): %s", symbol, e)
+
+        return profile
 
     @staticmethod
     def _weighted_score(

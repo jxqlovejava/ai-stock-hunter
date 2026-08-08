@@ -192,4 +192,19 @@ MILITARY_RULES: list[Rule] = [
         check_field="signal_action",
         threshold="技术买/加与基本面或政策或新闻负面冲突",
     ),
+    Rule(
+        "r044", RuleCategory.TRADING, "涨停次日低开位置解读",
+        Severity.WARN,
+        "昨日涨停且今日低开 → 位置决定含义：高位涨停次日低开=主力出货嫌疑(追高谨慎/减仓)；"
+        "底部涨停次日低开=洗盘吸筹(可观察反包)。避免把出货误当洗盘、把吸筹误当利空。",
+        check_field="limit_up_next_day_gap_down",
+        threshold="前日涨停 且 今日开盘价<昨收",
+    ),
+    Rule(
+        "r045", RuleCategory.TRADING, "弱势突破不追",
+        Severity.WARN,
+        "突破强度为弱(量能勉强/幅度不足) → 假突破概率高，不追入，等回踩企稳或二次确认",
+        check_field="breakout_weak",
+        threshold="突破信号 strength=WEAK",
+    ),
 ]

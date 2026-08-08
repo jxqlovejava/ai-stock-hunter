@@ -37,6 +37,7 @@ class EntrySignal:
     entry_zone_low: float          # 入场区间下限
     entry_zone_high: float         # 入场区间上限
     confidence: float              # 0.0-1.0
+    strength: str = "NORMAL"       # STRONG / NORMAL / WEAK (突破等信号的质量分级, 文章共识)
     trigger_conditions: list[str] = field(default_factory=list)
 
 
@@ -258,18 +259,54 @@ class EntryExitEngine:
             latest_prices = latest_close[latest_close > prev_high]
             if not latest_prices.empty:
                 entry_price = float(latest_prices.mean())
+                # P1-8 突破强度三分类 (文章共识 @trader_maxey):
+                #   强势=显著放量+大突破幅度可进; 普通=等回踩; 弱势=不追防假突破
+                strength = self._classify_breakout_strength(
+                    latest_close, prev_high, latest_vol, avg_vol
+                )
+                conf = min(0.8, 0.4 + vol_confirmed / len(latest_close) * 0.4)
+                if strength == "WEAK":
+                    conf = round(conf * 0.7, 3)   # 弱势突破降置信度
                 return EntrySignal(
                     type="BREAKOUT",
-                    description=f"放量突破{self.BREAKOUT_LOOKBACK}日高点 (量确认: {vol_confirmed}/{len(latest_close)}只)",
+                    description=f"放量突破{self.BREAKOUT_LOOKBACK}日高点 (量确认: {vol_confirmed}/{len(latest_close)}只, 强度:{strength})",
                     entry_zone_low=round(entry_price * 0.995, 2),
                     entry_zone_high=round(entry_price * 1.01, 2),
-                    confidence=min(0.8, 0.4 + vol_confirmed / len(latest_close) * 0.4),
+                    confidence=conf,
+                    strength=strength,
                     trigger_conditions=[
                         f"收盘站稳 {self.BREAKOUT_LOOKBACK} 日高点上方",
                         "成交量维持放大（>均量 1.2 倍）",
                     ],
                 )
         return None
+
+    @staticmethod
+    def _classify_breakout_strength(
+        latest_close: "pd.Series",
+        prev_high: "pd.Series",
+        latest_vol: "pd.Series",
+        avg_vol: "pd.Series",
+    ) -> str:
+        """突破强度三分类 (STRONG/NORMAL/WEAK)。
+
+        基于突破标的的放量倍数与突破幅度:
+          - STRONG: 均量比 ≥2.0 且 突破幅度 ≥3% (大实体+显著放量 → 可直接进场)
+          - WEAK:   均量比 <1.7 或 突破幅度 <1.5% (勉强过线 → 防假突破, 不追)
+          - NORMAL: 其余 (等第一次回踩确认)
+        """
+        mask = (latest_close > prev_high) & (prev_high > 0) & (avg_vol > 0)
+        if not mask.any():
+            return "WEAK"
+        excess = (latest_close[mask] - prev_high[mask]) / prev_high[mask]
+        vol_mult = latest_vol[mask] / avg_vol[mask]
+        avg_excess = float(excess.mean())
+        avg_vol_mult = float(vol_mult.mean())
+        if avg_vol_mult >= 2.0 and avg_excess >= 0.03:
+            return "STRONG"
+        if avg_vol_mult < 1.7 or avg_excess < 0.015:
+            return "WEAK"
+        return "NORMAL"
 
     def _detect_golden_cross(
         self, close: pd.DataFrame, volume: pd.DataFrame | None = None

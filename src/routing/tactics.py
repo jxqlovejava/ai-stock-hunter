@@ -117,6 +117,15 @@ _PULLBACK_TOUCH_BAND = 0.02      # 回踩触线带: 低点 ≤ MA10w×(1+2%)
 _LOCK_RUN_UP = 0.20              # 锁利: 近60日累计涨幅阈值
 _LOCK_WINDOW_D = 60              # 锁利: 涨幅回看窗口（交易日）
 
+# P1-8 涨停次日/封板/尾盘信号阈值（文章共识 @LuBtc888）
+_LUD_POS_HIGH = 0.75             # 涨停位置高位分位 (≥75%)
+_LUD_POS_LOW = 0.40              # 涨停位置底部分位 (≤40%)
+_LUD_LOOKBACK = 120              # 位置分位回看窗口（交易日）
+_SEAL_STRONG_MINUTE = 600        # 强封: 首封 ≤ 10:00
+_SEAL_WEAK_MINUTE = 840          # 弱封: 首封 ≥ 14:00
+_TAIL_START_MINUTE = 890         # 尾盘检测起点 14:50
+_TAIL_MOVE_PCT = 2.0             # 尾盘跳水/急拉阈值 %
+
 # P1-7 突破质量子检查（0xToni 四假突破形态, 2026-08-07）
 _BREAKOUT_QUALITY_LOOKBACK_W = 13  # 突破质量回看窗口（周）
 _LOW_QUALITY_GAIN = 0.03           # 放量滞涨阈值: 突破周涨幅 < 3%
@@ -495,6 +504,229 @@ def _weekly_breakout_structure(df) -> dict:
     return out
 
 
+def _limit_up_threshold_pct(symbol: str) -> float:
+    """A 股涨停幅度阈值（按板块）。主板 10%，创业板/科创板 20%，北交所 30%。"""
+    if symbol.startswith(("300", "301", "688")):
+        return 19.5
+    if symbol.startswith(("8", "4", "920")):
+        return 29.5
+    return 9.5
+
+
+def _limit_up_price(prev_close: float, symbol: str) -> float:
+    """A 股涨停价（四舍五入到分）。主板 ×1.10，创业板/科创板 ×1.20，北交所 ×1.30。"""
+    if symbol.startswith(("300", "301", "688")):
+        mult = 1.20
+    elif symbol.startswith(("8", "4", "920")):
+        mult = 1.30
+    else:
+        mult = 1.10
+    return round(prev_close * mult, 2)
+
+
+def _minute_of_day(bar) -> int:
+    """Bar 时间戳 → 当日分钟序号 (09:30=570)。"""
+    return bar.timestamp.hour * 60 + bar.timestamp.minute
+
+
+def _limit_up_next_day_signal(df, symbol: str = "") -> dict:
+    """P1-8 涨停次日行为 + 位置解读（文章共识 @LuBtc888 涨停次日低开）。
+
+    判定昨日是否涨停、今日开盘方向（低开/高开/平开）、涨停发生的位置
+    （涨停日收盘在近 120 日高低区间的分位）。核心结论：
+      - 高位涨停次日低开 → 主力配合出货嫌疑（追高谨慎/减仓）
+      - 底部涨停次日低开 → 洗盘吸筹特征（可观察反包）
+
+    Returns: {"prev_limit_up", "gap_direction", "position", "signal", "note"}
+    """
+    import pandas as pd
+    out = {"prev_limit_up": False, "gap_direction": "flat", "position": "mid",
+           "signal": "", "note": ""}
+    if df is None or getattr(df, "empty", True) or len(df) < 30:
+        return out
+    d = _to_datetime_index(df)
+    if not isinstance(getattr(d, "index", None), pd.DatetimeIndex):
+        return out
+    for col in ("open", "high", "low", "close"):
+        if col not in d.columns:
+            return out
+    closes = d["close"].astype(float)
+    if len(closes) < 3:
+        return out
+    pct = closes.pct_change() * 100.0
+    if not bool(pct.iloc[-2] >= _limit_up_threshold_pct(symbol)):
+        return out
+
+    prev_close = float(closes.iloc[-2])
+    if prev_close <= 0:
+        return out
+    today_open = float(d["open"].iloc[-1])
+    gap_pct = (today_open - prev_close) / prev_close * 100.0
+    if gap_pct <= -0.2:
+        out["gap_direction"] = "down"
+    elif gap_pct >= 0.2:
+        out["gap_direction"] = "up"
+    else:
+        out["gap_direction"] = "flat"
+
+    # 位置: 涨停日收盘在近 _LUD_LOOKBACK 日高低区间的分位（不含今日，无前视）
+    win = _LUD_LOOKBACK + 1
+    lo = float(d["low"].iloc[-win:-1].min()) if len(d) > win else float(d["low"].iloc[:-1].min())
+    hi = float(d["high"].iloc[-win:-1].max()) if len(d) > win else float(d["high"].iloc[:-1].max())
+    pos = (prev_close - lo) / (hi - lo) if hi > lo > 0 else 0.5
+    out["position"] = ("high" if pos >= _LUD_POS_HIGH
+                        else ("low" if pos <= _LUD_POS_LOW else "mid"))
+    out["prev_limit_up"] = True
+
+    pct_str = f"{pos:.0%}"
+    if out["gap_direction"] == "down":
+        if out["position"] == "high":
+            out["signal"] = "distribute_warning"
+            out["note"] = f"高位涨停(位置{pct_str})次日低开 — 主力配合出货嫌疑, 追高谨慎/减仓"
+        elif out["position"] == "low":
+            out["signal"] = "accumulate_watch"
+            out["note"] = f"底部涨停(位置{pct_str})次日低开 — 洗盘吸筹特征, 可观察反包机会"
+        else:
+            out["signal"] = "divergence_watch"
+            out["note"] = f"涨停后次日低开(位置{pct_str}) — 情绪分歧, 观望确认"
+    elif out["gap_direction"] == "up":
+        if out["position"] == "high":
+            out["signal"] = "high_grade_exit_watch"
+            out["note"] = f"高位涨停(位置{pct_str})次日高开 — 注意兑现/冲高回落风险"
+        else:
+            out["signal"] = "strong_continuation"
+            out["note"] = f"涨停次日高开(位置{pct_str}) — 承接较强, 关注能否续强"
+    else:
+        out["note"] = f"涨停次日平开(位置{pct_str}) — 多空均衡"
+    return out
+
+
+def _apply_limit_up_next_day(snapshot: "TacticalSnapshot", signal: dict) -> None:
+    """P1-8 涨停次日行为挂接 — 写 snapshot 字段 + notes（军规 r044 另行提示）。
+
+    高位涨停次日低开 → 追高降权 + 出场预警；底部涨停次日低开 → 观察信号。
+    """
+    if not signal or not signal.get("prev_limit_up"):
+        return
+    snapshot.limit_up_next_day = signal
+    note = signal.get("note", "")
+    sig = signal.get("signal", "")
+    if not note:
+        return
+    snapshot.notes.append(f"[P1-8] {note}")
+    if sig == "distribute_warning":
+        # 持仓者: 高位涨停次日低开 = 出货预警 → 追高信号降权 + 出场提示
+        for e in snapshot.entry_signals:
+            e["confidence"] = round(float(e.get("confidence", 0.5)) * 0.6, 3)
+            e.setdefault("market_gate", "LIMIT_UP_NEXT_DAY_DISTRIBUTE")
+        snapshot.exit_signals.append({
+            "type": "LIMIT_UP_NEXT_DAY_DISTRIBUTE",
+            "description": f"高位涨停次日低开 — {note}",
+            "zone_low": 0, "zone_high": 0,
+            "confidence": 0.6, "urgency": "NORMAL",
+        })
+    elif sig == "accumulate_watch":
+        # 底部涨停次日低开 = 洗盘吸筹 → 观察级入场提示（低置信，供反包确认）
+        snapshot.entry_signals.append({
+            "type": "LIMIT_UP_ACCUMULATE",
+            "description": f"底部涨停次日低开 — {note}",
+            "zone_low": 0, "zone_high": 0,
+            "confidence": 0.55, "strength": "NORMAL",
+        })
+
+
+def _seal_time_signal(minute_bars, prev_close: float, symbol: str = "") -> dict:
+    """P1-8 个股今日首封时间判定 (文章共识 @LuBtc888 钢铁纪律 ⑥⑦)。
+
+    若今日触及涨停, 找首个 high ≥ 涨停价的分钟 → 首封时间:
+      ≤10:00 强封(连板概率大); ≥14:00 弱封(次日易低开)。
+
+    Returns: {"sealed", "first_seal_time", "seal_label", "note"}
+    """
+    out = {"sealed": False, "first_seal_time": "", "seal_label": "", "note": ""}
+    if not minute_bars or prev_close <= 0:
+        return out
+    # 首封 = 触及实际涨停价 (主板 ×1.10, 非检测阈值 ×1.095, 避免 +9.5%~10% 未封板股误判)
+    limit_price = _limit_up_price(prev_close, symbol)
+    first_min = None
+    for b in minute_bars:
+        if b is not None and b.high >= limit_price - 0.001:
+            first_min = _minute_of_day(b)
+            break
+    if first_min is None:
+        return out
+    out["sealed"] = True
+    hh, mm = divmod(first_min, 60)
+    out["first_seal_time"] = f"{hh:02d}:{mm:02d}"
+    if first_min <= _SEAL_STRONG_MINUTE:          # ≤10:00 强封
+        out["seal_label"] = "strong"
+        out["note"] = f"{out['first_seal_time']}封板(≤10:00) — 强度高, 连板概率大"
+    elif first_min >= _SEAL_WEAK_MINUTE:          # ≥14:00 弱封
+        out["seal_label"] = "weak"
+        out["note"] = f"{out['first_seal_time']}封板(≥14:00) — 强度偏弱, 次日易低开"
+    else:
+        out["seal_label"] = "normal"
+        out["note"] = f"{out['first_seal_time']}封板 — 强度中等"
+    return out
+
+
+def _tail_market_signal(minute_bars) -> dict:
+    """P1-8 尾盘 10 分钟跳水/急拉检测 (文章共识 @LuBtc888 钢铁纪律 ⑨⑩)。
+
+    14:50 起末段价格变动 ≥2%:
+      - 跳水 → 隔日高开几率较高（低吸/持有线索）
+      - 急拉 → 尾盘诱多嫌疑, 次日大多低开（追高谨慎）
+
+    Returns: {"event", "move_pct", "note"}
+    """
+    out = {"event": "none", "move_pct": 0.0, "note": ""}
+    if not minute_bars:
+        return out
+    tail = [b for b in minute_bars if b is not None and _minute_of_day(b) >= _TAIL_START_MINUTE]
+    if len(tail) < 2:
+        return out
+    ref_close = float(tail[0].close)
+    if ref_close <= 0:
+        return out
+    move_pct = (float(tail[-1].close) - ref_close) / ref_close * 100.0
+    out["move_pct"] = round(move_pct, 2)
+    if move_pct <= -_TAIL_MOVE_PCT:
+        out["event"] = "dump"
+        out["note"] = f"尾盘跳水({move_pct:.1f}%) — 隔日高开几率较高, 可留意低吸/持有"
+    elif move_pct >= _TAIL_MOVE_PCT:
+        out["event"] = "pump"
+        out["note"] = f"尾盘急拉({move_pct:+.1f}%) — 诱多嫌疑, 次日大多低开, 追高谨慎"
+    return out
+
+
+def _market_divergence_note(stock_df, index_bars) -> str:
+    """大盘背离提示 (文章共识 @Aw3ff_ 做T要点 ④)。
+
+    大盘涨而个股滞涨 → 警惕补跌（可减仓）；大盘跌而个股逆势走强 → 相对强势（可加仓）。
+    """
+    if stock_df is None or getattr(stock_df, "empty", True) or len(stock_df) < 2:
+        return ""
+    if index_bars is None or getattr(index_bars, "empty", True):
+        return ""
+    try:
+        import pandas as pd
+        if "close" not in stock_df.columns or "close" not in index_bars.columns:
+            return ""
+        s_close = pd.Series(stock_df["close"].astype(float)).dropna()
+        i_close = pd.Series(index_bars["close"].astype(float)).dropna()
+        if len(s_close) < 2 or len(i_close) < 2:
+            return ""
+        s_chg = (s_close.iloc[-1] / s_close.iloc[-2] - 1) * 100
+        i_chg = (i_close.iloc[-1] / i_close.iloc[-2] - 1) * 100
+        if i_chg > 0.5 and s_chg < 0.5:
+            return f"大盘涨{i_chg:+.1f}%而个股仅{s_chg:+.1f}% — 滞涨, 大盘回落时易补跌, 谨慎持有"
+        if i_chg < -0.5 and s_chg > -0.5:
+            return f"大盘跌{i_chg:+.1f}%而个股逆势{s_chg:+.1f}% — 相对强势, 大盘反弹时或加速"
+        return ""
+    except Exception:
+        return ""
+
+
 def _breakout_quality_flags(w, s2, platform_high, vol_ma) -> dict:
     """四假突破形态检测（0xToni《散户生存法则·量价》）→ 突破质量评估。
 
@@ -800,6 +1032,14 @@ def _enhance_market_state(
     except Exception as e:
         logger.debug("tactics breakout suppressor: %s", e)
 
+    # P1-8 涨停次日行为 + 位置解读: 高位涨停次日低开=出货 / 底部=吸筹 (文章共识)
+    try:
+        if daily_df is not None:
+            lud_signal = _limit_up_next_day_signal(daily_df, symbol=snapshot.symbol)
+            _apply_limit_up_next_day(snapshot, lud_signal)
+    except Exception as e:
+        logger.debug("tactics limit-up next-day signal: %s", e)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # DTO
@@ -863,6 +1103,14 @@ class TacticalSnapshot:
     breakout_failed: bool = False          # 周线突破失败(跌回平台下方) → 持仓者减仓/离场
     breakout_failed_note: str = ""         # 失败详情 (含 low_quality / no_follow_through)
 
+    # ── 🚨 P1-8 涨停次日行为 (位置解读: 高位=出货 / 底部=吸筹) ──
+    limit_up_next_day: dict = field(default_factory=dict)   # _limit_up_next_day_signal 输出
+
+    # ── 🚨 P1-8 封板/尾盘日内信号 (打板时机 + 次日预期) ──
+    seal_time: dict = field(default_factory=dict)   # _seal_time_signal 输出 (个股首封时间)
+    tail_market: dict = field(default_factory=dict)  # _tail_market_signal 输出 (尾盘跳水/急拉)
+    divergence_note: str = ""                       # 大盘背离提示 (做T要点④, 独立展示)
+
     # ── 🥋 缠论结构（独立维度，不改 6 维 composite）──
     chanlun_score: float = 50.0
     chanlun_result: Optional[dict] = None
@@ -921,6 +1169,9 @@ class TacticalSnapshot:
             "market_state": self.market_state,
             "market_state_confidence": self.market_state_confidence,
             "weekly_direction": self.weekly_direction,
+            "limit_up_next_day": self.limit_up_next_day,
+            "seal_time": self.seal_time,
+            "tail_market": self.tail_market,
             "projected_target": self.projected_target,
             "chase_blocked": self.chase_blocked,
             "vwap_band": self.vwap_band,
@@ -1398,9 +1649,22 @@ def run_tactics(
         # 注入 17 个技术因子帧，使六维真实打分（修复 P0-1 空转：原 panel 仅 OHLCV）
         _inject_technical_factors(panel, df, symbol)
 
+        # 打板情绪快照 → 传入 technical.analyze 使打板维度真实打分（修复接线: 原先从不传）。
+        # 仅在有真实数据(zt_count>0)时传入；拉取失败/全零 → 保持中性 50 + DATA_GAP, 避免假性降档。
+        _limit_up_snap = None
+        try:
+            from src.game_theory.seats import SeatTracker
+            _snap = SeatTracker().get_limit_up_snapshot()
+            if getattr(_snap, "zt_count", 0) > 0:
+                _limit_up_snap = vars(_snap)
+        except Exception:
+            _limit_up_snap = None
+
         # 6维评分
         try:
-            tech = TechnicalAnalyzer().analyze(symbol, name, panel)
+            tech = TechnicalAnalyzer().analyze(
+                symbol, name, panel, limit_up_snapshot=_limit_up_snap
+            )
             snapshot.trend_score = tech.trend_score
             snapshot.reversal_score = tech.reversal_score
             snapshot.volume_score = tech.volume_score
@@ -1418,7 +1682,7 @@ def run_tactics(
                 snapshot.entry_signals = [
                     {"type": s.type, "description": s.description,
                      "zone_low": s.entry_zone_low, "zone_high": s.entry_zone_high,
-                     "confidence": s.confidence}
+                     "confidence": s.confidence, "strength": s.strength}
                     for s in _timing_result.entry_signals
                 ]
                 snapshot.exit_signals = [
@@ -1432,7 +1696,7 @@ def run_tactics(
                     snapshot.best_entry = {
                         "type": be.type, "description": be.description,
                         "zone_low": be.entry_zone_low, "zone_high": be.entry_zone_high,
-                        "confidence": be.confidence,
+                        "confidence": be.confidence, "strength": be.strength,
                     }
                 snapshot.suggested_stop = _timing_result.suggested_stop
                 snapshot.atr_stop = _timing_result.atr_stop
@@ -1637,6 +1901,22 @@ def run_tactics(
     except Exception as e:
         logger.debug("tactics market enhance: %s", e)
 
+    # ── P1-8 封板/尾盘日内信号 (打板时机 + 次日预期; 依赖 _minute_bars) ──
+    try:
+        prev_close = _close_series[-2] if len(_close_series) >= 2 else 0.0
+        snapshot.seal_time = _seal_time_signal(_minute_bars, prev_close, symbol)
+        if snapshot.seal_time.get("note"):
+            snapshot.notes.append(f"[P1-8] {snapshot.seal_time['note']}")
+        snapshot.tail_market = _tail_market_signal(_minute_bars)
+        if snapshot.tail_market.get("note"):
+            snapshot.notes.append(f"[P1-8] {snapshot.tail_market['note']}")
+        # 大盘背离 (做T要点 ④): 大盘涨个股滞涨 / 大盘跌个股逆势
+        snapshot.divergence_note = _market_divergence_note(_bars_df, _index_bars)
+        if snapshot.divergence_note:
+            snapshot.notes.append(f"[P1-8] {snapshot.divergence_note}")
+    except Exception as e:
+        logger.debug("tactics seal/tail signal: %s", e)
+
     phase1_elapsed = (datetime.now() - t1_tick).total_seconds()
 
     # Phase 1 step marker — after data computed, before detailed output
@@ -1695,6 +1975,18 @@ def run_tactics(
         _extract_financial_doctrine_ctx(_fin_list, doctrine_ctx)
     except Exception:
         pass
+
+    # P1-8 涨停次日低开 (r044) — 位置解读注入军规 ctx
+    if snapshot.limit_up_next_day and snapshot.limit_up_next_day.get("prev_limit_up"):
+        doctrine_ctx["limit_up_next_day_gap_down"] = (
+            snapshot.limit_up_next_day.get("gap_direction") == "down"
+        )
+
+    # P1-8 弱势突破不追 (r045) — 突破信号 strength=WEAK 注入军规 ctx
+    doctrine_ctx["breakout_weak"] = any(
+        s.get("type") == "BREAKOUT" and s.get("strength") == "WEAK"
+        for s in snapshot.entry_signals
+    )
 
     dr = orch.doctrine.check(symbol, doctrine_ctx, enabled_rules=enabled_rules)
     # 短线模式: 所有规则降级为 warn, 不 block
@@ -2197,6 +2489,31 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
         print(f"  周线方向: {'📈 ' if s.weekly_direction == 'BULL' else '📉 '}"
               f"{s.weekly_direction} (跨周期过滤)")
 
+    # P1-8 涨停次日行为 (位置解读)
+    if s.limit_up_next_day and s.limit_up_next_day.get("note"):
+        lnote = s.limit_up_next_day["note"]
+        sig = s.limit_up_next_day.get("signal", "")
+        icon = "🔻" if sig == "distribute_warning" else ("🟢" if sig == "accumulate_watch" else "⚪")
+        print(f"  {icon} 涨停次日: {lnote}")
+
+    # P1-8 封板/尾盘日内信号
+    if s.seal_time and s.seal_time.get("note"):
+        seal_icon = {"strong": "🟢", "weak": "🔻", "normal": "⚪"}.get(
+            s.seal_time.get("seal_label"), "⚪")
+        print(f"  {seal_icon} 封板: {s.seal_time['note']}")
+    if s.tail_market and s.tail_market.get("note"):
+        print(f"  {'🔻' if s.tail_market.get('event') == 'dump' else '⚠️'} 尾盘: {s.tail_market['note']}")
+    if s.divergence_note:
+        print(f"  ⚖️  背离: {s.divergence_note}")
+
+    # 门控/投影/信号辅助说明 (P1-1/5/6/7; P1-8 已有独立展示不重复)
+    if s.notes:
+        seen = set()
+        for note in s.notes[:12]:
+            if note and not note.startswith("[P1-8]") and note not in seen:
+                seen.add(note)
+                print(f"  📌 {note}")
+
     # 入场信号详情
     if s.entry_signals:
         print(f"\n  🟢 入场信号 ({len(s.entry_signals)}个):")
@@ -2472,6 +2789,7 @@ _TECH_FACTOR_IDS: list[str] = [
     "rsi_signal", "kdj_signal", "williams_r", "short_term_reversal",
     # 量价 (volume)
     "obv_divergence", "mfi_signal", "volume_ratio", "turnover_anomaly",
+    "rush_slump_shape",   # P1-8 急涨缓跌(出货)/急跌缓涨(洗盘) 形态 (文章共识)
     # 波动 (volatility)
     "atr_percentile", "bollinger_position", "hv_percentile",
     # 均线 (ma)

@@ -412,7 +412,7 @@ class SeatTracker:
             return 0.0
 
     @staticmethod
-    def _parse_fbt_minute(val) -> Optional[int]:
+    def _parse_fbt_minute(val: object) -> Optional[int]:
         """东财涨停池 fbt(首封时间) → 当日分钟序号 (09:30=570, 10:00=600)。
 
         兼容东财多种格式: "092504" / 92504 (数字 HHMMSS) / 13 位毫秒时间戳。

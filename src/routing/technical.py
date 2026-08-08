@@ -158,7 +158,10 @@ class TechnicalAnalyzer:
             gaps.append("reversal_factors")
 
         # --- 3. 量价维度 ---
-        volume_factors = ["obv_divergence", "mfi_signal", "volume_ratio", "turnover_anomaly"]
+        volume_factors = [
+            "obv_divergence", "mfi_signal", "volume_ratio", "turnover_anomaly",
+            "rush_slump_shape",   # P1-8 急涨缓跌(出货)/急跌缓涨(洗盘) 形态 (文章共识)
+        ]
         vol_scores = self._compute_factor_scores(panel, volume_factors)
         if vol_scores:
             scores["volume"] = float(np.mean(vol_scores))
@@ -347,7 +350,10 @@ class TechnicalAnalyzer:
         signals = []
         zt_count = snapshot.get("zt_count", 0)
         zb_count = snapshot.get("zb_count", 0)
-        break_rate = snapshot.get("break_rate", 0)
+        # break_rate 兼容 0-1 小数 / 0-100 百分比两种口径（seats 返回 0-100）
+        br_raw = snapshot.get("break_rate", 0)
+        break_rate = br_raw / 100.0 if br_raw > 1 else br_raw
+        first_seal = snapshot.get("first_seal_before_10_pct", 0.0)
 
         if zt_count > 100 and break_rate < 0.3:
             signals.append(TechnicalSignal(
@@ -359,6 +365,20 @@ class TechnicalAnalyzer:
             signals.append(TechnicalSignal(
                 indicator="LIMIT_UP_SENTIMENT", direction="BEARISH", strength=0.6,
                 description=f"打板情绪退潮: 炸板率{break_rate:.0%}，追高风险大",
+                is_exit=True,
+            ))
+
+        # 首封时间: 10点前封板占比高 = 早盘资金抢筹, 情绪强 (文章共识)
+        if first_seal >= 60 and zt_count > 50:
+            signals.append(TechnicalSignal(
+                indicator="LIMIT_UP_EARLY_SEAL", direction="BULLISH", strength=0.55,
+                description=f"{first_seal:.0f}%涨停10点前封板 — 早盘情绪强, 连板概率大",
+                is_entry=True,
+            ))
+        elif first_seal > 0 and first_seal <= 20 and zt_count > 0:
+            signals.append(TechnicalSignal(
+                indicator="LIMIT_UP_EARLY_SEAL", direction="BEARISH", strength=0.4,
+                description=f"仅{first_seal:.0f}%涨停10点前封板 — 情绪偏弱, 打板需谨慎",
                 is_exit=True,
             ))
 
@@ -381,15 +401,18 @@ class TechnicalAnalyzer:
     def _score_limit_up(snapshot: dict) -> float:
         """打板情绪评分 0-100。"""
         zt = snapshot.get("zt_count", 0)
-        zb = snapshot.get("zb_count", 0)
-        br = snapshot.get("break_rate", 0.5)
+        br_raw = snapshot.get("break_rate", 0.5)
+        br = br_raw / 100.0 if br_raw > 1 else br_raw   # 兼容 0-1 / 0-100
         max_h = snapshot.get("max_height", 0)
+        first_seal = snapshot.get("first_seal_before_10_pct", 0.0)
 
         # 涨停多 + 炸板低 + 有高度板 = 高分
         zt_score = min(zt / 150.0, 1.0) * 40.0     # 涨停家数贡献最多40分
         br_score = max(0, (1.0 - br * 2.0)) * 30.0  # 炸板率低贡献30分
         h_score = min(max_h / 5.0, 1.0) * 30.0      # 连板高度贡献30分
-        return zt_score + br_score + h_score
+        # 首封时间因子: 早盘封板密集 → 情绪加分 (文章共识: 10点前封板强度高)
+        time_adj = 10.0 if first_seal >= 50 else (-5.0 if 0 < first_seal <= 20 else 0.0)
+        return max(0.0, min(100.0, zt_score + br_score + h_score + time_adj))
 
     @staticmethod
     def _make_citations(symbol: str) -> list[SourceCitation]:

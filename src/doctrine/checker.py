@@ -519,6 +519,16 @@ class DoctrineChecker:
                 return news.upper() in ("NEGATIVE", "BEARISH", "DOWN", "利空", "看空")
             return False
 
+        # r044 涨停次日低开位置解读: 前日涨停且今日低开 → 按位置提示（出货/洗盘）
+        # ctx 字段: limit_up_next_day_gap_down (bool, 由 tactics 注入)
+        if rule.id == "r044":
+            return bool(ctx.get("limit_up_next_day_gap_down", False))
+
+        # r045 弱势突破不追: 突破信号强度 WEAK → 不追入
+        # ctx 字段: breakout_weak (bool, 由 tactics 注入)
+        if rule.id == "r045":
+            return bool(ctx.get("breakout_weak", False))
+
         # 默认不触发
         return False
 
