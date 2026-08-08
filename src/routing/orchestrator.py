@@ -39,6 +39,7 @@ from .investor_mental_model import InvestorMentalModelAnalyzer, InvestorMentalMo
 from .perspective_engine import PerspectiveAnalyzer
 from .anti_bias import AntiBiasEngine
 from .verdict_enforcer import VerdictEnforcer
+from .tactical_overlay import compute_tactical_overlay
 from .mental_model_matcher import MentalModelMatcher
 from .position_monitor import PositionMonitor, PositionSnapshot, MonitorResult  # Phase 11
 from .position_state import PositionStateManager  # Phase 12: 实时持仓 HWM + 动态止盈止损
@@ -90,6 +91,8 @@ class OrchestratorResult:
     timing_advice: Optional[dict] = None
     # MACD+KDJ 五法辅助（interpretation，confidence≤0.5）
     macd_kdj_signal: Optional[dict] = None
+    # P1-8 短线战术叠加 (F1/F2/F3/F4/F5 共识信号注入全链路决策)
+    tactical_overlay: Optional[dict] = None
     # Phase 6+: AI Berkshire 四视角辩论
     debate_result: Optional[dict] = None
     # Phase 6+: 四视角详细观点 (含各大师独立评分/论点/担忧)
@@ -640,6 +643,36 @@ class Orchestrator:
             except Exception as e:
                 logger.debug("Failed to resolve investor preferences: %s", e)
 
+        # ── P1-8 短线战术叠加: F1/F2/F3/F4/F5 共识信号注入全链路决策 ──
+        # 使模拟交易/diagnose 的买入卖出吃到与 tactics 相同的短线战法信号。
+        # 纯 try/except: 数据缺失/失败静默降级, 不阻断主流程。
+        _tactical_overlay: dict = {}
+        try:
+            _ov_minutes = None
+            if not skip_t0:
+                from src.data.schema import Resolution
+                _today = datetime.now().strftime("%Y%m%d")
+                _ov_minutes = self.data.mootdx.get_bars(
+                    symbol, Resolution.MIN_1, start=_today, end=_today
+                )
+            _ov_trades: list = []
+            try:
+                _ov_trades = self.data.get_executive_trades(symbol) or []
+            except Exception as e:
+                logger.debug("overlay exec trades: %s", e)
+            _tactical_overlay = compute_tactical_overlay(
+                symbol, daily_df=_bars_df_cache, minute_bars=_ov_minutes,
+                executive_trades=_ov_trades,
+            )
+            if _tactical_overlay.get("signals"):
+                _ov_note = _tactical_overlay.get("note", "")
+                _ov_delta = _tactical_overlay.get("score_delta", 0)
+                info(f"⚡ 战术叠加: {len(_tactical_overlay['signals'])}信号 调整{_ov_delta:+.0f}分"
+                     + (f" | {_ov_note}" if _ov_note else ""))
+        except Exception as e:
+            logger.debug("tactical overlay compute: %s", e)
+            _tactical_overlay = {}
+
         # Step 1: 军规门禁
         step_start(2, "军规门禁 (41条规则)")
         ctx = {"stock_name": name, **(portfolio or {})}
@@ -689,6 +722,10 @@ class Orchestrator:
                 enabled_rules = {r.id for r in _ALL_RULES}
             enabled_rules -= _excluded_rules
             print(f"⚠️  军规排除生效: {', '.join(sorted(_excluded_rules))} (DOCTRINE_EXCLUDE_RULES)")
+
+        # P1-8 战术叠加 → 军规 ctx 注入 (r044 涨停次日低开 / r045 弱势突破不追)
+        if _tactical_overlay.get("doctrine_flags"):
+            ctx.update(_tactical_overlay["doctrine_flags"])
 
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
@@ -1598,6 +1635,12 @@ class Orchestrator:
             result.blocked_by.append(f"置信度不足 ({verdict.confidence:.2f} < {VerdictEngine.MIN_CONFIDENCE})")
             return result
 
+        # P1-8 战术叠加 → 裁决分调整 (短线信号影响仓位/订单决策)
+        if _tactical_overlay.get("score_delta"):
+            _tac_delta = _tactical_overlay["score_delta"]
+            verdict.score = max(0, min(100, verdict.score + _tac_delta))
+            result.tactical_overlay = _tactical_overlay
+
         # Phase 1: 裁决护栏检查
         l2_violations = self.enforcer.enforce(
             stage="verdict",
@@ -1940,6 +1983,10 @@ class Orchestrator:
         if result.verdict:
             rec_emoji = {"BUY": "🟢", "ADD": "🔵", "HOLD": "🟡", "REDUCE": "🟠", "SELL": "🔴"}.get(result.verdict.recommendation, "⚪")
             print(f"  📊 {rec_emoji} {result.verdict.recommendation}  评分{result.verdict.score:.0f}/100  置信度{result.verdict.confidence:.0%}")
+        if result.tactical_overlay and result.tactical_overlay.get("signals"):
+            _ov_sigs = result.tactical_overlay["signals"]
+            _ov_s = " | ".join(f"{s['name']}({s['impact']:+d})" for s in _ov_sigs)
+            print(f"  ⚡ 战术叠加({result.tactical_overlay.get('score_delta', 0):+.0f}分): {_ov_s}")
         print(f"  📊 Munger: {model_tags}")
         print(f"  📊 {'='*56}")
 
