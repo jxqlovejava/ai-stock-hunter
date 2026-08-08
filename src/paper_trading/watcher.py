@@ -35,6 +35,11 @@ STRONG_BUY_RECS = ("STRONG_BUY", "BUY", "ADD")
 STRONG_SELL_RECS = ("SELL", "STRONG_SELL")
 WEEKLY_BREAK_DAYS = 5  # 周线破位: 收盘跌破 MA20 连续 N 日
 
+# 盘中急动触发器 (2026-08-08): 相对昨收
+FAST_DROP_PCT = -2.0    # 急跌阈值: 盘中跌超 2% 立即触发
+FAST_RALLY_PCT = 5.0    # 急拉阈值: 盘中涨超 5% 立即触发
+FAST_MOVE_COOLDOWN_H = 1  # 急动冷却: 同标的同方向 1 小时内只提醒一次
+
 
 # ══════════════════════════════════════════════════════════════════
 # 数据/工具
@@ -230,6 +235,49 @@ def _check_strong_signal(symbol: str, name: str) -> dict | None:
     return None
 
 
+def _realtime_quote(symbol: str):
+    """实时行情快照。"""
+    from src.data.aggregator import DataAggregator
+    agg = DataAggregator()
+    return agg.get_realtime_quote(symbol, _market_of(symbol))
+
+
+def _check_fast_move(symbol: str, name: str) -> dict | None:
+    """盘中急动检测 (实时价相对昨收): 急跌≤-2% / 急拉≥+5%。
+
+    Returns: {"signal": "buy"|"sell", "reason": str, "price": float, "pct": float} 或 None
+    """
+    try:
+        q = _realtime_quote(symbol)
+        if q is None:
+            return None
+        pct = getattr(q, "change_pct", 0) or 0
+        price = getattr(q, "price", 0) or 0
+        if pct <= FAST_DROP_PCT:
+            return {"signal": "sell", "price": price, "pct": pct,
+                    "reason": f"盘中急跌 {pct:.1f}% (现价{price:.2f})"}
+        if pct >= FAST_RALLY_PCT:
+            return {"signal": "buy", "price": price, "pct": pct,
+                    "reason": f"盘中急拉 {pct:+.1f}% (现价{price:.2f})"}
+        return None
+    except Exception:
+        return None
+
+
+def _check_stop_breach(symbol: str, name: str, stop_price: float) -> bool:
+    """持仓止损实时检测: 现价 ≤ 止损价 → 触发。"""
+    if stop_price <= 0:
+        return False
+    try:
+        q = _realtime_quote(symbol)
+        if q is None:
+            return False
+        price = getattr(q, "price", 0) or 0
+        return price > 0 and price <= stop_price
+    except Exception:
+        return False
+
+
 def _load_dedup() -> dict:
     try:
         return json.loads(DEDUP_PATH.read_text(encoding="utf-8"))
@@ -325,36 +373,58 @@ def mode_intraday(force: bool = False) -> str:
 
 
 def mode_strong(force: bool = False) -> str:
-    """事件驱动强信号: 快筛→触发即推送+执行 (独立于半小时盯盘, 去重24h)。"""
+    """事件驱动强信号: 快筛→触发即推送+执行 (独立于半小时盯盘)。
+
+    三类触发: 缠论买点 / 连续跌破MA20(24h去重) + 盘中急动/止损(1h冷却)。
+    """
     from src.paper_trading.engine import PaperTradingEngine
     watchlist = _load_watchlist()
     checks = _parallel_fast_check(watchlist)
     msgs: list[str] = []
     engine = PaperTradingEngine()
+    state = engine.state
 
+    def _trigger(sym, name, title, trades_lines):
+        nonlocal msgs
+        trades = engine.execute_symbol(sym, name, force=force)
+        lines = [f"{title} {sym} {name}"]
+        if trades:
+            lines.extend(_fmt_trade(t) for t in trades)
+        else:
+            lines.append("  执行后无成交 (仓位/资金/风控限制)")
+        msgs.append("\n".join(lines))
+
+    # ① 缠论买点 / 连续跌破MA20 (24h 去重)
     for c in checks:
         sym, name = c["symbol"], c["name"]
-        # 强信号: 缠论买点(买入) 或 连续跌破MA20(卖出)
         if c["chanlun"]:
-            if not _dedup_ok(sym, "buy"):
-                continue
-            trades = engine.execute_symbol(sym, name, force=force)
-            lines = [f"🚨 强买入信号 {sym} {name}: 缠论买点确认"]
-            if trades:
-                lines.extend(_fmt_trade(t) for t in trades)
-            else:
-                lines.append("  执行后无成交 (仓位/资金/风控限制)")
-            msgs.append("\n".join(lines))
+            if _dedup_ok(sym, "buy"):
+                _trigger(sym, name, "🚨 强买入信号", None)
         elif c["sell_candidate"] and c["below_ma20"]:
-            if not _dedup_ok(sym, "sell"):
-                continue
-            trades = engine.execute_symbol(sym, name, force=force)
-            lines = [f"🚨 强风险信号 {sym} {name}: 连续{WEEKLY_BREAK_DAYS}日跌破MA20(周线破位)"]
-            if trades:
-                lines.extend(_fmt_trade(t) for t in trades)
-            else:
-                lines.append("  执行后无成交 (仓位/资金/风控限制)")
-            msgs.append("\n".join(lines))
+            if _dedup_ok(sym, "sell"):
+                _trigger(sym, name, f"🚨 强风险信号 连续{WEEKLY_BREAK_DAYS}日跌破MA20", None)
+
+    # ② 盘中急动 (实时价, 1h 冷却) — 独立于半小时盯盘
+    for item in watchlist:
+        sym, name = item.get("symbol", ""), item.get("name", "")
+        if not sym:
+            continue
+        fm = _check_fast_move(sym, name)
+        if not fm:
+            continue
+        if not _dedup_ok(sym, f"fast_{fm['signal']}", hours=FAST_MOVE_COOLDOWN_H):
+            continue
+        title = "⚡ 盘中急跌" if fm["signal"] == "sell" else "⚡ 盘中急拉"
+        _trigger(sym, name, f"{title}({fm['pct']:+.1f}%)", None)
+
+    # ③ 持仓止损实时破位 (现价 ≤ 止损价, 1h 冷却)
+    for sym, pos in (state.positions or {}).items():
+        stop = float(getattr(pos, "stop_price", 0) or 0)
+        name = getattr(pos, "name", "") or sym
+        if stop <= 0:
+            continue
+        if _check_stop_breach(sym, name, stop) and _dedup_ok(sym, "stop", hours=1):
+            _trigger(sym, name, f"🛑 触发止损 现价≤止损{stop:.2f}", None)
 
     if msgs:
         return "\n\n".join(msgs)

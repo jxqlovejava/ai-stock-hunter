@@ -10,6 +10,8 @@ from pathlib import Path
 
 from src.paper_trading.watcher import (
     _chanlun_recent,
+    _check_fast_move,
+    _check_stop_breach,
     _dedup_ok,
     _fmt_trade,
     _is_review_day,
@@ -45,6 +47,61 @@ class TestNetPnl:
         gross = (22.0 - 20.0) / 20.0
         assert net_profit < gross
         assert net_profit > 0
+
+
+# ══════════════════════════════════════════════════════════════════
+# 盘中急动触发器 (实时价相对昨收)
+# ══════════════════════════════════════════════════════════════════
+class TestFastMove:
+    def _quote(self, pct, price=20.0):
+        from types import SimpleNamespace
+        return SimpleNamespace(change_pct=pct, price=price)
+
+    def test_fast_drop_triggered(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: self._quote(-2.5))
+        r = w._check_fast_move("600089", "特变电工")
+        assert r and r["signal"] == "sell" and "急跌" in r["reason"]
+
+    def test_fast_rally_triggered(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: self._quote(6.0))
+        r = w._check_fast_move("600089", "特变电工")
+        assert r and r["signal"] == "buy" and "急拉" in r["reason"]
+
+    def test_normal_move_no_trigger(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: self._quote(0.5))
+        assert w._check_fast_move("600089", "特变电工") is None
+
+    def test_borderline_drop_not_triggered(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        # -2.0 是阈值, 恰好 -2.0 触发; -1.9 不触发
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: self._quote(-1.9))
+        assert w._check_fast_move("600089", "特变电工") is None
+
+    def test_quote_none_returns_none(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: None)
+        assert w._check_fast_move("600089", "特变电工") is None
+
+
+class TestStopBreach:
+    def test_breach_triggered(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        from types import SimpleNamespace
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: SimpleNamespace(price=19.0))
+        assert w._check_stop_breach("600089", "特变电工", 19.5) is True
+
+    def test_no_breach(self, monkeypatch):
+        from src.paper_trading import watcher as w
+        from types import SimpleNamespace
+        monkeypatch.setattr(w, "_realtime_quote", lambda s: SimpleNamespace(price=20.5))
+        assert w._check_stop_breach("600089", "特变电工", 19.5) is False
+
+    def test_zero_stop_never_breach(self):
+        from src.paper_trading import watcher as w
+        assert w._check_stop_breach("600089", "特变电工", 0.0) is False
 
 
 # ══════════════════════════════════════════════════════════════════
