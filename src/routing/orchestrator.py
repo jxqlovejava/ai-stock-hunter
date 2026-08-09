@@ -730,13 +730,33 @@ class Orchestrator:
         if _tactical_overlay.get("doctrine_flags"):
             ctx.update(_tactical_overlay["doctrine_flags"])
 
-        # 技术面铁律军规 (r047/r048) — 全链路仅注入可得数据（乖离/低价）
-        # 换手/跳空/量减价平等形态规则主要在 tactics 短线路径注入
+        # 技术面铁律军规 (r046-r050) — 全链路注入，覆盖模拟炒股/analyze/diagnose
         try:
-            from src.doctrine.pattern_features import bias_vs_ma_pct
+            from src.doctrine.pattern_features import (
+                bias_vs_ma_pct, gap_up_three_yang, high_vol_price_flat,
+            )
             ctx["bias_vs_ma20_pct"] = bias_vs_ma_pct(close_series)
             if close_series and close_series[-1]:
                 ctx["current_price"] = float(close_series[-1])
+            # 形态/换手军规 (r046/r049/r050): 与 tactics 同源，从 _bars_df_cache 提取
+            # 覆盖模拟炒股/analyze/diagnose 等全链路路径（不只短线 tactics）
+            if _bars_df_cache is not None and not getattr(_bars_df_cache, "empty", True):
+                _opens = _bars_df_cache["open"].tolist() if "open" in _bars_df_cache.columns else None
+                _vols = _bars_df_cache["volume"].tolist() if "volume" in _bars_df_cache.columns else None
+                ctx["gap_up_three_yang"] = gap_up_three_yang(_opens, close_series)
+                if _vols:
+                    ctx["high_vol_price_flat"] = high_vol_price_flat(close_series, _vols)
+                _tr_col = next(
+                    (c for c in ("turnover_rate", "turnover", "换手率") if c in _bars_df_cache.columns),
+                    None,
+                )
+                if _tr_col is not None and len(_bars_df_cache) > 0:
+                    _tr = _bars_df_cache[_tr_col].iloc[-1]
+                    if _tr is not None:
+                        ctx["turnover_rate_pct"] = float(_tr)
+            # r046 启动日守卫: 涨停日换手放大属正常
+            if quote is not None and getattr(quote, "limit_up", None) and getattr(quote, "price", None):
+                ctx["is_limit_up"] = abs(quote.price / quote.limit_up - 1.0) < 0.005
         except Exception as e:
             logger.debug("orchestrator doctrine pattern features: %s", e)
 
