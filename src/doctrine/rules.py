@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""45 条 A 股专属投资军规。
+"""52 条 A 股专属投资军规。
 
 严重度:
   - block: 触发时硬阻断交易，不可覆盖
@@ -206,5 +206,42 @@ MILITARY_RULES: list[Rule] = [
         "突破强度为弱(量能勉强/幅度不足) → 假突破概率高，不追入，等回踩企稳或二次确认",
         check_field="breakout_weak",
         threshold="突破信号 strength=WEAK",
+    ),
+
+    # ── 技术面铁律军规（借鉴《17年炒股心得》10 铁律，技术性借鉴非业绩背书）──
+    Rule(
+        "r046", RuleCategory.TRADING, "换手率极端",
+        Severity.WARN,
+        "单日换手率 > 40%(非启动首日) → 主力散户剧烈对打，评分上限 HOLD(55)",
+        check_field="turnover_rate_pct",
+        threshold="> 40",
+    ),
+    Rule(
+        "r047", RuleCategory.TRADING, "乖离过大等回调",
+        Severity.WARN,
+        "收盘价偏离 MA20 > 15% → 乖离过大，追入即抬轿，等回调再进",
+        check_field="bias_vs_ma20_pct",
+        threshold="> 15",
+    ),
+    Rule(
+        "r048", RuleCategory.SELECTION, "低价股价值陷阱",
+        Severity.WARN,
+        "股价 < 6 元 → 价值陷阱警示(面值退市/壳股风险)。软标记，非硬排除",
+        check_field="current_price",
+        threshold="< 6",
+    ),
+    Rule(
+        "r049", RuleCategory.TRADING, "跳空三连阳出货形态",
+        Severity.WARN,
+        "连续 3 日跳空高开收阳 → 主力拉高出货的典型加速形态，禁追",
+        check_field="gap_up_three_yang",
+        threshold="连续3日开盘>昨收 且 收>开",
+    ),
+    Rule(
+        "r050", RuleCategory.TRADING, "高位量减价平派发",
+        Severity.WARN,
+        "高位(近60日高点3%内)量缩价平 → 主力派发征兆，减仓离场，别等跌了才反应",
+        check_field="high_vol_price_flat",
+        threshold="近3日均量<60日均量*0.7 且 3日波动<±2%",
     ),
 ]

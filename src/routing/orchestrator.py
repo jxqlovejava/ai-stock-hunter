@@ -677,7 +677,7 @@ class Orchestrator:
             _tactical_overlay = {}
 
         # Step 1: 军规门禁
-        step_start(2, "军规门禁 (41条规则)")
+        step_start(2, "军规门禁 (52条规则)")
         ctx = {"stock_name": name, **(portfolio or {})}
         if investor is not None:
             ctx["tier"] = investor.tier.value
@@ -729,6 +729,16 @@ class Orchestrator:
         # P1-8 战术叠加 → 军规 ctx 注入 (r044 涨停次日低开 / r045 弱势突破不追)
         if _tactical_overlay.get("doctrine_flags"):
             ctx.update(_tactical_overlay["doctrine_flags"])
+
+        # 技术面铁律军规 (r047/r048) — 全链路仅注入可得数据（乖离/低价）
+        # 换手/跳空/量减价平等形态规则主要在 tactics 短线路径注入
+        try:
+            from src.doctrine.pattern_features import bias_vs_ma_pct
+            ctx["bias_vs_ma20_pct"] = bias_vs_ma_pct(close_series)
+            if close_series and close_series[-1]:
+                ctx["current_price"] = float(close_series[-1])
+        except Exception as e:
+            logger.debug("orchestrator doctrine pattern features: %s", e)
 
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:

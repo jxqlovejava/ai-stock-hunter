@@ -95,7 +95,8 @@ class RiskMonitor:
                 severity="CRITICAL" if break_rate > 0.6 else "WARNING",
                 message=(
                     f"炸板潮预警: 涨停{zt_count}家/炸板{break_rate:.0%}/跌停{dt_count}家，"
-                    "打板情绪退潮，追高风险极大"
+                    "打板情绪退潮，追高风险极大。"
+                    "空仓检验(r020): 退潮期不恋战，持仓按「现在还会买入吗」复查，不会就减"
                 ),
                 triggered_at=datetime.now(),
             ))

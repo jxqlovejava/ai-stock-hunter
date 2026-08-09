@@ -1994,6 +1994,38 @@ def run_tactics(
         for s in snapshot.entry_signals
     )
 
+    # 技术面铁律军规 (r046-r050) — 从日线 df/收盘序列计算注入
+    # 数据不足时函数返回 None/False → 不触发（防御性，与 checker 一致）
+    try:
+        from src.doctrine.pattern_features import (
+            bias_vs_ma_pct, gap_up_three_yang, high_vol_price_flat,
+        )
+        doctrine_ctx["bias_vs_ma20_pct"] = bias_vs_ma_pct(_close_series)
+        if snapshot.current_price:
+            doctrine_ctx["current_price"] = float(snapshot.current_price)
+        if _bars_df is not None and not getattr(_bars_df, "empty", True):
+            _opens = _bars_df["open"].tolist() if "open" in _bars_df.columns else None
+            _vols = _bars_df["volume"].tolist() if "volume" in _bars_df.columns else None
+            doctrine_ctx["gap_up_three_yang"] = gap_up_three_yang(_opens, _close_series)
+            if _vols:
+                doctrine_ctx["high_vol_price_flat"] = high_vol_price_flat(_close_series, _vols)
+            # 换手率: 优先 turnover_rate/换手率 列（绝对百分比），次选 turnover（可能为占比）
+            _tr_col = next(
+                (c for c in ("turnover_rate", "turnover", "换手率") if c in _bars_df.columns),
+                None,
+            )
+            if _tr_col is not None and len(_bars_df) > 0:
+                _tr = _bars_df[_tr_col].iloc[-1]
+                if _tr is not None:
+                    doctrine_ctx["turnover_rate_pct"] = float(_tr)
+        # r046 启动日守卫: 涨停日换手放大属正常，不算"主力散户对打"
+        if getattr(_quote, "limit_up", None) and getattr(_quote, "price", None):
+            doctrine_ctx["is_limit_up"] = (
+                abs(_quote.price / _quote.limit_up - 1.0) < 0.005
+            )
+    except Exception as e:
+        logger.debug("tactics doctrine pattern features: %s", e)
+
     dr = orch.doctrine.check(symbol, doctrine_ctx, enabled_rules=enabled_rules)
     # 短线模式: 所有规则降级为 warn, 不 block
     _doctrine_warnings = [r.name for r in dr.warnings + dr.blocked_by]

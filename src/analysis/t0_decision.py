@@ -91,6 +91,7 @@ class T0Result:
     # 形态
     daily_patterns: list[str] = field(default_factory=list)
     intraday_pattern: str = ""
+    early_drop_rebound: bool = False  # 早盘急跌(>5%)且低点在上午 → 反包概率高，勿恐慌割肉
 
     # 综合
     score: int = 0
@@ -414,6 +415,20 @@ class T0DecisionEngine:
             result.day_low, opens[0], result.rebound_from_low,
             prices[-1], result.vwap, result.large_sell_count, result.large_buy_count,
         )
+
+        # 早盘急跌反包检测 (17年心得 ❼): 低点出现在上午 + 从开盘急跌 >5%
+        # → 勿恐慌割肉，午后反包概率高（信息性标注，不改变交易方向）
+        try:
+            low_ts = bars[low_idx].timestamp
+            is_morning = low_ts.hour < 11 or (low_ts.hour == 11 and low_ts.minute <= 30)
+            drop_from_open = (opens[0] - result.day_low) / opens[0] * 100 if opens[0] > 0 else 0
+            if is_morning and drop_from_open > 5.0:
+                result.early_drop_rebound = True
+                result.intraday_pattern += (
+                    f" | 早盘急跌(开盘{drop_from_open:.1f}%)→午后反包概率高，勿恐慌割肉"
+                )
+        except Exception as e:
+            logger.debug("t0 early_drop_rebound: %s", e)
 
     # ------------------------------------------------------------------
     # 形态识别

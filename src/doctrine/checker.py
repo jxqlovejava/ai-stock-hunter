@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """军规核查引擎。
 
-在准入检查之前运行，逐条审查 45 条军规，输出:
+在准入检查之前运行，逐条审查 52 条军规，输出:
   - blocked: 被 block 级军规拦截，不允许继续分析
   - warnings: warn 级军规触发，标注风险
   - infos: info 级军规触发，仅记录
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .pattern_features import is_low_price, turnover_rate_extreme
 from .rules import MILITARY_RULES, Rule, Severity
 
 
@@ -40,7 +41,7 @@ class DoctrineResult:
 
 
 class DoctrineChecker:
-    """45 条军规核查器。
+    """52 条军规核查器。
 
     用法:
         checker = DoctrineChecker()
@@ -528,6 +529,42 @@ class DoctrineChecker:
         # ctx 字段: breakout_weak (bool, 由 tactics 注入)
         if rule.id == "r045":
             return bool(ctx.get("breakout_weak", False))
+
+        # ── 技术面铁律军规 (r046-r050) ──
+        # r046 换手率极端: 单日换手率 > 40%（非启动/涨停日）→ WARN
+        # ctx 字段: turnover_rate_pct (float, 由 tactics 从日线 df 提取) + is_limit_up
+        if rule.id == "r046":
+            tr = ctx.get("turnover_rate_pct")
+            if turnover_rate_extreme(tr):
+                # 启动首日/涨停日换手放大属正常，不算"主力散户对打"
+                return not bool(ctx.get("is_limit_up", False))
+            return False
+
+        # r047 乖离过大等回调: 收盘 vs MA20 乖离 > 15% → WARN
+        # ctx 字段: bias_vs_ma20_pct (float, 由 tactics/orchestrator 注入)
+        if rule.id == "r047":
+            bias = ctx.get("bias_vs_ma20_pct")
+            if bias is None:
+                return False
+            try:
+                return float(bias) > 15.0
+            except (TypeError, ValueError):
+                return False
+
+        # r048 低价股价值陷阱: 股价 < 6 元 → WARN（软标记）
+        # ctx 字段: current_price (float)
+        if rule.id == "r048":
+            return is_low_price(ctx.get("current_price"))
+
+        # r049 跳空三连阳出货形态 → WARN
+        # ctx 字段: gap_up_three_yang (bool, 由 tactics 从 open/close 序列计算)
+        if rule.id == "r049":
+            return bool(ctx.get("gap_up_three_yang", False))
+
+        # r050 高位量减价平派发 → WARN
+        # ctx 字段: high_vol_price_flat (bool, 由 tactics 从 close/volume 序列计算)
+        if rule.id == "r050":
+            return bool(ctx.get("high_vol_price_flat", False))
 
         # 默认不触发
         return False

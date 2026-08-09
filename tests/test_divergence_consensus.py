@@ -205,7 +205,9 @@ class TestDivergenceConsensusAnalyzer:
         c, v, h, l = _synth_consensus()
         result = analyze_divergence_consensus(c, v, h, l)
         assert result.phase == DivergenceConsensusPhase.CONSENSUS
-        assert result.score == 75.0
+        # 缩量创新高(末根量比<0.5前窗) → 触发新高考加分项（基准 75 + 3）
+        assert result.new_high_control is True
+        assert result.score == 78.0
         assert result.consecutive_shrinking >= 3
 
     def test_detect_consensus_breaking(self):

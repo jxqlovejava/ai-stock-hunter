@@ -72,6 +72,7 @@ class DivergenceConsensusResult:
     consecutive_shrinking: int = 0  # 连续缩量 bar 数
     detection_window: int = 0  # 检测使用的 bar 数
     summary: str = ""
+    new_high_control: bool = False  # 缩量创新高=主力高度控盘（17年心得 ❾ 加分项）
 
     @property
     def state(self) -> str:
@@ -90,6 +91,7 @@ class DivergenceConsensusResult:
             "consecutive_shrinking": self.consecutive_shrinking,
             "detection_window": self.detection_window,
             "summary": self.summary,
+            "new_high_control": self.new_high_control,
         }
 
 
@@ -224,20 +226,37 @@ class DivergenceConsensusAnalyzer:
             recent_vol = float(np.mean(v[start:end_idx + 1]))
             vol_ratio = (recent_vol / avg_vol) if avg_vol > 1e-9 else 1.0
 
+            # 缩量创新高 = 主力高度控盘（17年心得 ❾）→ 加分项
+            new_high_control = False
+            if len(c) >= self.LOOKBACK_BARS and c[-1] > 0:
+                if c[-1] >= max(c[-self.LOOKBACK_BARS:-1]):
+                    prior_avg_vol = float(np.mean(v[-self.LOOKBACK_BARS:-1]))
+                    if prior_avg_vol > 1e-9 and v[-1] < 0.5 * prior_avg_vol:
+                        new_high_control = True
+
+            signals = [f"缩量连涨{stretch}日，卖盘枯竭，一致状态"]
+            score = _PHASE_SCORES[DivergenceConsensusPhase.CONSENSUS]
+            summary = (
+                f"连续{stretch}日缩量上涨，总涨幅{total_rise:.1f}%，"
+                f"成交量萎缩至均量的{vol_ratio:.1%}。"
+                f"卖盘极度枯竭，多头不费吹灰之力，一致状态。"
+            )
+            if new_high_control:
+                signals.append("缩量创新高=主力高度控盘，吃肉概率大(加分)")
+                score = min(score + 3.0, 85.0)
+                summary += " 当前缩量创新高，主力高度控盘，上涨质量优。"
+
             return DivergenceConsensusResult(
                 phase=DivergenceConsensusPhase.CONSENSUS,
-                score=_PHASE_SCORES[DivergenceConsensusPhase.CONSENSUS],
+                score=score,
                 confidence=min(0.85, 0.5 + stretch * 0.1),
                 volume_ratio=round(vol_ratio, 2),
                 price_change_net=round(total_rise, 2),
                 consecutive_shrinking=stretch,
                 detection_window=stretch,
-                signals=[f"缩量连涨{stretch}日，卖盘枯竭，一致状态"],
-                summary=(
-                    f"连续{stretch}日缩量上涨，总涨幅{total_rise:.1f}%，"
-                    f"成交量萎缩至均量的{vol_ratio:.1%}。"
-                    f"卖盘极度枯竭，多头不费吹灰之力，一致状态。"
-                ),
+                signals=signals,
+                summary=summary,
+                new_high_control=new_high_control,
             )
 
         return None
