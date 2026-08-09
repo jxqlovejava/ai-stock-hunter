@@ -7,6 +7,14 @@ from src.macro.fiscal import FiscalAnalyzer, FiscalRegime
 from src.macro.cycle_valuer import CycleAnalyzer, ValuationAnalyzer, CyclePhase, ValuationResult
 from src.macro.market_regime import RegimeClassifier, MarketRegime, RegimeProfile
 from src.macro.cross_asset import CrossAssetAnalyzer, CrossAssetProfile
+from src.macro.debt_cycle import (
+    DebtCycleAnalyzer,
+    DebtCyclePhase,
+    DebtCycleResult,
+    DollarTideAnalyzer,
+    DollarTideSignal,
+    analyze_debt_cycle,
+)
 from src.macro.output import (
     IndicatorSnapshot,
     MacroSystemizedOutput,
@@ -19,5 +27,7 @@ __all__ = [
     "CycleAnalyzer", "ValuationAnalyzer", "CyclePhase", "ValuationResult",
     "RegimeClassifier", "MarketRegime", "RegimeProfile",
     "CrossAssetAnalyzer", "CrossAssetProfile",
+    "DebtCycleAnalyzer", "DebtCyclePhase", "DebtCycleResult",
+    "DollarTideAnalyzer", "DollarTideSignal", "analyze_debt_cycle",
     "IndicatorSnapshot", "MacroSystemizedOutput", "QUADRANT_SECTOR_MAP",
 ]

@@ -244,4 +244,38 @@ MILITARY_RULES: list[Rule] = [
         check_field="high_vol_price_flat",
         threshold="近3日均量<60日均量*0.7 且 3日波动<±2%",
     ),
+
+    # ── 季节性风险窗口军规（借鉴自媒体《A股每年都有4个危险的时间窗口》T3 断言）──
+    # 软性落地：全部 WARN，不硬阻断；配合 positioning 的 seasonal_discount 折扣。
+    # 数据源：src/calendar/seasonal_windows.py 纯日期逻辑，经 orchestrator 注入 ctx flag。
+    Rule(
+        "r051", RuleCategory.RISK, "年末流动性枯竭窗口",
+        Severity.WARN,
+        "12月中下旬-1月初: 银行年终结算+公募锁定排名+私募赎回+游资休息 → 只有卖盘没有买盘，"
+        "非核心主线清仓，阳线多为诱多陷阱",
+        check_field="seasonal_year_end_window",
+        threshold="当前处于 12/15-1/10",
+    ),
+    Rule(
+        "r052", RuleCategory.RISK, "财报业绩双杀窗口",
+        Severity.WARN,
+        "4月底: 年报+一季报披露截止，拖到最后披露的非雷即坑，可能戴维斯双杀；"
+        "回避尚未披露业绩的题材股",
+        check_field="seasonal_april_window",
+        threshold="当前处于 4/15-4/30",
+    ),
+    Rule(
+        "r053", RuleCategory.RISK, "中报证伪窗口",
+        Severity.WARN,
+        "8月底: 中报落地检验上半年故事，逻辑证伪 → 机构杀估值；去弱留强，只做业绩超预期真龙头",
+        check_field="seasonal_august_window",
+        threshold="当前处于 8/20-8/31",
+    ),
+    Rule(
+        "r054", RuleCategory.RISK, "季末获利了结窗口",
+        Severity.WARN,
+        "10月底: 三季报后全年业绩大局已定，机构保年终奖调仓兑现 → 主力主动撤退，不赌反弹",
+        check_field="seasonal_october_window",
+        threshold="当前处于 10/20-10/31",
+    ),
 ]

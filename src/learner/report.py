@@ -48,6 +48,8 @@ class LearningReport:
     agreement_rate: float = 0.0
     top_disagreement_reasons: list[str] = field(default_factory=list)
     param_adjustments: list[dict] = field(default_factory=list)
+    # P2-2: 盈亏归因分布 (attribution.value → count)
+    attribution_counts: dict[str, int] = field(default_factory=dict)
 
     # 风险与建议
     risk_alerts: list[str] = field(default_factory=list)
@@ -119,6 +121,17 @@ class LearningReport:
                     f"  - {adj.get('param', '?')}: {adj.get('old', 0)} → {adj.get('new', 0)} "
                     f"({adj.get('reason', '')})"
                 )
+
+        # P2-2: 盈亏归因分布（技术 vs 运气 / 行情 vs 操作）
+        if self.attribution_counts:
+            lines.append("- 盈亏归因分布:")
+            for at, cnt in sorted(self.attribution_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  - {at}: {cnt} 笔")
+            lucky = self.attribution_counts.get("lucky_market", 0) + self.attribution_counts.get("mixed", 0)
+            if self.total_feedback > 0 and lucky:
+                ratio = lucky / self.total_feedback
+                if ratio > 0.4:
+                    lines.append(f"  - ⚠️ 运气驱动占比 {ratio:.0%} — 警惕把运气当技术")
 
         lines.append("")
         lines.append("## ⚠️ 风险提示")
@@ -230,6 +243,7 @@ class ReportGenerator:
             report.total_feedback = getattr(feedback_summary, "total", 0)
             report.agreement_rate = getattr(feedback_summary, "agreement_rate", 0.0)
             report.top_disagreement_reasons = getattr(feedback_summary, "lessons", []) or []
+            report.attribution_counts = dict(getattr(feedback_summary, "attribution_counts", {}) or {})
 
             for param, changes in (getattr(feedback_summary, "total_adjustments", {}) or {}).items():
                 for c in changes:

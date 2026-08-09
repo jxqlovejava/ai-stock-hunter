@@ -54,6 +54,25 @@ class MistakeType(Enum):
         return cls.NONE
 
 
+class AttributionType(Enum):
+    """盈亏归因分类 — 技术 vs 运气 / 行情 vs 操作（借鉴自媒体《复盘6步法》）。
+
+    复盘必须区分"盈利是技术还是运气"、"亏损是行情还是操作"，
+    杜绝把运气当技术、把操作失误赖给行情（避免重复犯同样的错）。
+    """
+    SYSTEM_EXECUTED = "system_executed"  # 严格执行计划 = 技术
+    LUCKY_MARKET = "lucky_market"        # 赌对行情 = 运气
+    SYSTEMIC_LOSS = "systemic_loss"      # 行情系统性杀跌（非操作问题）
+    EXECUTION_ERROR = "execution_error"  # 操作失误（追高 / 不设止损 / 心存侥幸）
+    MIXED = "mixed"                      # 技术 + 运气兼有
+    UNKNOWN = "unknown"                  # 未分类
+
+    @classmethod
+    def _missing_(cls, value):
+        """未知值回退到 UNKNOWN，保证旧数据向后兼容。"""
+        return cls.UNKNOWN
+
+
 # 自由文本 → MistakeType 的关键词映射（用于 deviation_reason / 卖出原因 分类）
 _MISTAKE_KEYWORDS: dict[MistakeType, tuple[str, ...]] = {
     MistakeType.CHASED_MOVE: (
@@ -155,6 +174,8 @@ class Feedback:
     mistake_type: MistakeType = MistakeType.NONE    # 错误类型
     symbol: str = ""                                # 标的代码（交易反馈用）
     result: str = ""                                # 结果: win / loss / flat
+    # P2-2: 盈亏归因（技术 vs 运气 / 行情 vs 操作，向后兼容默认 UNKNOWN）
+    attribution: AttributionType = AttributionType.UNKNOWN
 
 
 @dataclass
@@ -175,6 +196,8 @@ class FeedbackSummary:
     period_end: str = ""
     # P2-1: 错误类型分布 (mistake_type.value → count)
     mistake_types: dict[str, int] = field(default_factory=dict)
+    # P2-2: 盈亏归因分布 (attribution.value → count)
+    attribution_counts: dict[str, int] = field(default_factory=dict)
 
 
 class FeedbackCollector:
@@ -312,6 +335,7 @@ class FeedbackCollector:
         direction: str,
         result: str,
         mistake_type: MistakeType = MistakeType.NONE,
+        attribution: AttributionType = AttributionType.UNKNOWN,
         lesson: str = "",
         actual_return: Optional[float] = None,
         holding_days: Optional[int] = None,
@@ -325,6 +349,7 @@ class FeedbackCollector:
             direction: 交易方向 (BUY / SELL / HOLD)
             result: 结果 (win / loss / flat)
             mistake_type: 结构化错误分类
+            attribution: 盈亏归因（技术 vs 运气 / 行情 vs 操作）
             lesson: 具体教训（须通过 validate_lesson_specificity）
             actual_return: 实际收益率（小数）
             holding_days: 持仓天数
@@ -344,6 +369,7 @@ class FeedbackCollector:
             symbol=symbol,
             result=result,
             mistake_type=mistake_type,
+            attribution=attribution,
             strategy_name=strategy_name,
         ))
 
@@ -405,6 +431,12 @@ class FeedbackCollector:
             mt = f.mistake_type.value if f.mistake_type else "none"
             mistake_counts[mt] = mistake_counts.get(mt, 0) + 1
 
+        # P2-2: 盈亏归因分布（技术 vs 运气 / 行情 vs 操作）
+        attribution_counts: dict[str, int] = {}
+        for f in items:
+            at = f.attribution.value if f.attribution else "unknown"
+            attribution_counts[at] = attribution_counts.get(at, 0) + 1
+
         # 按策略分组
         by_strategy: dict[str, dict] = {}
         for f in items:
@@ -432,6 +464,7 @@ class FeedbackCollector:
             period_start=dates[0] if dates else "",
             period_end=dates[-1] if dates else "",
             mistake_types=mistake_counts,
+            attribution_counts=attribution_counts,
         )
 
     def get_by_signal(self, signal_id: str) -> list[Feedback]:
@@ -502,6 +535,7 @@ class FeedbackCollector:
                 "mistake_type": f.mistake_type.value if f.mistake_type else "none",
                 "symbol": f.symbol,
                 "result": f.result,
+                "attribution": f.attribution.value if f.attribution else "unknown",
             })
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -531,6 +565,7 @@ class FeedbackCollector:
                 mistake_type=MistakeType(item.get("mistake_type", "none")),
                 symbol=item.get("symbol", ""),
                 result=item.get("result", ""),
+                attribution=AttributionType(item.get("attribution", "unknown")),
             )
             self._feedbacks.append(fb)
             # Restore counter from ID

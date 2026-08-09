@@ -171,6 +171,18 @@ class PositioningEngine:
         if oversold_discount < 1.0:
             target_d *= D(str(oversold_discount))
 
+        # Phase 13b: 季节性危险窗口仓位折扣（软性，仿 oversold_discount）
+        # 数据源: src/calendar/seasonal_windows.py 纯日期逻辑；4 窗口折扣乘积，下限 0.6。
+        # 自媒体断言(T3)，默认轻微折扣，经 backtest/seasonality.py 验证后再调强。
+        try:
+            from src.calendar.seasonal_windows import seasonal_risk_overlay
+
+            seasonal_discount = seasonal_risk_overlay().discount
+            if seasonal_discount < 1.0:
+                target_d *= D(str(seasonal_discount))
+        except Exception:
+            pass  # 季节性折扣失败不阻断仓位计算
+
         # 双创折扣
         if is_gem:
             gem_discount = D("0.8")

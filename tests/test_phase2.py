@@ -11,7 +11,7 @@ import pytest
 class TestDoctrine:
     def test_all_rules_count(self):
         from src.doctrine.rules import MILITARY_RULES
-        assert len(MILITARY_RULES) == 52   # 45 基础 + r044/r045 + 技术面铁律 r046-r050
+        assert len(MILITARY_RULES) == 56   # 52 + 季节性风险窗口 r051-r054
 
     def test_rule_categories(self):
         from src.doctrine.rules import MILITARY_RULES, Severity

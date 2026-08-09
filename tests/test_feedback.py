@@ -333,3 +333,75 @@ class TestReportGenerator:
         report = gen.generate(signal_quality=FakeSignalQuality())
         rendered = report.render()
         assert "胜率偏低" in rendered or "风险提示" in rendered
+
+
+# ---------------------------------------------------------------------------
+# P2-2 盈亏归因标签（技术 vs 运气 / 行情 vs 操作）
+# ---------------------------------------------------------------------------
+
+
+class TestAttribution:
+    def test_record_trade_result_sets_attribution(self):
+        from src.learner.feedback import AttributionType, FeedbackCollector
+        collector = FeedbackCollector(db_path=":memory:")
+        fb = collector.record_trade_result(
+            "600519", "BUY", "win",
+            attribution=AttributionType.SYSTEM_EXECUTED,
+            lesson="严格按计划回踩 8 日线企稳进场",
+        )
+        assert fb.attribution == AttributionType.SYSTEM_EXECUTED
+
+    def test_default_attribution_unknown(self):
+        from src.learner.feedback import AttributionType, FeedbackCollector
+        collector = FeedbackCollector(db_path=":memory:")
+        fb = collector.record_trade_result("000001", "BUY", "loss", lesson="没设止损")
+        assert fb.attribution == AttributionType.UNKNOWN
+
+    def test_attribution_persists_roundtrip(self):
+        from src.learner.feedback import AttributionType, FeedbackCollector
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "feedback.json")
+            c1 = FeedbackCollector(db_path=path)
+            c1.record_trade_result(
+                "600519", "SELL", "win",
+                attribution=AttributionType.LUCKY_MARKET,
+                lesson="赌对板块轮动行情",
+            )
+            c2 = FeedbackCollector(db_path=path)
+            fb = c2._feedbacks[0]
+            assert fb.attribution == AttributionType.LUCKY_MARKET
+
+    def test_backward_compat_old_json_no_attribution(self):
+        """旧数据无 attribution 字段 → 加载为 UNKNOWN，不报错。"""
+        import json
+        from src.learner.feedback import AttributionType, FeedbackCollector
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "feedback.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump([
+                    {"feedback_id": "TRADE_000001", "signal_id": "TRADE_000001",
+                     "type": "annotate", "reason": "旧数据", "user_action": "BUY",
+                     "param_name": "", "old_value": None, "new_value": None,
+                     "actual_return": None, "holding_days": None, "lesson": "旧数据",
+                     "created_at": "", "strategy_name": "", "strategy_version": "",
+                     "mistake_type": "none", "symbol": "000001", "result": "win"},
+                ], f, ensure_ascii=False)
+            c = FeedbackCollector(db_path=path)
+            assert c._feedbacks[0].attribution == AttributionType.UNKNOWN
+
+    def test_summary_aggregates_attribution_counts(self):
+        from src.learner.feedback import AttributionType, FeedbackCollector
+        collector = FeedbackCollector(db_path=":memory:")
+        collector.record_trade_result("600519", "BUY", "win", attribution=AttributionType.SYSTEM_EXECUTED, lesson="a")
+        collector.record_trade_result("600519", "BUY", "win", attribution=AttributionType.LUCKY_MARKET, lesson="b")
+        collector.record_trade_result("000001", "BUY", "loss", attribution=AttributionType.EXECUTION_ERROR, lesson="c")
+        s = collector.summary()
+        assert s.attribution_counts == {
+            "system_executed": 1,
+            "lucky_market": 1,
+            "execution_error": 1,
+        }
+
+    def test_unknown_value_falls_back_to_unknown(self):
+        from src.learner.feedback import AttributionType
+        assert AttributionType("no_such_value") == AttributionType.UNKNOWN

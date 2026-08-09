@@ -270,6 +270,7 @@ class RiskControlEngine:
             self._check_gross_exposure(weight, portfolio, position_limits),
             self._check_net_exposure(weight, signal, portfolio, position_limits),
             self._check_black_swan(signal, market, position_limits),
+            self._check_seasonal(),  # 季节性危险窗口软标记
             self._check_cooldown(signal, position_limits),  # P0-3: 连亏冷却
             self._check_drawdown(weight, signal, skip_risk, position_limits),
             self._check_stop_loss(weight, signal, portfolio, position_limits),
@@ -480,6 +481,26 @@ class RiskControlEngine:
                 float(allowed),
             )
         return _RuleResult(RiskVerdict.APPROVE, [])
+
+    # ------------------------------------------------------------------
+    # 规则 6a: 季节性危险窗口 (借鉴自媒体《A股每年4个危险时间窗口》T3)
+    # ------------------------------------------------------------------
+    def _check_seasonal(self) -> _RuleResult:
+        """季节性风险窗口 — 仅作可见风险标记，不改变仓位。
+
+        仓位折扣由 positioning.seasonal_discount 统一应用，这里只把窗口风险
+        带进风控输出（APPROVE + violations），避免双重扣减。
+        """
+        try:
+            from src.calendar.seasonal_windows import seasonal_risk_overlay
+
+            overlay = seasonal_risk_overlay()
+        except Exception:
+            return _RuleResult(RiskVerdict.APPROVE, [])
+        if not overlay.active_windows:
+            return _RuleResult(RiskVerdict.APPROVE, [])
+        violations = [f"SEASONAL: {note}" for note in overlay.notes]
+        return _RuleResult(RiskVerdict.APPROVE, violations)
 
     # ------------------------------------------------------------------
     # 规则 6: 黑天鹅熔断

@@ -635,6 +635,154 @@ def _apply_limit_up_next_day(snapshot: "TacticalSnapshot", signal: dict) -> None
         })
 
 
+# 主力抢筹形态阈值（借鉴自媒体《一种模式1万遍之：主力抢筹》T3，参考信号参数）
+MF_MIN_BARS = 30          # 最少 K 线根数
+MF_LOW_POS_RATIO = 0.65   # 低位 = 现价 < 60日高点 × 0.65
+MF_HIGH_POS_RATIO = 0.90  # 高位 = 现价 ≥ 60日高点 × 0.90
+MF_BIG_YANG_PCT = 0.03    # 大阳 = 涨幅 ≥ 3%
+MF_VOL_SPIKE = 2.0        # 放量 = 量 ≥ 2 × 5日均量
+MF_SHADOW_BODY_RATIO = 0.3  # 冲高回落 = 上影 ≥ 0.3 × 实体
+MF_WASH_BODY_PCT = 0.015  # 洗盘小K实体 < 1.5%
+MF_WASH_VOL_RATIO = 0.8   # 洗盘缩量 < 0.8 ×
+MF_DIST_VOL_RATIO = 1.5   # 出货放量 ≥ 1.5 ×
+MF_DIST_FLAT_PCT = 0.01   # 出货滞涨 |涨跌| < 1%
+MF_PULLBACK_HOLD = 0.98   # 回踩 MA8 收位 ≥ MA8 × 0.98
+MF_PULLBACK_LOW = 0.97    # 回踩低点 ≥ MA8 × 0.97
+
+
+def _main_force_accumulate_signal(df, symbol: str = "") -> dict:
+    """主力抢筹形态识别（借鉴自媒体《一种模式1万遍之：主力抢筹》T3，参考信号）。
+
+    检测序列: 低位放量冲高回落大阳(建仓) → 缩量小K洗盘 → 低位5连小阳(偷偷加仓)
+              → 回踩MA8企稳 + 倍量突破左侧高点(上车点) → 高位放量滞涨(出货警告)。
+    仅作参考信号（notes），不改变任何评分/confidence。
+
+    Args:
+        df: 日线 DataFrame（列 open/high/low/close/volume，date 索引）。
+    Returns:
+        dict: {matched, stage, description, confidence, breakout_price}
+    """
+    out: dict = {"matched": False, "stage": "none", "description": "", "confidence": 0.0, "breakout_price": None}
+    if df is None or len(df) < MF_MIN_BARS:
+        return out
+    closes = [float(x) for x in df["close"].tolist() if x is not None]
+    opens = [float(x) for x in df["open"].tolist() if x is not None]
+    highs = [float(x) for x in df["high"].tolist() if x is not None]
+    lows = [float(x) for x in df["low"].tolist() if x is not None]
+    vols = [float(x) for x in df["volume"].tolist() if x is not None]
+    n = len(closes)
+    if n < MF_MIN_BARS:
+        return out
+
+    def _vol_ma(idx: int, window: int = 5) -> float:
+        seg = vols[max(0, idx - window):idx]
+        return sum(seg) / len(seg) if seg else 0.0
+
+    def _ma_series(idx: int, window: int = 8) -> float:
+        seg = closes[max(0, idx - window):idx]
+        return sum(seg) / len(seg) if seg else closes[idx]
+
+    prev_close = closes[-2] if n >= 2 else closes[-1]
+    c, o, h, l, v = closes[-1], opens[-1], highs[-1], lows[-1], vols[-1]
+    vol_ma5 = _vol_ma(n - 1)
+    ma8 = _ma_series(n - 1)
+    if prev_close <= 0:
+        return out
+
+    # 位置判定: 低位 = 现价 < 60日高点 × MF_LOW_POS_RATIO; 高位 = 现价 ≥ 60日高点 × MF_HIGH_POS_RATIO
+    high60 = max(highs[-60:]) if n >= 60 else max(highs)
+    low_position = c < high60 * MF_LOW_POS_RATIO
+    high_position = c >= high60 * MF_HIGH_POS_RATIO
+
+    # 1) 建仓: 低位 + 放量(≥MF_VOL_SPIKE×5日均量) + 大阳(≥MF_BIG_YANG_PCT) + 冲高回落(上影≥MF_SHADOW_BODY_RATIO×实体)
+    body = c - o
+    body_pct = body / prev_close
+    upper_shadow = h - c
+    if (
+        low_position and body > 0 and body_pct >= MF_BIG_YANG_PCT
+        and vol_ma5 > 0 and v >= MF_VOL_SPIKE * vol_ma5
+        and upper_shadow >= abs(body) * MF_SHADOW_BODY_RATIO
+    ):
+        out.update(
+            matched=True, stage="accumulate_start",
+            description=f"低位放量冲高回落大阳(量≈{v / vol_ma5:.1f}×均量, 上影{upper_shadow:.2f}) — 主力建仓信号",
+            confidence=0.55,
+        )
+        return out
+
+    # 2) 洗盘: 低位近3日缩量小K（小实体 + 任一日量<MF_WASH_VOL_RATIO×）
+    recent_bodies = [
+        abs(opens[i] - closes[i]) / closes[i - 1] if closes[i - 1] else 0
+        for i in range(n - 3, n)
+    ]
+    recent_vol_ratio = [vols[i] / _vol_ma(i) if _vol_ma(i) else 1 for i in range(n - 3, n)]
+    if (
+        low_position
+        and all(b < MF_WASH_BODY_PCT for b in recent_bodies)
+        and any(r < MF_WASH_VOL_RATIO for r in recent_vol_ratio)
+    ):
+        out.update(
+            matched=True, stage="washout",
+            description="低位缩量小K洗盘(主力惜售, 用时间换空间)",
+            confidence=0.5,
+        )
+        return out
+
+    # 3) 偷偷加仓: 低位连续5日小阳上涨
+    if n >= 6 and low_position:
+        last5_rising = all(closes[i] > closes[i - 1] for i in range(n - 5, n))
+        last5_yang = all(closes[i] > opens[i] for i in range(n - 5, n))
+        if last5_rising and last5_yang:
+            out.update(
+                matched=True, stage="accumulate_stealth",
+                description="低位连续5天小阳上涨(小额多次回流加仓) — 主升浪前奏",
+                confidence=0.5,
+            )
+            return out
+
+    # 4) 突破上车点: 回踩MA8企稳(收不低于MA8×MF_PULLBACK_HOLD) + 倍量(≥MF_VOL_SPIKE×)突破左侧高点
+    left_high = max(highs[-25:-5]) if n >= 25 else max(highs[:-5])
+    pullback_held = ma8 > 0 and c >= ma8 * MF_PULLBACK_HOLD and l >= ma8 * MF_PULLBACK_LOW
+    breakout = vol_ma5 > 0 and v >= MF_VOL_SPIKE * vol_ma5 and c > left_high and body > 0
+    if pullback_held and breakout:
+        out.update(
+            matched=True, stage="breakout",
+            description=f"回踩MA8({ma8:.2f})企稳 + 倍量突破左侧高点({left_high:.2f}) — 上车点",
+            confidence=0.6, breakout_price=float(c),
+        )
+        return out
+
+    # 5) 出货警告: 高位 + 放量(≥MF_DIST_VOL_RATIO×) + 滞涨(<MF_DIST_FLAT_PCT)
+    if high_position and vol_ma5 > 0 and v >= MF_DIST_VOL_RATIO * vol_ma5 and abs(body_pct) < MF_DIST_FLAT_PCT:
+        out.update(
+            matched=True, stage="distribution",
+            description=f"高位放量滞涨(量≈{v / vol_ma5:.1f}×均量, 涨跌{body_pct * 100:.1f}%) — 主力出货嫌疑",
+            confidence=0.55,
+        )
+        return out
+
+    return out
+
+
+def _apply_main_force_accumulate(snapshot: "TacticalSnapshot", signal: dict) -> None:
+    """主力抢筹参考信号挂接 — 只加 notes，突破上车点可选加低置信入场信号，不改任何评分。"""
+    if not signal or not signal.get("matched"):
+        return
+    desc = signal.get("description", "")
+    if not desc:
+        return
+    snapshot.notes.append(f"[P1-9] 主力抢筹: {desc}")
+    if signal.get("stage") == "breakout" and signal.get("breakout_price"):
+        # 上车点观察级入场提示（低置信 0.4，供回踩二次确认），不改已有信号
+        snapshot.entry_signals.append({
+            "type": "MAIN_FORCE_BREAKOUT",
+            "description": f"主力抢筹突破左高 — {desc}",
+            "zone_low": float(signal["breakout_price"]),
+            "zone_high": float(signal["breakout_price"]),
+            "confidence": 0.4, "strength": "NORMAL",
+        })
+
+
 def _seal_time_signal(minute_bars, prev_close: float, symbol: str = "") -> dict:
     """P1-8 个股今日首封时间判定 (文章共识 @LuBtc888 钢铁纪律 ⑥⑦)。
 
@@ -1906,6 +2054,13 @@ def run_tactics(
         _enhance_market_state(snapshot, _index_bars, _close_series, _sentiment, _bars_df)
     except Exception as e:
         logger.debug("tactics market enhance: %s", e)
+
+    # ── P1-9 主力抢筹形态参考信号 (借鉴自媒体《一种模式1万遍之：主力抢筹》T3) ──
+    # 只加 notes，不改评分；突破上车点可选加低置信入场信号。
+    try:
+        _apply_main_force_accumulate(snapshot, _main_force_accumulate_signal(_bars_df, symbol))
+    except Exception as e:
+        logger.debug("tactics main-force accumulate: %s", e)
 
     # ── P1-8 封板/尾盘日内信号 (打板时机 + 次日预期; 依赖 _minute_bars) ──
     try:

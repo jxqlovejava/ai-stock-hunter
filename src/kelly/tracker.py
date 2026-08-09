@@ -35,6 +35,8 @@ class TradeRecord:
     shares: int = 0
     direction: str = "LONG"  # LONG / SHORT
     notes: str = ""
+    # P2-2: 盈亏归因（技术 vs 运气 / 行情 vs 操作），向后兼容默认 unknown
+    attribution: str = "unknown"
 
     @property
     def return_pct(self) -> float:
@@ -62,6 +64,7 @@ class TradeRecord:
             "shares": self.shares,
             "direction": self.direction,
             "notes": self.notes,
+            "attribution": self.attribution,
         }
 
     @classmethod
@@ -75,6 +78,7 @@ class TradeRecord:
             shares=int(d.get("shares", 0)),
             direction=d.get("direction", "LONG"),
             notes=d.get("notes", ""),
+            attribution=d.get("attribution", "unknown"),
         )
 
 

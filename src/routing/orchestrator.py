@@ -431,6 +431,7 @@ class Orchestrator:
         _close_series_cache: list[float] = []
         _fin_cache: list[dict] = []
         _macro_regime = None
+        _debt_cycle = None
         _nb_profile = None
         _sector_flow = None
         _bt_profile = None
@@ -474,6 +475,15 @@ class Orchestrator:
             nonlocal _macro_regime
             try:
                 _macro_regime = self._get_macro_regime()
+            except Exception:
+                pass
+
+        def _io_debt_cycle():
+            nonlocal _debt_cycle
+            try:
+                from src.macro.debt_cycle import DebtCycleAnalyzer
+
+                _debt_cycle = DebtCycleAnalyzer().analyze()
             except Exception:
                 pass
 
@@ -530,6 +540,7 @@ class Orchestrator:
         io_tasks = {
             "bars+fin": _io_bars_and_fin,
             "macro": _io_macro,
+            "debt_cycle": _io_debt_cycle,
             "northbound": _io_northbound,
             "sector_flow": _io_sector_flow,
             "block_trade": _io_block_trade,
@@ -760,6 +771,21 @@ class Orchestrator:
         except Exception as e:
             logger.debug("orchestrator doctrine pattern features: %s", e)
 
+        # 季节性风险窗口军规 (r051-r054) — 纯日期逻辑，经 src/calendar/seasonal_windows.py 注入
+        try:
+            from src.calendar.seasonal_windows import (
+                disclosure_lateness_note,
+                seasonal_flag_map,
+            )
+
+            ctx.update(seasonal_flag_map())
+            # 4月窗口内：财报披露越晚越雷（T3 断言，仅作风险提示；仅在 4 月触发网络调用）
+            _lateness = disclosure_lateness_note(symbol)
+            if _lateness:
+                ctx["disclosure_lateness_note"] = _lateness
+        except Exception as e:
+            logger.debug("orchestrator seasonality ctx: %s", e)
+
         doctrine_result = self.doctrine.check(symbol, ctx, enabled_rules=enabled_rules)
         if not doctrine_result.passed:
             result.passed = False
@@ -945,6 +971,18 @@ class Orchestrator:
                 "quadrant": macro_regime.quadrant.value,
                 "confidence": macro_regime.confidence,
             }
+
+        # ---- 注入债务周期阶段 + 美元潮汐（达利欧框架，T3 转述 + 真实数据）----
+        if _debt_cycle is not None:
+            enriched_macro["debt_cycle_phase"] = _debt_cycle.phase.value
+            enriched_macro["debt_cycle_phase_label"] = _debt_cycle.phase_label
+            enriched_macro["debt_cycle_confidence"] = _debt_cycle.confidence
+            enriched_macro["debt_cycle_implication"] = _debt_cycle.implication
+            enriched_macro["dollar_tide_direction"] = _debt_cycle.dollar_tide.tide_direction
+            enriched_macro["dollar_tide_transmission"] = _debt_cycle.dollar_tide.transmission
+            enriched_macro["dollar_tide_us10y"] = _debt_cycle.dollar_tide.us10y
+            enriched_macro["dollar_tide_dxy"] = _debt_cycle.dollar_tide.dxy
+            enriched_macro["dollar_tide_usdcny"] = _debt_cycle.dollar_tide.usdcny
 
         # ---- 注入板块资金流向 ----
         if sector_flow is not None and not sector_flow.empty:

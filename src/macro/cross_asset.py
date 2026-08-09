@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
+from .dxy_provider import fetch_dxy
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +35,7 @@ class ForexSignal:
     usdcny: Optional[float] = None  # USD/CNY
     usdcny_change_20d: Optional[float] = None  # 20-day change (%)
     dxy: Optional[float] = None  # Dollar index
+    dxy_estimated: bool = False  # DXY 为 ECB 估算值（非官方实时，官方源不可用兜底）
     cnh_cny_spread: Optional[float] = None  # CNH-CNY spread (bps)
     fx_signal: str = "neutral"  # "cny_strong" / "cny_weak" / "neutral"
 
@@ -135,17 +138,36 @@ class CrossAssetAnalyzer:
 
         try:
             import akshare as ak
-            df = ak.currency_boc_sina(symbol="美元兑人民币")
+
+            end = datetime.now().strftime("%Y%m%d")
+            start = (datetime.now() - timedelta(days=150)).strftime("%Y%m%d")
+            df = ak.currency_boc_sina(symbol="美元", start_date=start, end_date=end)
             if df is not None and len(df) > 0:
-                for col in df.columns:
-                    if "收盘" in str(col) or "价格" in str(col) or "close" in str(col).lower():
-                        sig.usdcny = float(df[col].iloc[-1])
-                        if len(df) >= 20:
-                            prev = float(df[col].iloc[-20])
-                            sig.usdcny_change_20d = round((sig.usdcny / prev - 1) * 100, 2)
-                        break
+                col = next(
+                    (c for c in df.columns if "折算" in str(c) or "中间价" in str(c)),
+                    None,
+                )
+                if col is not None:
+                    vals = [float(v) / 100.0 for v in df[col].dropna().tolist()]
+                    if len(vals) >= 20:
+                        sig.usdcny = vals[-1]
+                        sig.usdcny_change_20d = round((vals[-1] / vals[-20] - 1) * 100, 2)
         except Exception as e:
             logger.debug("Forex fetch failed: %s", e)
+
+        # 美元指数 DXY：东财直连 100.UDI + Frankfurter/ECB 计算 + Yahoo 三源
+        # （替代 akshare index_global_spot_em，后者依赖易被拦截的 push2 clist 接口）
+        try:
+            dxy_data = fetch_dxy()
+            if dxy_data.dxy is not None:
+                sig.dxy = dxy_data.dxy
+            sig.dxy_estimated = dxy_data.dxy_estimated or dxy_data.change_estimated
+            if sig.dxy_estimated:
+                logger.warning("DXY 为 ECB 估算值 %.2f（官方源不可用）", sig.dxy)
+            if dxy_data.errors:
+                logger.debug("DXY errors: %s", dxy_data.errors)
+        except Exception as e:
+            logger.debug("DXY fetch failed: %s", e)
 
         # Signal: CNY appreciation = bullish for A-shares (foreign inflow)
         if sig.usdcny_change_20d is not None:

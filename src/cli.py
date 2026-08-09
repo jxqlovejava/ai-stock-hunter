@@ -399,6 +399,33 @@ def cmd_macro():
     except Exception as e:
         print(f"⚠️ 宏观分析失败: {e}")
 
+    # ---- 债务周期阶段 + 美元潮汐（达利欧框架）----
+    print()
+    print("🪫 债务周期阶段 + 美元潮汐")
+    print("-" * 50)
+    try:
+        from src.macro.debt_cycle import DebtCycleAnalyzer
+
+        dc = DebtCycleAnalyzer().analyze()
+        print(f"  阶段: {dc.phase_label}  (phase={dc.phase.value}, 置信度 {dc.confidence:.2f})")
+        tide = dc.dollar_tide
+        if tide.us10y is not None:
+            print(f"  美债10Y: {tide.us10y:.2f}% (20日 {tide.us10y_change_20d:+.0f}bps)")
+        if tide.dxy is not None:
+            est_tag = " [ESTIMATED-估算]" if tide.dxy_estimated else ""
+            print(f"  美元指数: {tide.dxy:.1f}{est_tag} (20日 {tide.dxy_change_20d:+.2f}%)")
+        if tide.usdcny is not None:
+            print(f"  USDCNY: {tide.usdcny:.4f} (20日 {tide.usdcny_change_20d:+.2f}%)")
+        print(f"  潮汐方向: {tide.tide_direction}")
+        if tide.transmission:
+            print(f"  传导: {tide.transmission}")
+        if dc.implication:
+            print(f"  解读: {dc.implication}")
+        if dc.data_gaps:
+            print(f"  [DATA_GAP] 缺失: {', '.join(dc.data_gaps)}")
+    except Exception as e:
+        print(f"  ⚠️ 债务周期分析失败: {e}")
+
     # ---- 三大根本问题诊断 ----
     print()
     print("📋 三大根本问题诊断")
@@ -673,8 +700,14 @@ def cmd_sentiment():
         print(f"   [DATA_GAP] 板块资金流向获取失败: {e}")
 
 
-def cmd_backtest():
+def cmd_backtest(args: list[str] | None = None):
     """运行 MVP1 回测 — 沪深300成分股 + PE分位/ROE因子 + Backtrader引擎。"""
+    # 季节性窗口验证: python -m src backtest --seasonality
+    if args and "--seasonality" in args:
+        from src.backtest.seasonality import run_seasonality_backtest
+
+        run_seasonality_backtest()
+        return
     from src.backtest.runner import run_backtest
 
     print("📊 运行回测 (沪深300, 2019-2024)")
@@ -1834,6 +1867,13 @@ def _print_feedback_summary(collector) -> None:
         print("错误类型分布:")
         for mt, cnt in sorted(s.mistake_types.items(), key=lambda x: -x[1]):
             print(f"  - {mt}: {cnt} 次")
+    if s.attribution_counts:
+        print("盈亏归因分布 (技术 vs 运气 / 行情 vs 操作):")
+        for at, cnt in sorted(s.attribution_counts.items(), key=lambda x: -x[1]):
+            print(f"  - {at}: {cnt} 次")
+        lucky = s.attribution_counts.get("lucky_market", 0) + s.attribution_counts.get("mixed", 0)
+        if lucky and s.total:
+            print(f"  ⚠️ 运气驱动占比: {lucky / s.total:.0%}（若过高，警惕把运气当技术）")
     if s.lessons:
         print("教训:")
         for lesson in s.lessons[-5:]:
@@ -1852,6 +1892,16 @@ _MISTAKE_TYPE_OPTIONS = [
     ("6", "held_too_long", "持仓过久"),
 ]
 
+# P2-2: 盈亏归因选项（技术 vs 运气 / 行情 vs 操作，借鉴自媒体《复盘6步法》）
+_ATTRIBUTION_OPTIONS = [
+    ("0", "unknown", "未分类"),
+    ("1", "system_executed", "严格执行计划(技术)"),
+    ("2", "lucky_market", "赌对行情(运气)"),
+    ("3", "systemic_loss", "行情系统性杀跌"),
+    ("4", "execution_error", "操作失误(追高/不设止损/侥幸)"),
+    ("5", "mixed", "技术+运气兼有"),
+]
+
 
 def _feedback_add_interactive(collector, get_input=None):
     """交互式交易反馈录入 — 标的/方向/结果/错误类型/教训。
@@ -1863,7 +1913,7 @@ def _feedback_add_interactive(collector, get_input=None):
     Returns:
         bool — 是否成功录入
     """
-    from src.learner.feedback import MistakeType, validate_lesson_specificity
+    from src.learner.feedback import AttributionType, MistakeType, validate_lesson_specificity
 
     if get_input is None:
         get_input = input
@@ -1901,6 +1951,17 @@ def _feedback_add_interactive(collector, get_input=None):
             mistake_type = MistakeType(val)
             break
 
+    # 4b. 盈亏归因（技术 vs 运气 / 行情 vs 操作 — 杜绝把运气当技术、把操作失误赖给行情）
+    print("盈亏归因 (技术 vs 运气 / 行情 vs 操作) [0=未分类]:")
+    for key, val, label in _ATTRIBUTION_OPTIONS:
+        print(f"  [{key}] {label} ({val})")
+    at_choice = get_input("选择归因 [0]: ").strip()
+    attribution = AttributionType.UNKNOWN
+    for key, val, _label in _ATTRIBUTION_OPTIONS:
+        if at_choice == key or at_choice.lower() == val:
+            attribution = AttributionType(val)
+            break
+
     # 5. 实际收益率
     ret_input = get_input("实际收益率% (可选, 如 -8.5 或 6.2): ").strip()
     actual_return = None
@@ -1923,6 +1984,7 @@ def _feedback_add_interactive(collector, get_input=None):
         direction=direction,
         result=result,
         mistake_type=mistake_type,
+        attribution=attribution,
         lesson=lesson,
         actual_return=actual_return,
     )
@@ -3249,6 +3311,12 @@ def cmd_trade_track(args: list[str]):
         add_parser.add_argument("--shares", type=int, default=0, help="股数")
         add_parser.add_argument("--direction", choices=["LONG", "SHORT"], default="LONG")
         add_parser.add_argument("--notes", type=str, default="", help="备注")
+        add_parser.add_argument(
+            "--attribution",
+            choices=["system_executed", "lucky_market", "systemic_loss", "execution_error", "mixed", "unknown"],
+            default="unknown",
+            help="盈亏归因 (技术 vs 运气 / 行情 vs 操作)",
+        )
         try:
             a = add_parser.parse_args(remaining)
         except SystemExit:
@@ -3263,12 +3331,14 @@ def cmd_trade_track(args: list[str]):
             shares=a.shares,
             direction=a.direction,
             notes=a.notes,
+            attribution=a.attribution,
         )
         tracker.track(record)
         ret = record.return_pct
         print(f"✅ 已录入: {a.symbol} {a.entry_date}→{a.exit_date} "
               f"{'🟢' if record.is_win else '🔴'} {ret:+.2%}"
-              f"{' (sizing: ' + a.notes + ')' if a.notes else ''}")
+              f"{' (sizing: ' + a.notes + ')' if a.notes else ''}"
+              f"{' 归因: ' + a.attribution if a.attribution != 'unknown' else ''}")
 
     elif parsed.action == "list":
         if remaining:
@@ -3278,11 +3348,12 @@ def cmd_trade_track(args: list[str]):
                 print(f"📭 {symbol} 暂无交易记录")
                 return
             print(f"\n📊 {symbol} 交易记录 ({len(trades)}笔):")
-            print(f"{'idx':>3} {'买入':>10} {'卖出':>10} {'成本':>8} {'现价':>8} {'收益':>8} {'结果':>4}")
-            print("-" * 60)
+            print(f"{'idx':>3} {'买入':>10} {'卖出':>10} {'成本':>8} {'现价':>8} {'收益':>8} {'结果':>4} {'归因':>14}")
+            print("-" * 78)
             for i, t in enumerate(trades):
+                at = t.attribution if t.attribution != "unknown" else "-"
                 print(f"{i:>3} {t.entry_date:>10} {t.exit_date:>10} {t.entry_price:>8.2f} "
-                      f"{t.exit_price:>8.2f} {t.return_pct:>+7.2%} {'WIN' if t.is_win else 'LOSS':>4}")
+                      f"{t.exit_price:>8.2f} {t.return_pct:>+7.2%} {'WIN' if t.is_win else 'LOSS':>4} {at:>14}")
         else:
             symbols = tracker.get_all_symbols()
             if not symbols:
@@ -6280,7 +6351,7 @@ def main():
         "market": cmd_market,
         "macro": cmd_macro,
         "sentiment": cmd_sentiment,
-        "backtest": cmd_backtest,
+        "backtest": lambda: cmd_backtest(args),
         "verdict-backtest": cmd_verdict_backtest,
         "backtest-optimize": cmd_backtest_optimize,
         "backtest-compare": cmd_backtest_compare,

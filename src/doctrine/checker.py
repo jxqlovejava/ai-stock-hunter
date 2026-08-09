@@ -566,6 +566,22 @@ class DoctrineChecker:
         if rule.id == "r050":
             return bool(ctx.get("high_vol_price_flat", False))
 
+        # ── 季节性风险窗口军规 (r051-r054) ──
+        # ctx 字段由 orchestrator 经 src/calendar/seasonal_windows.py 的 seasonal_flag_map() 注入。
+        # 防御原则：无数据一律不触发（默认 False）。
+        # r051 年末流动性枯竭窗口 (12/15-1/10)
+        if rule.id == "r051":
+            return bool(ctx.get("seasonal_year_end_window", False))
+        # r052 财报业绩双杀窗口 (4/15-4/30)
+        if rule.id == "r052":
+            return bool(ctx.get("seasonal_april_window", False))
+        # r053 中报证伪窗口 (8/20-8/31)
+        if rule.id == "r053":
+            return bool(ctx.get("seasonal_august_window", False))
+        # r054 季末获利了结窗口 (10/20-10/31)
+        if rule.id == "r054":
+            return bool(ctx.get("seasonal_october_window", False))
+
         # 默认不触发
         return False
 

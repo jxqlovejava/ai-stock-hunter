@@ -163,6 +163,7 @@ class TestFeedbackAddCli:
                 "SELL",     # 方向
                 "loss",     # 结果
                 "1",        # 错误类型: chased_move
+                "1",        # 盈亏归因: system_executed (严格执行计划=技术)
                 "-8.5",     # 实际收益率%
                 "突破假信号追高被套，未等回踩确认",  # 教训
             ],
@@ -175,6 +176,7 @@ class TestFeedbackAddCli:
         assert entry["user_action"] == "SELL"
         assert entry["result"] == "loss"
         assert entry["mistake_type"] == "chased_move"
+        assert entry["attribution"] == "system_executed"
         assert entry["actual_return"] == pytest.approx(-0.085)
         assert "追高" in entry["lesson"]
         out = capsys.readouterr().out
@@ -185,7 +187,7 @@ class TestFeedbackAddCli:
         db_path = tmp_path / "feedback.json"
         self._run_cli(
             monkeypatch, db_path,
-            ["600519", "SELL", "loss", "0", "", "操作失误"],
+            ["600519", "SELL", "loss", "0", "0", "", "操作失误"],
         )
         assert not db_path.exists() or json.loads(db_path.read_text()) == []
         out = capsys.readouterr().out
