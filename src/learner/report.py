@@ -53,6 +53,9 @@ class LearningReport:
     risk_alerts: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
 
+    # 跨标的教训注入 (M4: 相对基准 alpha 复盘, 观测层)
+    lessons: str = ""
+
     def render(self) -> str:
         """渲染为 Markdown 报告。"""
         lines = [
@@ -137,6 +140,13 @@ class LearningReport:
         else:
             lines.append("继续保持现有策略，积累更多数据后再优化。")
 
+        # 跨标的教训注入 (相对基准 alpha 复盘)
+        if self.lessons.strip():
+            lines.append("")
+            lines.append("## 📚 复盘教训 (相对基准 alpha)")
+            lines.append("")
+            lines.append(self.lessons)
+
         lines.append("")
         lines.append("---")
         lines.append(f"*报告由 AI Stock Hunter 学习引擎自动生成*")
@@ -157,6 +167,7 @@ class ReportGenerator:
         strategy_versions: Optional[list] = None,
         signal_quality: Optional[object] = None,
         period: str = "weekly",
+        lessons: str = "",
     ) -> LearningReport:
         """生成学习报告。
 
@@ -166,6 +177,7 @@ class ReportGenerator:
             strategy_versions: StrategyVersion 列表
             signal_quality: SignalQualityReport 对象
             period: 报告周期 "weekly" | "monthly"
+            lessons: 跨标的复盘教训 (来自 SignalTracker.get_lessons, 相对基准 alpha)
         """
         title = {"weekly": "周度学习报告", "monthly": "月度学习报告"}.get(period, "学习报告")
 
@@ -239,6 +251,18 @@ class ReportGenerator:
             max_dd = getattr(signal_quality, "max_drawdown", 0) or 0
             if max_dd < -0.20:
                 report.risk_alerts.append(f"信号最大回撤过大 ({max_dd:.2%})，需调整仓位或止损")
+            # 相对基准 alpha 复盘 (M4)
+            avg_alpha = getattr(signal_quality, "avg_alpha_return", 0) or 0
+            alpha_wr = getattr(signal_quality, "alpha_win_rate", 0) or 0
+            if avg_alpha < -0.03:
+                report.risk_alerts.append(
+                    f"相对基准 alpha 为负 ({avg_alpha:.2%}) — 绝对收益可能来自 beta，策略超额能力存疑"
+                )
+            if alpha_wr < 0.4:
+                report.risk_alerts.append(f"跑赢基准胜率偏低 ({alpha_wr:.1%})，需审视选股/择时的相对优势")
+
+        # 跨标的教训注入
+        report.lessons = lessons or ""
 
         # 建议
         report.recommendations = self._generate_recommendations(report)

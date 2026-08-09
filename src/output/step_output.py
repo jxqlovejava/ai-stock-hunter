@@ -511,6 +511,20 @@ def print_verdict(verdict: Any | None, enforced_verdict: dict | None = None, sce
         for f in falsifiable:
             print(f"    · {_ensure_cn(f)}")
 
+    # 历史结论背景 (Phase 14: 观测层, 仅复盘, 不回填策略参数)
+    history_ctx = getattr(verdict, "history_context", "") or ""
+    if history_ctx:
+        lines = history_ctx.splitlines()
+        title = lines[0].strip("**") if lines else ""
+        print(f"\n  🗂️ {title}")
+        for line in lines[3:]:  # 跳过标题/表头/分隔线
+            if line.strip():
+                print(f"    {line}")
+        adj = getattr(verdict, "history_adjustment", 0.0) or 0.0
+        if adj:
+            arrow = "↗ 与历史一致加信" if adj > 0 else "↘ 与历史反转降信"
+            print(f"    {arrow} ({adj:+.1%})")
+
     # 强制结论
     if enforced_verdict:
         print(f"\n  💡 {enforced_verdict.get('one_line_conclusion','')}")

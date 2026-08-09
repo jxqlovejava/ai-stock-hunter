@@ -6,6 +6,10 @@
 与 sentiment 模块互补：sentiment = 价格衍生情绪（反应性），information = 信息前置分析（预见性）。
 """
 
+from .guba_sentiment_llm import (
+    GubaLLMSentiment,
+    GubaSentimentLLMAnalyzer,
+)
 from .speed_monitor import SpeedMonitor, SpeedMetrics
 
 __version__ = "0.1.0"
@@ -13,4 +17,6 @@ __version__ = "0.1.0"
 __all__ = [
     "SpeedMonitor",
     "SpeedMetrics",
+    "GubaSentimentLLMAnalyzer",
+    "GubaLLMSentiment",
 ]

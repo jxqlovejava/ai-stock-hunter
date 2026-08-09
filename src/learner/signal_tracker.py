@@ -49,6 +49,10 @@ class Signal:
     holding_days: Optional[int] = None
     max_drawdown_pct: Optional[float] = None
     exit_reason: str = ""
+    # 相对基准超额收益 (alpha = return_pct - benchmark_return_pct)
+    alpha_return_pct: Optional[float] = None
+    benchmark_name: str = "hs300"
+    benchmark_return_pct: Optional[float] = None
 
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -68,6 +72,8 @@ class SignalQualityReport:
 
     win_rate: float = 0.0
     avg_return: float = 0.0
+    avg_alpha_return: float = 0.0  # 相对基准超额收益均值
+    alpha_win_rate: float = 0.0  # 跑赢基准的胜率
     avg_holding_days: float = 0.0
     max_drawdown: float = 0.0
     profit_factor: float = 0.0  # 总盈利 / |总亏损|
@@ -146,8 +152,15 @@ class SignalTracker:
         holding_days: int = 0,
         max_drawdown_pct: Optional[float] = None,
         exit_reason: str = "",
+        benchmark_return_pct: Optional[float] = None,
     ):
-        """记录信号结果。"""
+        """记录信号结果。
+
+        Args:
+            benchmark_return_pct: 持仓期内基准(如沪深300)收益率。
+                提供时计算 alpha_return_pct = return_pct - benchmark_return_pct;
+                未提供则回退用 signal_emitted 时的 hs300_change_pct (尽力而为)。
+        """
         if signal_id not in self._signals:
             raise KeyError(f"信号 {signal_id} 不存在")
         s = self._signals[signal_id]
@@ -156,6 +169,11 @@ class SignalTracker:
         s.holding_days = holding_days
         s.max_drawdown_pct = max_drawdown_pct
         s.exit_reason = exit_reason
+        # 相对基准 alpha 复盘
+        bench = benchmark_return_pct if benchmark_return_pct is not None else s.hs300_change_pct
+        if bench is not None:
+            s.benchmark_return_pct = round(float(bench), 4)
+            s.alpha_return_pct = round(return_pct - float(bench), 4)
 
     def signal_ignored(self, signal_id: str):
         """标记信号被忽略。"""
@@ -191,6 +209,56 @@ class SignalTracker:
         return len(self._signals)
 
     # ------------------------------------------------------------------
+    # 跨标的教训注入 (相对基准 alpha 复盘)
+    # ------------------------------------------------------------------
+
+    def get_lessons(
+        self,
+        symbol: Optional[str] = None,
+        n_same: int = 5,
+        n_cross: int = 3,
+    ) -> str:
+        """生成可注入分析 prompt 的复盘教训 (借鉴 TradingAgents get_past_context)。
+
+        同标的历史信号优先 (最近 n_same 条), 再补跨标的最远教训 (n_cross 条)。
+        只包含已平仓且有实际回报的信号; 返回 Markdown 字符串, 无数据时为空串。
+
+        Args:
+            symbol: 目标股票代码; 为 None 时只取跨标的教训。
+            n_same: 同标的最多条数。
+            n_cross: 跨标的最多教训条数。
+        """
+        closed = [s for s in self.get_closed() if s.return_pct is not None]
+        closed.sort(key=lambda s: s.created_at or "")
+        if not closed:
+            return ""
+
+        same = [s for s in closed if symbol and s.symbol == symbol][-n_same:]
+        cross = [s for s in closed if not symbol or s.symbol != symbol][-n_cross:]
+
+        def _line(s: Signal) -> str:
+            alpha = (
+                f"{s.alpha_return_pct:+.2%} (vs {s.benchmark_name})"
+                if s.alpha_return_pct is not None
+                else "—"
+            )
+            return (
+                f"- {s.symbol} {s.action} 收益 {s.return_pct:+.2%} "
+                f"alpha {alpha} 持仓{s.holding_days or '?'}天 "
+                f"{s.exit_reason or ''}"
+            )
+
+        lines: list[str] = []
+        if same:
+            lines.append(f"### 同标的历史信号 ({symbol})")
+            lines.extend(_line(s) for s in same)
+        if cross:
+            lines.append("### 跨标的教训 (其他股票)")
+            lines.extend(_line(s) for s in cross)
+        lines.append("> 教训仅供参考, 复盘用, 不自动回填策略参数。")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # 质量报告
     # ------------------------------------------------------------------
 
@@ -223,6 +291,12 @@ class SignalTracker:
             gains = sum(r for r in returns if r > 0)
             losses = abs(sum(r for r in returns if r < 0))
             report.profit_factor = gains / losses if losses > 0 else float("inf")
+
+        # 相对基准 alpha 复盘
+        alphas = [s.alpha_return_pct for s in closed if s.alpha_return_pct is not None]
+        if alphas:
+            report.avg_alpha_return = sum(alphas) / len(alphas)
+            report.alpha_win_rate = sum(1 for a in alphas if a > 0) / len(alphas)
 
         # 平均持仓天数
         days = [s.holding_days for s in closed if s.holding_days is not None]

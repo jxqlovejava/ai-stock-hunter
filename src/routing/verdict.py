@@ -33,6 +33,9 @@ class Verdict:
     mental_model_fit_score: float = 0.0
     mental_model_warnings: list[str] = field(default_factory=list)
     oversold_position_discount: float = 1.0  # Phase 13: 超跌仓位折扣 (默认1.0=无折扣)
+    # Phase 14: 历史结论背景 (结论时间线注入, 观测层不回填策略参数)
+    history_context: str = ""          # 近期结论演进摘要 (Markdown)
+    history_adjustment: float = 0.0    # 基于历史一致性的置信度微调 (-0.03 ~ +0.015)
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -65,6 +68,63 @@ class VerdictEngine:
     }
 
     MIN_CONFIDENCE = 0.55  # 0.6→0.55: 四视角辩论+推测标记叠加后，中等置信度仍可通过
+
+    # 历史结论方向映射 (BUY/ADD=看多, HOLD=中性, REDUCE/SELL/CLOSE=看空)
+    _REC_DIRECTION = {"BUY": 1, "ADD": 1, "HOLD": 0, "REDUCE": -1, "SELL": -1, "CLOSE": -1}
+
+    def _history_adjustment(self, symbol: str, recommendation: str) -> tuple[str, float, bool]:
+        """读取结论时间线, 生成历史结论背景 + 置信度微调。
+
+        观测层语义 (与 conclusion_ledger 设计一致):
+          - 只读 ledger, 绝不回填策略参数
+          - 一致性: 近期多数结论与当前裁决同向 → +0.015 置信度
+          - 反转: 近期多数结论与当前裁决反向 → -0.03 置信度 + 分歧风险
+          - 数据不足(<2条) → 无调整
+        任何 ledger 读取异常都不影响裁决 (防御式降级)。
+        """
+        try:
+            from src.analysis.conclusion_ledger import load_stock_timeline
+
+            timeline = load_stock_timeline(symbol)
+        except Exception:
+            return "", 0.0, False
+
+        entries = [e for e in timeline if e.get("verdict")]
+        if len(entries) < 2:
+            return "", 0.0, False
+
+        recent = entries[-5:]
+        lines = ["| 日期 | 裁决 | 评分 | 置信度 | 一句结论 |"]
+        lines.append("|------|------|:---:|:---:|----------|")
+        for e in recent:
+            conf = e.get("confidence")
+            conf_txt = f"{conf:.0%}" if isinstance(conf, (int, float)) else "—"
+            lines.append(
+                f"| {(e.get('date') or e.get('ts') or '')[:10]} | {e.get('verdict') or '?'} | "
+                f"{e.get('score') if e.get('score') is not None else '—'} | {conf_txt} | "
+                f"{(e.get('one_line') or '')[:18]} |"
+            )
+        context = (
+            f"**历史结论背景 (最近 {len(recent)} 条, 观测记录, 仅作复盘)**\n"
+            + "\n".join(lines)
+            + "\n"
+        )
+
+        current_dir = self._REC_DIRECTION.get(recommendation, 0)
+        dirs = [
+            self._REC_DIRECTION[e.get("verdict")]
+            for e in recent
+            if self._REC_DIRECTION.get(e.get("verdict"), 0) != 0
+        ][-3:]
+        if not dirs or current_dir == 0:
+            return context, 0.0, False
+
+        majority = 1 if dirs.count(1) >= 2 else (-1 if dirs.count(-1) >= 2 else 0)
+        if majority == 0:
+            return context, 0.0, False
+        if majority == current_dir:
+            return context, 0.015, False  # 与历史方向一致 → 轻微加信
+        return context, -0.03, True  # 与历史多数方向反转 → 降信 + 标注分歧
 
     def judge(
         self,
@@ -265,6 +325,19 @@ class VerdictEngine:
         else:
             rec = "SELL"
 
+        # Phase 14: 历史结论背景注入 (观测层, 只读 ledger, 不回填策略参数)
+        history_context, history_adj, history_divergent = self._history_adjustment(
+            report.symbol, rec
+        )
+        if history_adj:
+            confidence = round(max(0.0, min(0.95, confidence + history_adj)), 3)
+        if history_divergent:
+            risks.append({
+                "text": "历史结论方向与当前裁决相反 — 属于叙事反转，建议要求更强证据或缩小仓位",
+                "severity": "medium",
+                "source": "conclusion_history_divergence",
+            })
+
         # 可证伪条件 — 引用实际当前值
         cycle_val = report.cycle_phase or "未知"
         falsifiable = [
@@ -338,6 +411,8 @@ class VerdictEngine:
             mental_model_fit_score=mm_score,
             mental_model_warnings=mm_warnings + mm_bias_flags,
             oversold_position_discount=oversold_position_discount,
+            history_context=history_context,        # Phase 14: 历史结论背景
+            history_adjustment=round(history_adj, 3),  # Phase 14: 置信度微调
         )
 
     def _alpha_multiplier(

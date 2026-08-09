@@ -9,6 +9,7 @@ Phase 11: 宏观象限前置 + 反操纵全链路联动 + 持仓持续跟踪。
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -140,6 +141,8 @@ class OrchestratorResult:
     margin_profile: Optional[object] = None
     margin_alerts: list = field(default_factory=list)
     monitor_signals: list = field(default_factory=list)
+    # 股吧/微博 LLM 情绪 (M2: 预取注入防编造, 默认关闭, 设 GUBA_LLM_ENHANCE=1 开启)
+    guba_llm_sentiment: Optional[object] = None
     # 美股隔夜大盘快照
     us_overnight: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -1413,6 +1416,17 @@ class Orchestrator:
             guba_sentiment = self.data.get_guba_sentiment(symbol)
         except Exception:
             logger.debug("guba sentiment fetch failed for %s", symbol)
+
+        # M2: 股吧/微博 LLM 情绪增强 (预取注入防编造, 默认关闭, 设 GUBA_LLM_ENHANCE=1 开启)
+        guba_llm = None
+        if os.environ.get("GUBA_LLM_ENHANCE", "") in ("1", "true", "yes"):
+            try:
+                from src.information.guba_sentiment_llm import GubaSentimentLLMAnalyzer
+
+                guba_llm = GubaSentimentLLMAnalyzer().analyze(symbol, name=name)
+            except Exception:
+                logger.debug("guba LLM sentiment failed for %s", symbol)
+        result.guba_llm_sentiment = guba_llm
 
         # 日线 K 线（缠论结构用，可空 → diagnosis 内降级）
         bars_df = None

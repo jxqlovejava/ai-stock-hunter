@@ -1089,6 +1089,9 @@ class TacticalSnapshot:
     time_stop_days: int = 10
     macd_kdj: Optional[dict] = None
     technical_note: str = ""
+    # 盘面数据锚定 (M1: 确定性快照 + 冲突标注, 反幻觉)
+    verified_snapshot: Optional[object] = None
+    snapshot_conflicts: list[str] = field(default_factory=list)
 
     # ── 🌐 市场状态前置判定 + 跨周期过滤 + MM等距投影 (P1-1/P1-5/P1-6) ──
     market_state: str = "RANGE"            # BULL_TRENDING / BEAR_TRENDING / RANGE
@@ -1672,6 +1675,9 @@ def run_tactics(
             snapshot.ma_score = tech.ma_score
             snapshot.limit_up_score = tech.limit_up_score
             snapshot.technical_composite = tech.composite_score
+            # 盘面数据锚定: 确定性快照 + 冲突标注
+            snapshot.verified_snapshot = tech.verified_snapshot
+            snapshot.snapshot_conflicts = list(tech.snapshot_conflicts)
         except Exception:
             pass
 
@@ -2488,6 +2494,17 @@ def _print_snapshot(s: TacticalSnapshot) -> None:
     if s.weekly_direction in ("BULL", "BEAR"):
         print(f"  周线方向: {'📈 ' if s.weekly_direction == 'BULL' else '📉 '}"
               f"{s.weekly_direction} (跨周期过滤)")
+
+    # M1: 盘面数据锚定 (确定性快照 + 冲突标注)
+    if s.verified_snapshot is not None:
+        snap = s.verified_snapshot
+        anchor = getattr(snap, "anchor_block", None)
+        if callable(anchor):
+            print(f"  {anchor()}")
+        else:
+            print(f"  📌 盘面锚定: 最新价 {getattr(snap, 'price', '?')}")
+    for conflict in s.snapshot_conflicts:
+        print(f"  ⚠️  {conflict}")
 
     # P1-8 涨停次日行为 (位置解读)
     if s.limit_up_next_day and s.limit_up_next_day.get("note"):

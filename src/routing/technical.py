@@ -16,12 +16,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import pandas as pd
 
 from src.data.source_citation import SourceCitation, make_citation
+
+if TYPE_CHECKING:
+    from src.data.verified_snapshot import VerifiedSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,9 @@ class TechnicalReport:
     # 溯源
     source_citations: list[SourceCitation] = field(default_factory=list)
     data_gaps: list[str] = field(default_factory=list)
+    # 盘面数据锚定 (确定性快照 + 冲突标注, 反幻觉)
+    verified_snapshot: Optional["VerifiedSnapshot"] = None  # 确定性快照 DTO
+    snapshot_conflicts: list[str] = field(default_factory=list)  # 文本价格声明与快照冲突
     confidence: float = 0.7
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -223,7 +229,44 @@ class TechnicalAnalyzer:
         report.limit_up_snapshot = limit_up_snapshot
         report.source_citations = self._make_citations(symbol)
 
+        # 盘面数据锚定: 确定性快照 + 冲突标注 (反幻觉, 失败不影响主流程)
+        self._anchor_snapshot(report)
+
         return report
+
+    def _anchor_snapshot(self, report: "TechnicalReport") -> None:
+        """把确定性盘面快照锚定到技术报告, 并标注文本价格声明冲突。
+
+        快照获取失败 → 记 data_gap, 不阻断分析。冲突标注遵循
+        "冲突标注不编造" 原则: 分析叙述里的价格数字与快照不符时,
+        记入 snapshot_conflicts 供上层展示, 而不是默默采用。
+        """
+        try:
+            from src.data.verified_snapshot import (
+                check_price_claims,
+                get_verified_market_snapshot,
+            )
+
+            market = "SH" if str(report.symbol).startswith("6") else "SZ"
+            snap = get_verified_market_snapshot(report.symbol, market=market)
+        except Exception:
+            report.data_gaps.append("verified_snapshot")
+            return
+        if snap is None:
+            report.data_gaps.append("verified_snapshot")
+            return
+
+        report.verified_snapshot = snap  # DTO 直存, 不做字段重建
+
+        # 检查报告中已生成的价格声明文本 (信号描述/备注)
+        narrative = " ".join(
+            s.description for s in report.signals if getattr(s, "description", "")
+        )
+        for c in check_price_claims(narrative, snap):
+            report.snapshot_conflicts.append(
+                f"价格声明冲突: 「{c.matched_text}」(声称 {c.claimed_price}) "
+                f"与确定性快照 {c.snapshot_price} 偏差 {c.deviation_pct}% — 以快照为准"
+            )
 
     # ------------------------------------------------------------------
     # Helpers
