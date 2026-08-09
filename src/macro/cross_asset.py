@@ -161,7 +161,8 @@ class CrossAssetAnalyzer:
             dxy_data = fetch_dxy()
             if dxy_data.dxy is not None:
                 sig.dxy = dxy_data.dxy
-            sig.dxy_estimated = dxy_data.dxy_estimated or dxy_data.change_estimated
+            # 仅 dxy 值本身是否估算（change 估算不整体标记，避免真实值被误标）
+            sig.dxy_estimated = dxy_data.dxy_estimated
             if sig.dxy_estimated:
                 logger.warning("DXY 为 ECB 估算值 %.2f（官方源不可用）", sig.dxy)
             if dxy_data.errors:

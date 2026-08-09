@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -81,8 +82,34 @@ def _http_get_json(url: str) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
-def _http_post_json(url: str, payload: dict, referer: str, timeout: float = _HTTP_TIMEOUT) -> dict:
-    """POST JSON 请求（TradingView scanner API 用）。"""
+def _system_http_proxies() -> dict:
+    """读取 macOS 系统 HTTP/HTTPS 代理（走 VPN 时用）。
+
+    注意：`src.utils.proxy.configure_no_proxy()` 会设置 NO_PROXY 环境变量，
+    导致 `urllib.request.getproxies()` 命中环境变量分支后**不再 fallback 读
+    macOS 系统代理**（scutil），TradingView 这类被墙域名必须显式走代理。
+    """
+    try:
+        import _scproxy  # noqa: PLC0415
+
+        sys_proxies = _scproxy._get_proxies() or {}
+    except Exception:  # noqa: BLE001
+        sys_proxies = {}
+    proxies = {k: v for k, v in sys_proxies.items() if k in ("http", "https")}
+    no = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    if no:
+        proxies["no"] = no
+    return proxies
+
+
+def _http_post_json(
+    url: str,
+    payload: dict,
+    referer: str,
+    timeout: float = _HTTP_TIMEOUT,
+    use_proxy: bool = False,
+) -> dict:
+    """POST JSON 请求（TradingView scanner API 用）。use_proxy 时走 macOS 系统代理。"""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -94,7 +121,13 @@ def _http_post_json(url: str, payload: dict, referer: str, timeout: float = _HTT
             "Referer": referer,
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    handlers: list = []
+    if use_proxy:
+        proxies = _system_http_proxies()
+        if proxies:
+            handlers.append(urllib.request.ProxyHandler(proxies))
+    opener = urllib.request.build_opener(*handlers)
+    with opener.open(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -206,6 +239,7 @@ def _fetch_tradingview() -> Optional[tuple[float, Optional[float], str]]:
          "columns": ["close", "description", "currency"]},
         referer="https://www.tradingview.com/",
         timeout=_TV_TIMEOUT,
+        use_proxy=True,
     )
     rows = data.get("data") or []
     if not rows:

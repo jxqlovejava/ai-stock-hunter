@@ -132,7 +132,8 @@ class DollarTideAnalyzer:
             return
         sig.dxy = data.dxy
         sig.dxy_change_20d = data.dxy_change_20d
-        sig.dxy_estimated = data.dxy_estimated or data.change_estimated
+        # 仅 dxy 值本身是否估算；change 是否估算单独用 data_gaps 标记
+        sig.dxy_estimated = data.dxy_estimated
         if data.dxy_estimated:
             # 估算值显式标记，禁止冒充官方 ICE DXY（ECB 参考汇率计算，非官方实时）
             sig.data_gaps.append("美元指数DXY为ECB估算值[ESTIMATED]")

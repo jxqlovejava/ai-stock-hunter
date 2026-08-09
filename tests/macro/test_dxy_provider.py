@@ -27,7 +27,7 @@ def _no_real_network(monkeypatch):
     """默认拦截 TradingView 网络请求（非 tradingview 专项测试勿发起真实请求）。"""
     monkeypatch.setattr(
         "src.macro.dxy_provider._http_post_json",
-        lambda url, payload, referer, timeout=6: {"data": []},
+        lambda url, payload, referer, timeout=6, use_proxy=False: {"data": []},
     )
 
 
@@ -147,7 +147,7 @@ def test_tradingview_priority_and_cross_validate():
     """TradingView(真实源) 命中时优先取其值；change 由东财K线补齐；双源交叉验证通过。"""
     closes = _closes()  # 100.0 -> 102.0
     mock = _mock_http(em_quote=_em_quote(102.0), em_hist=_em_hist(closes), yahoo=_yahoo(closes))
-    tv_mock = lambda url, payload, referer, timeout=6: _tv(102.0)  # noqa: E731
+    tv_mock = lambda url, payload, referer, timeout=6, use_proxy=False: _tv(102.0)  # noqa: E731
     with patch("src.macro.dxy_provider._http_get_json", side_effect=mock), \
          patch("src.macro.dxy_provider._http_post_json", side_effect=tv_mock):
         data = fetch_dxy()
@@ -161,7 +161,7 @@ def test_tradingview_priority_and_cross_validate():
 def test_tradingview_only_realtime_no_change():
     """仅 TradingView 可达 → 真实实时值，无 20日变化，单源未交叉验证。"""
     mock = _mock_http(em_raise=ConnectionError, yh_raise=ConnectionError, ff_raise=ConnectionError)
-    tv_mock = lambda url, payload, referer, timeout=6: _tv(99.6)  # noqa: E731
+    tv_mock = lambda url, payload, referer, timeout=6, use_proxy=False: _tv(99.6)  # noqa: E731
     with patch("src.macro.dxy_provider._http_get_json", side_effect=mock), \
          patch("src.macro.dxy_provider._http_post_json", side_effect=tv_mock):
         data = fetch_dxy()
@@ -175,8 +175,8 @@ def test_tradingview_down_falls_back_to_others():
     """无 VPN（TradingView 不可达）→ 走东财/Yahoo 真实源，不阻塞。"""
     closes = _closes()
     mock = _mock_http(em_quote=_em_quote(102.0), em_hist=_em_hist(closes), yahoo=_yahoo(closes))
-    tv_mock = lambda url, payload, referer, timeout=6: (_ for _ in ()).throw(  # noqa: E731
-        ConnectionError("no vpn"))
+    tv_mock = lambda url, payload, referer, timeout=6, use_proxy=False: (  # noqa: E731
+        (_ for _ in ()).throw(ConnectionError("no vpn")))
     with patch("src.macro.dxy_provider._http_get_json", side_effect=mock), \
          patch("src.macro.dxy_provider._http_post_json", side_effect=tv_mock):
         data = fetch_dxy()
@@ -364,6 +364,21 @@ def test_debt_cycle_official_value_not_estimated():
     assert sig.dxy == 99.6
     assert sig.dxy_estimated is False
     assert not any("[ESTIMATED]" in g for g in sig.data_gaps)
+
+
+def test_debt_cycle_real_dxy_estimated_change_not_marked():
+    """dxy 真实(TradingView) + change 估算(Frankfurter) → 不整体标估算，change 单标。"""
+    sig = DollarTideSignal()
+    with patch.object(debt_cycle, "fetch_dxy", return_value=DxyData(
+        dxy=99.6, dxy_change_20d=-0.99,
+        dxy_estimated=False, change_estimated=True,
+        source="tradingview+frankfurter", cross_validated=False,
+    )):
+        DollarTideAnalyzer()._fetch_dxy(sig)
+    assert sig.dxy == 99.6
+    assert sig.dxy_estimated is False  # 真实值不误标
+    assert any("20日变化为估算" in g for g in sig.data_gaps)
+    assert not any("DXY为ECB估算值" in g for g in sig.data_gaps)
 
 
 def test_confidence_penalized_when_dxy_estimated():
