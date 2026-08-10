@@ -1,775 +1,5 @@
 [
   {
-    "timestamp": "2026-08-05T22:22:38.953262",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 1.7,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:23:29.773965",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 36.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:23:48.695330",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 1.7,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:24:28.823991",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 35.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:24:38.656928",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:26:38.548448",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:28:42.330534",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:30:05.549332",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 1.7,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:31:10.141485",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:35:25.863342",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 1.7,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:36:37.141628",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 28.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:40:48.932581",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 1.7,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:41:55.751117",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 28.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:43:05.394097",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 26.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:48:24.726418",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.94,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T22:48:49.949076",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 25.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T22:49:24.017414",
-    "score": 63,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:07:51.491838",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T23:08:52.090456",
-    "score": 63,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:20:52.967626",
-    "score": 63,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:21:54.597935",
-    "score": 63,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:23:21.646133",
-    "score": 63,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:28:34.066836",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 25.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:30:20.718706",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T23:30:30.858183",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 26.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:34:00.461935",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T23:35:07.504740",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 28.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:42:50.426832",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T23:42:51.846218",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:43:57.862250",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:44:59.841787",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:45:22.785147",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:45:41.526025",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-05T23:46:55.049660",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:48:10.946845",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-05T23:48:28.803762",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T00:02:17.882710",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-06T00:03:16.728024",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T00:05:03.145169",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T00:07:14.550201",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:39:06.620405",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:41:13.469281",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:41:30.018778",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:41:52.245641",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:43:09.992774",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:43:41.799388",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:44:54.572349",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:48:05.692992",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-06T01:49:02.122183",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T01:57:53.687837",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:00:20.742616",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:00:49.367835",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.94,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-06T02:01:44.859460",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:02:36.403574",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:02:44.834194",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:04:04.480849",
-    "score": 21,
-    "level": "PANIC",
-    "confidence": 0.94,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-06T02:04:57.617989",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 35.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:05:44.488855",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:05:57.049758",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:08:01.365900",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:09:23.634581",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 33.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:10:15.476361",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:11:42.581960",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 31.7,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:14:50.450272",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:17:44.619171",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.96,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-06T02:22:27.824569",
-    "score": 68,
-    "level": "EXTREME_GREED",
-    "confidence": 0.91,
-    "percentile": 30.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 1
-  },
-  {
-    "timestamp": "2026-08-07T10:51:16.281994",
-    "score": 50,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 21.7,
-    "panic_count": 0,
-    "greed_count": 0,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T10:53:47.069048",
-    "score": 53,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 23.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T10:58:44.250017",
-    "score": 40,
-    "level": "NORMAL",
-    "confidence": 0.96,
-    "percentile": 20.0,
-    "panic_count": 2,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:03:54.985846",
-    "score": 50,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 21.7,
-    "panic_count": 0,
-    "greed_count": 0,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:08:41.143132",
-    "score": 58,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 25.0,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:13:15.904555",
-    "score": 32,
-    "level": "NORMAL",
-    "confidence": 0.96,
-    "percentile": 18.3,
-    "panic_count": 2,
-    "greed_count": 0,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:15:57.501199",
-    "score": 40,
-    "level": "NORMAL",
-    "confidence": 0.96,
-    "percentile": 18.3,
-    "panic_count": 2,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:26:00.174601",
-    "score": 40,
-    "level": "NORMAL",
-    "confidence": 0.96,
-    "percentile": 18.3,
-    "panic_count": 2,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:27:40.767703",
-    "score": 13,
-    "level": "EXTREME_PANIC",
-    "confidence": 0.86,
-    "percentile": 0.0,
-    "panic_count": 4,
-    "greed_count": 0,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:29:26.974484",
-    "score": 58,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 28.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
-    "timestamp": "2026-08-07T11:30:45.936685",
-    "score": 58,
-    "level": "NORMAL",
-    "confidence": 0.91,
-    "percentile": 28.3,
-    "panic_count": 0,
-    "greed_count": 1,
-    "extreme_count": 0
-  },
-  {
     "timestamp": "2026-08-07T11:31:49.068837",
     "score": 58,
     "level": "NORMAL",
@@ -2498,5 +1728,775 @@
     "panic_count": 0,
     "greed_count": 0,
     "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-08T22:35:38.583307",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 56.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-08T23:02:19.787102",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 56.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-08T23:07:45.186968",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-08T23:08:50.551584",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 58.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T13:35:13.173635",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T13:35:57.222045",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T13:36:46.377701",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T13:41:29.020422",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 58.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T13:57:14.879160",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T13:58:59.621539",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 58.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T14:00:21.722635",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 56.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T14:13:12.431206",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 55.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T16:36:30.804025",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T16:37:44.782182",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 53.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T16:38:56.996555",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T16:43:22.632023",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T16:48:46.563485",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T16:49:53.842719",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T16:52:47.329743",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T16:53:35.821912",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 23.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T16:54:29.257140",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 23.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T16:59:44.722035",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 53.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T18:06:12.138725",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T18:07:22.164891",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 55.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:23:55.728546",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T21:24:49.558952",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 55.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:24:58.372878",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T21:25:54.387163",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 53.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:26:06.559755",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:26:57.827265",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:27:41.698594",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:28:53.732472",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:31:20.939259",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T21:32:16.292882",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:33:12.928291",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:35:10.609731",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 51.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:43:43.724693",
+    "score": 13,
+    "level": "EXTREME_PANIC",
+    "confidence": 0.86,
+    "percentile": 0.0,
+    "panic_count": 4,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-09T21:44:40.124572",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 50.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:45:40.638985",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 48.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-09T21:47:23.699411",
+    "score": 60,
+    "level": "EXTREME_GREED",
+    "confidence": 0.91,
+    "percentile": 46.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 1
+  },
+  {
+    "timestamp": "2026-08-10T09:34:22.392483",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 25.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:34:26.291101",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 25.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:34:59.445024",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 25.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:35:04.091800",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 25.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:35:07.555189",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 25.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:35:10.298239",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 23.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:35:12.365204",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 21.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:30.998439",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 21.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:32.254418",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 21.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:34.563373",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:35.270273",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:47.749497",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:51.060493",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:37:51.414393",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:41:42.037282",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:41:57.585663",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:04.194656",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:22.511425",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 20.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:23.251179",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 18.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:24.002967",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 18.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:25.122163",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 18.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:25.201707",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 18.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:53:26.896531",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 18.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:21.815113",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 16.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:22.000678",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 16.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:23.382097",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 15.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:23.407248",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 15.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:33.888587",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 15.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:35.812219",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 15.0,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T09:54:36.588887",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 13.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:21:18.169183",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 13.3,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:25:13.476675",
+    "score": 58,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 68.3,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:30:18.954732",
+    "score": 58,
+    "level": "NORMAL",
+    "confidence": 0.91,
+    "percentile": 68.3,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:36:27.682049",
+    "score": 58,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 66.7,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:38:54.492424",
+    "score": 58,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 66.7,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:39:36.031794",
+    "score": 50,
+    "level": "NORMAL",
+    "confidence": 0.83,
+    "percentile": 11.7,
+    "panic_count": 0,
+    "greed_count": 0,
+    "extreme_count": 0
+  },
+  {
+    "timestamp": "2026-08-10T10:48:19.398393",
+    "score": 58,
+    "level": "NORMAL",
+    "confidence": 0.96,
+    "percentile": 68.3,
+    "panic_count": 0,
+    "greed_count": 1,
+    "extreme_count": 0
   }
 ]

@@ -1,0 +1,53 @@
+[
+  {
+    "record_id": "5407d307acb04424b262bf6325368cf5",
+    "symbol": "002518",
+    "name": "科士达",
+    "date": "2026-08-10",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 33.86,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-10T09:38:54.743083"
+  },
+  {
+    "record_id": "92e9857b6fed40c080ce6f5262ba2e63",
+    "symbol": "002518",
+    "name": "科士达",
+    "date": "2026-08-10",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 33.27,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-10T10:33:07.530352"
+  },
+  {
+    "record_id": "0b9814a266fa488ca664cbe35a4990b4",
+    "symbol": "002518",
+    "name": "科士达",
+    "date": "2026-08-10",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 33.16,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-10T10:41:21.467268"
+  }
+]

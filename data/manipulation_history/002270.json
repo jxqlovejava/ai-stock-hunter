@@ -1,0 +1,19 @@
+[
+  {
+    "record_id": "a0a6f42ecc3046fab0e922033a04721c",
+    "symbol": "002270",
+    "name": "华明装备",
+    "date": "2026-08-10",
+    "manipulation_type": "未检测到跨日操纵模式",
+    "source": "daily",
+    "confidence": 0.0,
+    "risk_score": 100,
+    "price_at_detection": 20.44,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-10T09:43:16.008188"
+  }
+]

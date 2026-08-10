@@ -100,5 +100,22 @@
     "price_after_5d": null,
     "notes": "",
     "created_at": "2026-08-08T01:12:50.794083"
+  },
+  {
+    "record_id": "40d60bcd9492405cb47e2b6c8049e724",
+    "symbol": "002080",
+    "name": "中材科技",
+    "date": "2026-08-10",
+    "manipulation_type": "连阳出货",
+    "source": "daily",
+    "confidence": 0.4,
+    "risk_score": 34.0,
+    "price_at_detection": 58.5,
+    "outcome": "pending",
+    "price_after_1d": null,
+    "price_after_3d": null,
+    "price_after_5d": null,
+    "notes": "",
+    "created_at": "2026-08-10T09:36:49.521254"
   }
 ]
