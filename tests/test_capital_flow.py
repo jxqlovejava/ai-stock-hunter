@@ -13,6 +13,7 @@ from src.data.capital_flow_provider import (
     _to_secid,
 )
 from src.data.schema import MoneyFlowSnapshot
+from src.game_theory.capital_flow import CapitalFlowAnalyzer, DivergenceType
 
 
 class TestSecidConversion:
@@ -229,3 +230,59 @@ class TestCapitalFlowProviderWithMock:
         assert snap is not None
         assert snap.main_net == 100.0
         assert "missing detail" in snap.data_gap_reason
+
+
+class TestTurnoverMissingGuard:
+    """total_turnover 缺失（上游接口失败兜底为 0）时，背离幅度不可计算。
+
+    回归: 2026-08-10 科士达(002518) 东财资金流断连 → turnover=0 →
+    分母兜底 max(0,1)=1 → 2748万主力净流入算出 55 万分 → 封顶 100，
+    触发 verdict ×0.7 折扣 + 置信度 -0.15，把本可出裁决的分析拦在门外。
+    """
+
+    _KSTAR_FLOW = dict(
+        symbol="002518",
+        super_large_net=486.7,
+        large_net=2261.2,
+        medium_net=-66.0,
+        small_net=-2681.9,
+        price_change_pct=-0.031,
+        main_consecutive_days=1,
+    )
+
+    def test_zero_turnover_does_not_saturate_divergence_score(self):
+        result = CapitalFlowAnalyzer().analyze(total_turnover=0.0, **self._KSTAR_FLOW)
+        # 定性分类保留（方向已知），但幅度分必须归零
+        assert result.divergence_type == DivergenceType.BEAR_TRAP
+        assert result.divergence_score == 0.0
+        # 不得触发 verdict.py 的 >60 → ×0.7 折扣线（本场景严格为 0）
+        assert result.manipulation_risk_score == 0.0
+        assert any("DATA_GAP" in g for g in result.data_gaps)
+
+    def test_zero_turnover_bull_trap_also_zeroed(self):
+        result = CapitalFlowAnalyzer().analyze(
+            **{**self._KSTAR_FLOW,
+               "price_change_pct": 0.031,
+               "super_large_net": -486.7,
+               "large_net": -2261.2},
+            total_turnover=0.0,
+        )
+        assert result.divergence_type == DivergenceType.BULL_TRAP
+        assert result.divergence_score == 0.0
+        assert any("DATA_GAP" in g for g in result.data_gaps)
+
+    def test_zero_turnover_skips_consecutive_days_bonus(self):
+        """turnover=0 时即使主力连续流出≥3天，+20 加成也被 turnover_known 守卫抑制。"""
+        result = CapitalFlowAnalyzer().analyze(
+            **{**self._KSTAR_FLOW, "main_consecutive_days": -3},
+            total_turnover=0.0,
+        )
+        assert result.divergence_score == 0.0          # +20 加成不得混入
+        assert result.manipulation_risk_score == 15.0  # 仅连续流出风险块（方向已知）生效
+        assert not any("背离加剧" in s for s in result.signals)
+
+    def test_normal_turnover_scores_small_divergence(self):
+        """对照组：成交额正常时同样的主力流入只得个位数分（≈9，远低于 60 折扣线）。"""
+        result = CapitalFlowAnalyzer().analyze(total_turnover=60000.0, **self._KSTAR_FLOW)
+        assert result.divergence_score == pytest.approx(9.2, abs=2.0)
+        assert not result.data_gaps

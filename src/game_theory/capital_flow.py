@@ -146,24 +146,33 @@ class CapitalFlowAnalyzer:
 
         # ── 资金-价格背离检测 ──
         divergence_score = 0.0
+        # 成交额缺失(上游接口失败兜底为0)时背离幅度不可计算 — 定性分类保留，
+        # 幅度分置零并标 DATA_GAP，避免分母兜底 max(0,1)=1 导致评分饱和到 100
+        turnover_known = total_turnover > 0
+        if not turnover_known:
+            result.data_gaps.append(
+                "[DATA_GAP] 成交额缺失，资金-价格背离幅度不可计算，背离评分置零降权"
+            )
         # 价格涨 + 主力流出 = 诱多出货
         if price_change_pct > 0.01 and result.main_net < 0:
-            divergence_score = min(100, abs(result.main_net) / max(total_turnover, 1) * 200)
+            if turnover_known:
+                divergence_score = min(100, abs(result.main_net) / total_turnover * 200)
             result.divergence_type = DivergenceType.BULL_TRAP
             result.signals.append(
                 f"价格涨 {price_change_pct:.1%}，主力净流出 {result.main_net:.0f}万 → 诱多出货预警"
             )
-            if main_consecutive_days <= -self.DIVERGENCE_DAYS_THRESHOLD:
+            if turnover_known and main_consecutive_days <= -self.DIVERGENCE_DAYS_THRESHOLD:
                 divergence_score += 20
                 result.signals.append(f"主力连续流出 {abs(main_consecutive_days)} 天，背离加剧")
         # 价格跌 + 主力流入 = 诱空吸筹
         elif price_change_pct < -0.01 and result.main_net > 0:
-            divergence_score = min(100, abs(result.main_net) / max(total_turnover, 1) * 200)
+            if turnover_known:
+                divergence_score = min(100, abs(result.main_net) / total_turnover * 200)
             result.divergence_type = DivergenceType.BEAR_TRAP
             result.signals.append(
                 f"价格跌 {abs(price_change_pct):.1%}，主力净流入 {result.main_net:.0f}万 → 诱空吸筹预警"
             )
-            if main_consecutive_days >= self.DIVERGENCE_DAYS_THRESHOLD:
+            if turnover_known and main_consecutive_days >= self.DIVERGENCE_DAYS_THRESHOLD:
                 divergence_score += 20
                 result.signals.append(f"主力连续流入 {main_consecutive_days} 天，吸筹确认")
         # 价涨+主力流入 = 真实上涨

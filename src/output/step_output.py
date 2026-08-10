@@ -860,6 +860,11 @@ def print_manipulation_info(mi: dict | None) -> None:
         print(f"  资金背离: {bar} {score:.0f}/100  类型:{div_type}")
         if div.get("recommendation"):
             print(f"    {div['recommendation']}")
+    elif isinstance(div, (int, float)) and not isinstance(div, bool):
+        # orchestrator 存的是 divergence_score 裸 float — 兼容显示。
+        # turnover 缺失时 score=0.0（capital_flow 置零降权）也必须渲染，否则反操纵块成空壳
+        bar = "█" * min(10, int(div / 10)) + "░" * max(0, 10 - int(div / 10))
+        print(f"  资金背离: {bar} {div:.0f}/100")
 
     # 洗盘周期
     wc = mi.get("wash_cycle")
