@@ -1031,11 +1031,13 @@ class DataAggregator:
                 raw = cninfo.search_announcements(symbol)
                 if raw:
                     items = []
-                    board_keywords = ["董事", "监事", "高管", "总裁", "副总裁", "总经理",
-                                      "董秘", "辞职", "聘任", "选举", "任命", "变更"]
+                    # 仅保留人事动作词命中的公告 — 身份词(董事/高管)会误中制度文件，
+                    # 裸"变更"会误中回购/工商变更等资本运作公告
+                    action_keywords = ["辞职", "聘任", "选举", "任命", "离任",
+                                       "补选", "换届", "解聘"]
                     for entry in raw:
                         title = entry.get("title", "")
-                        if any(kw in title for kw in board_keywords):
+                        if any(kw in title for kw in action_keywords):
                             items.append(BoardChange(
                                 person_name="",  # 公告标题通常不包含具体人名
                                 old_position="",
