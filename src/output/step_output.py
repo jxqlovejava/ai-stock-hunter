@@ -800,7 +800,7 @@ def print_fundamental_diagnosis(fd: dict | None) -> None:
     # Q3: 我有信息优势吗？
     if q3.get("information_advantage_score") is not None:
         score = float(q3["information_advantage_score"])
-        bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
+        bar = _score_bar(score)
         level = "🟢 有优势" if score >= 60 else ("🟡 一般" if score >= 40 else "🔴 无优势")
         print(f"\n  Q3: 我有信息优势吗？")
         print(f"     {bar} {score:.0f}/100  {level}")
@@ -831,7 +831,7 @@ def print_manipulation_info(mi: dict | None) -> None:
     # 芯片风险
     chip = mi.get("chip_risk")
     if isinstance(chip, (int, float)):
-        bar = "█" * min(10, int(chip / 10)) + "░" * max(0, 10 - int(chip / 10))
+        bar = _score_bar(chip)
         level = "🔴 高" if chip >= 60 else ("🟡 中" if chip >= 30 else "🟢 低")
         print(f"  芯片风险: {bar} {chip:.0f}/100  {level}")
 
@@ -851,20 +851,11 @@ def print_manipulation_info(mi: dict | None) -> None:
         else:
             print(f"  日内形态: {pattern}")
 
-    # 资金背离
-    div = mi.get("capital_divergence", {})
-    if isinstance(div, dict) and div:
-        score = div.get("score", 0)
-        div_type = div.get("type", "")
-        bar = "█" * min(10, int(score / 10)) + "░" * max(0, 10 - int(score / 10))
-        print(f"  资金背离: {bar} {score:.0f}/100  类型:{div_type}")
-        if div.get("recommendation"):
-            print(f"    {div['recommendation']}")
-    elif isinstance(div, (int, float)) and not isinstance(div, bool):
-        # orchestrator 存的是 divergence_score 裸 float — 兼容显示。
-        # turnover 缺失时 score=0.0（capital_flow 置零降权）也必须渲染，否则反操纵块成空壳
-        bar = "█" * min(10, int(div / 10)) + "░" * max(0, 10 - int(div / 10))
-        print(f"  资金背离: {bar} {div:.0f}/100")
+    # 资金背离 — orchestrator 统一存裸 float divergence_score（单一形状，无 dict 分支）。
+    # 缺键安静；键存在时 turnover 缺失置零的 0.0 也须渲染，反操纵块不得成空壳
+    div = mi.get("capital_divergence")
+    if isinstance(div, (int, float)) and not isinstance(div, bool):
+        print(f"  资金背离: {_score_bar(div)} {div:.0f}/100")
 
     # 洗盘周期
     wc = mi.get("wash_cycle")
@@ -885,14 +876,14 @@ def print_manipulation_info(mi: dict | None) -> None:
     # 洗盘风险（整体）
     wr = mi.get("washout_risk")
     if isinstance(wr, (int, float)):
-        bar = "█" * min(10, int(wr / 10)) + "░" * max(0, 10 - int(wr / 10))
+        bar = _score_bar(wr)
         level = "🔴 高" if wr >= 60 else ("🟡 中" if wr >= 30 else "🟢 低")
         print(f"  洗盘风险: {bar} {wr:.0f}/100  {level}")
 
     # 综合风险
     overall = mi.get("overall_risk")
     if isinstance(overall, (int, float)):
-        bar = "█" * min(10, int(overall / 10)) + "░" * max(0, 10 - int(overall / 10))
+        bar = _score_bar(overall)
         level = "🔴 严重" if overall >= 70 else ("🟠 关注" if overall >= 40 else "🟢 正常")
         print(f"  综合操纵风险: {bar} {overall:.0f}/100  {level}")
 
@@ -1223,6 +1214,12 @@ def print_batch_comparison(results: list[dict]) -> None:
 
 
 # ── 辅助 ──────────────────────────────────────────────────────────────
+
+def _score_bar(score: float, width: int = 10) -> str:
+    """0-100 分数渲染为 10 格 █/░ 进度条（越界安全，全文件共用）。"""
+    filled = min(width, int(score / 10))
+    return "█" * filled + "░" * max(0, width - filled)
+
 
 def _ensure_cn(text: str) -> str:
     """翻译已知英文术语。"""
