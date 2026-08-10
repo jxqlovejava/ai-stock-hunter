@@ -842,11 +842,11 @@ class DataAggregator:
                     items = []
                     for entry in raw:
                         items.append(NewsItem(
-                            title=entry.get("title", ""),
+                            title=entry.get("title") or "",
                             source="cninfo",
-                            date=entry.get("date", ""),
-                            content=entry.get("type", ""),
-                            url=entry.get("url", ""),
+                            date=entry.get("date") or "",
+                            content=entry.get("type") or "",
+                            url=entry.get("url") or "",
                             provider="cninfo",
                         ))
                     if items:
