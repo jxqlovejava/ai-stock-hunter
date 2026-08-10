@@ -170,7 +170,11 @@ class CapitalFlowProvider:
     def get_money_flow(self, symbol: str, weeks: int = 4) -> Optional[MoneyFlowSnapshot]:
         """获取个股近 N 周主力资金流快照。
 
-        降级链：东财 push2his 日线 → efinance → AKShare。
+        降级链（当日实时优先，避免 T-1 数据被误当当日）：
+          1. 当日实时源: AKShare 同花顺即时排名（独立于东财，返回当日主力净额/成交额/涨跌幅）
+          2. 当日实时拆单: efinance get_today_bill（当日分时累计，取最后一行）
+          3. 历史序列（用于连续流入天数/趋势）: 东财 push2his → efinance history → AKShare 个股
+        当日实时源失败时才回退历史序列，且显式标记数据滞后日期。
         """
         symbol = symbol.strip()[-6:]
         if len(symbol) != 6 or not symbol.isdigit():
@@ -180,28 +184,59 @@ class CapitalFlowProvider:
             )
         days = max(weeks * 7, 14)
 
-        # 1. 尝试东财主源
-        df, citation = self._fetch_em_daykline(symbol, days)
-        data_gap_reason = ""
+        # 1. 当日实时快照（主力净额/成交额/涨跌幅）— 同花顺源，独立于东财
+        today_df, today_citation, today_gap = self._fetch_intraday_ths(symbol)
+        if today_df is None or today_df.empty:
+            # 2. 当日实时拆单 — efinance 当日分时累计
+            today_df, today_citation, today_gap = self._fetch_today_bill(symbol)
 
-        # 2. 东财失败或数据为空 → efinance 降级
-        if df is None or df.empty:
-            df, citation, data_gap_reason = self._fetch_efinance_fallback(symbol, days)
+        # 3. 历史序列（东财 → efinance history → AKShare），用于连续天数/趋势
+        hist_df, hist_citation = self._fetch_em_daykline(symbol, days)
+        hist_gap = ""
+        if hist_df is None or hist_df.empty:
+            hist_df, hist_citation, hist_gap = self._fetch_efinance_fallback(symbol, days)
+        if hist_df is None or hist_df.empty:
+            hist_df, hist_citation, hist_gap = self._fetch_akshare_fallback(symbol, days)
 
-        # 3. efinance 仍失败 → AKShare 降级
-        if df is None or df.empty:
-            df, citation, data_gap_reason = self._fetch_akshare_fallback(symbol, days)
-
-        # 3. 全部失败 → DATA_GAP
-        if df is None or df.empty:
+        # 4. 全部失败 → DATA_GAP
+        if (today_df is None or today_df.empty) and (hist_df is None or hist_df.empty):
+            reason = "; ".join(g for g in (today_gap, hist_gap) if g)
             return MoneyFlowSnapshot(
                 symbol=symbol,
-                data_gap_reason=data_gap_reason or "个股资金流数据源均不可用",
+                data_gap_reason=reason or "个股资金流数据源均不可用",
             )
 
-        latest = df.sort_values("date").iloc[-1]
-        consecutive = _compute_main_consecutive_days(df)
-        trend = _recent_price_trend(df)
+        # 5. 合并当日快照 + 历史序列
+        latest = None
+        citation = None
+        data_gap_reason = ""
+        if today_df is not None and not today_df.empty:
+            latest = today_df.sort_values("date").iloc[-1]
+            citation = today_citation
+            data_gap_reason = today_gap or ""
+            # 同花顺即时源仅给主力净额（拆单=0）→ 用历史序列最新一日的拆单比例回填，
+            # main_net 保持同花顺权威方向不变；历史拆单比例稳定且不依赖易失败的 efinance 实时调用
+            if float(latest.get("super_large_net", 0)) == 0 and float(latest.get("large_net", 0)) != 0:
+                breakdown = self._fetch_history_breakdown(hist_df)
+                if breakdown is not None:
+                    latest = latest.to_dict()
+                    latest = self._apply_breakdown_proportions(latest, breakdown)
+                    latest = pd.Series(latest)
+        elif hist_df is not None and not hist_df.empty:
+            latest = hist_df.sort_values("date").iloc[-1]
+            citation = hist_citation
+            data_gap_reason = hist_gap or ""
+            # 历史源无当日数据 → 显式标记滞后日期
+            data_gap_reason = self._annotate_stale_date(latest, data_gap_reason)
+
+        # 连续天数/趋势：历史序列补齐（当日源只给单日快照时无法计算）
+        combined = hist_df
+        if today_df is not None and not today_df.empty:
+            combined = pd.concat(
+                [hist_df, today_df], ignore_index=True
+            ) if hist_df is not None and not hist_df.empty else today_df
+        consecutive = _compute_main_consecutive_days(combined)
+        trend = _recent_price_trend(combined)
 
         return MoneyFlowSnapshot(
             symbol=symbol,
@@ -217,6 +252,40 @@ class CapitalFlowProvider:
             data_gap_reason=data_gap_reason,
             citation=citation,
         )
+
+    @staticmethod
+    def _fetch_history_breakdown(hist_df: Optional[pd.DataFrame]) -> Optional[dict]:
+        """从历史序列最新一日推导拆单比例（各单量占主力净额）。
+
+        当日实时源（同花顺）仅给主力净额时，用最近一个完整交易日的拆单结构回填，
+        使资金流拆单（超大/大/中/小）仍有合理分布。main_net 方向始终以当日实时源为准。
+        """
+        if hist_df is None or hist_df.empty:
+            return None
+        try:
+            latest = hist_df.sort_values("date").iloc[-1]
+            main = float(latest.get("main_net", 0) or 0)
+            if main == 0:
+                return None
+            return {
+                "super_large": float(latest.get("super_large_net", 0) or 0) / main,
+                "large": float(latest.get("large_net", 0) or 0) / main,
+                "medium": float(latest.get("medium_net", 0) or 0) / main,
+                "small": float(latest.get("small_net", 0) or 0) / main,
+            }
+        except Exception as e:
+            logger.warning("历史拆单比例推导失败: %s", e)
+            return None
+
+    @staticmethod
+    def _apply_breakdown_proportions(row: dict, proportions: dict) -> dict:
+        """用拆单比例回填拆单字段，保持 main_net 不变。"""
+        main = float(row.get("main_net", 0))
+        row["super_large_net"] = round(main * proportions.get("super_large", 0.0), 2)
+        row["large_net"] = round(main * proportions.get("large", 0.0), 2)
+        row["medium_net"] = round(main * proportions.get("medium", 0.0), 2)
+        row["small_net"] = round(main * proportions.get("small", 0.0), 2)
+        return row
 
     def get_all_fund_flow_rank(self) -> pd.DataFrame:
         """获取 AKShare 全市场个股资金流排名（用于 scan/alpha-scan 批量场景）。
@@ -250,6 +319,139 @@ class CapitalFlowProvider:
         df = pd.read_csv(path)
         df["date"] = pd.to_datetime(df["date"])
         return df
+
+    # ------------------------------------------------------------------
+    # 当日实时源（同花顺即时排名 / efinance 当日拆单）
+    # ------------------------------------------------------------------
+
+    def _fetch_intraday_ths(
+        self, symbol: str
+    ) -> tuple[Optional[pd.DataFrame], Optional[SourceCitation], str]:
+        """当日实时资金流 — AKShare stock_fund_flow_individual("即时")（同花顺源）。
+
+        底层为同花顺 data.10jqka.com.cn，独立于东财 CDN（东财在非大陆 IP 下常被 RST），
+        返回当日实时主力净额/成交额/涨跌幅/最新价。该源无拆单（超大/大/中/小单），
+        单日快照 main_net 即"净额"列。
+        """
+        try:
+            import akshare as ak
+            rank = None
+            for _attempt in range(2):
+                try:
+                    rank = ak.stock_fund_flow_individual(symbol="即时")
+                    if rank is not None and not rank.empty:
+                        break
+                except Exception:
+                    time.sleep(1.0)
+                    continue
+            if rank is None or rank.empty or "股票代码" not in rank.columns:
+                return None, None, "[DATA_GAP] 同花顺资金流排名为空"
+            row = rank[rank["股票代码"].astype(str).str.strip().str.lstrip("0") == symbol.lstrip("0")]
+            if row.empty:
+                return None, None, f"[DATA_GAP] {symbol} 不在同花顺资金流排名"
+            r = row.iloc[0]
+            net = self._parse_chinese_amount(r.get("净额", 0))
+            turnover = self._parse_chinese_amount(r.get("成交额", 0))
+            today = datetime.now().strftime("%Y-%m-%d")
+            df = pd.DataFrame(
+                [{
+                    "date": today,
+                    "super_large_net": 0.0,
+                    "large_net": net,
+                    "medium_net": 0.0,
+                    "small_net": 0.0,
+                    "main_net": net,
+                    "total_turnover": turnover,
+                    "close": float(r.get("最新价", 0) or 0),
+                    "change_pct": self._parse_change_pct(r.get("涨跌幅", 0)),
+                    "volume": 0,
+                }]
+            )
+            df["date"] = pd.to_datetime(df["date"])
+            citation = SourceCitation(
+                provider="tonghuashun",
+                field="individual_fund_flow",
+                fetch_timestamp=datetime.now(),
+                data_freshness=timedelta(hours=4),
+                confidence=0.80,
+                source_tier=SOURCE_TIER_T1,
+                nature=NATURE_FACT,
+            )
+            # 同花顺源返回完整当日主力净额/成交额/涨跌幅，数据完整；
+            # 拆单由 get_money_flow 中的历史结构回填，此处无数据缺口
+            return df, citation, ""
+        except Exception as e:
+            logger.warning("同花顺个股资金流获取失败 %s: %s", symbol, e)
+            return None, None, "[DATA_GAP] 同花顺个股资金流不可用"
+
+    def _fetch_today_bill(
+        self, symbol: str
+    ) -> tuple[Optional[pd.DataFrame], Optional[SourceCitation], str]:
+        """当日实时拆单 — efinance get_today_bill（东财数据源，当日分时累计）。
+
+        返回当日 09:31 起逐分钟累计，最后一行即当日实时累计主力/超大/大/中/小单净额。
+        该接口无成交额与涨跌幅，total_turnover 置 0 并标注。
+        """
+        try:
+            import efinance as ef
+            # efinance 底层为东财 CDN，间歇性 RST，重试一次提升可用性
+            bill = None
+            for _attempt in range(2):
+                try:
+                    bill = ef.stock.get_today_bill(symbol)
+                    if bill is not None and not bill.empty:
+                        break
+                except Exception:
+                    time.sleep(1.0)
+                    continue
+            if bill is None or bill.empty or "主力净流入" not in bill.columns:
+                return None, None, "[DATA_GAP] efinance 当日资金流为空"
+            last = bill.iloc[-1]  # 当日累计（最后一行）
+            today = str(last.get("时间", datetime.now().strftime("%Y-%m-%d")))[:10]
+            df = pd.DataFrame(
+                [{
+                    "date": today,
+                    "super_large_net": float(last.get("超大单净流入", 0) or 0) / 10000.0,
+                    "large_net": float(last.get("大单净流入", 0) or 0) / 10000.0,
+                    "medium_net": float(last.get("中单净流入", 0) or 0) / 10000.0,
+                    "small_net": float(last.get("小单净流入", 0) or 0) / 10000.0,
+                    "main_net": float(last.get("主力净流入", 0) or 0) / 10000.0,
+                    "total_turnover": 0.0,
+                    "close": 0.0,
+                    "change_pct": 0.0,
+                    "volume": 0,
+                }]
+            )
+            df["date"] = pd.to_datetime(df["date"])
+            citation = SourceCitation(
+                provider="efinance",
+                field="individual_fund_flow",
+                fetch_timestamp=datetime.now(),
+                data_freshness=timedelta(hours=4),
+                confidence=0.80,
+                source_tier=SOURCE_TIER_T1,
+                nature=NATURE_FACT,
+            )
+            return df, citation, "[DATA_GAP] efinance 当日资金流无成交额与涨跌幅"
+        except Exception as e:
+            logger.warning("efinance 当日资金流获取失败 %s: %s", symbol, e)
+            return None, None, "[DATA_GAP] efinance 当日资金流不可用"
+
+    @staticmethod
+    def _annotate_stale_date(latest: pd.Series, data_gap_reason: str) -> str:
+        """历史源无当日数据时，标注数据滞后日期（避免 T-1 被误当当日）。"""
+        try:
+            d = latest.get("date")
+            if d is None:
+                return data_gap_reason
+            if hasattr(d, "strftime"):
+                date_str = d.strftime("%Y-%m-%d")
+            else:
+                date_str = str(d)[:10]
+            note = f"[DATA_GAP] 资金流数据滞后至 {date_str}，当日实时源不可用"
+            return f"{data_gap_reason}; {note}" if data_gap_reason else note
+        except Exception:
+            return data_gap_reason
 
     # ------------------------------------------------------------------
     # 东财主源

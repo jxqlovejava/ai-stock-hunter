@@ -148,6 +148,12 @@ class TestMoneyFlowSnapshot:
 
 
 class TestCapitalFlowProviderWithMock:
+    def _mock_today_fail(self, provider, monkeypatch):
+        """模拟当日实时源不可用（同花顺/efinance 当日接口失败），
+        使降级链回退到历史序列（东财/efinance history/AKShare）。"""
+        monkeypatch.setattr(provider, "_fetch_intraday_ths", lambda *a, **k: (None, None, "[DATA_GAP] 同花顺不可用"))
+        monkeypatch.setattr(provider, "_fetch_today_bill", lambda *a, **k: (None, None, "[DATA_GAP] efinance 当日不可用"))
+
     def test_get_money_flow_returns_snapshot_from_em(self, monkeypatch):
         provider = CapitalFlowProvider()
 
@@ -169,6 +175,7 @@ class TestCapitalFlowProviderWithMock:
             citation = SourceCitation(provider="eastmoney", field="test")
             return df, citation
 
+        self._mock_today_fail(provider, monkeypatch)
         monkeypatch.setattr(provider, "_fetch_em_daykline", mock_fetch_em)
         monkeypatch.setattr(provider, "_fetch_akshare_fallback", lambda *a, **k: (None, None, ""))
 
@@ -185,6 +192,7 @@ class TestCapitalFlowProviderWithMock:
 
     def test_get_money_flow_returns_data_gap_when_all_fail(self, monkeypatch):
         provider = CapitalFlowProvider()
+        self._mock_today_fail(provider, monkeypatch)
         monkeypatch.setattr(provider, "_fetch_em_daykline", lambda *a, **k: (None, None))
         monkeypatch.setattr(
             provider, "_fetch_efinance_fallback",
@@ -199,6 +207,7 @@ class TestCapitalFlowProviderWithMock:
 
     def test_get_money_flow_akshare_fallback(self, monkeypatch):
         provider = CapitalFlowProvider()
+        self._mock_today_fail(provider, monkeypatch)
         monkeypatch.setattr(provider, "_fetch_em_daykline", lambda *a, **k: (None, None))
         # efinance 介于东财与 akshare 之间，模拟其失败以验证 akshare 兜底路径
         monkeypatch.setattr(
@@ -230,6 +239,150 @@ class TestCapitalFlowProviderWithMock:
         assert snap is not None
         assert snap.main_net == 100.0
         assert "missing detail" in snap.data_gap_reason
+
+    def test_today_source_priority(self, monkeypatch):
+        """当日实时源（同花顺即时）优先于历史序列——返回当日数据且不与当日涨跌脱节。"""
+        provider = CapitalFlowProvider()
+
+        def mock_today(*args, **kwargs):
+            import pandas as pd
+            from src.data.source_citation import SourceCitation
+            df = pd.DataFrame({
+                "date": pd.to_datetime(["2026-08-10"]),
+                "super_large_net": [0.0],
+                "large_net": [-25300.0],
+                "medium_net": [0.0],
+                "small_net": [0.0],
+                "main_net": [-25300.0],
+                "total_turnover": [942100.0],
+                "close": [74.88],
+                "change_pct": [0.0564],
+                "volume": [0],
+            })
+            citation = SourceCitation(provider="tonghuashun", field="test")
+            return df, citation, ""
+
+        monkeypatch.setattr(provider, "_fetch_intraday_ths", mock_today)
+        # 历史序列模拟提供 3 日历史，用于连续天数计算
+        def mock_hist(*args, **kwargs):
+            import pandas as pd
+            from src.data.source_citation import SourceCitation
+            df = pd.DataFrame({
+                "date": pd.to_datetime(["2026-08-05", "2026-08-06", "2026-08-07"]),
+                "super_large_net": [100.0, 200.0, 300.0],
+                "large_net": [5.0, 5.0, 5.0],
+                "medium_net": [0.0, 0.0, 0.0],
+                "small_net": [-5.0, -10.0, -15.0],
+                "main_net": [105.0, 205.0, 305.0],
+                "total_turnover": [1000.0, 1200.0, 1500.0],
+                "close": [100.0, 101.0, 104.0],
+                "change_pct": [0.0, 0.01, 0.0297],
+                "volume": [1000, 1000, 1000],
+            })
+            citation = SourceCitation(provider="eastmoney", field="test")
+            return df, citation
+        monkeypatch.setattr(provider, "_fetch_em_daykline", mock_hist)
+
+        snap = provider.get_money_flow("600519", weeks=4)
+        assert snap is not None
+        # 当日值来自同花顺即时源（当日涨跌幅 +5.64% 未被 T-1 污染）
+        assert snap.price_change_pct == 0.0564
+        assert snap.main_net == -25300.0
+        assert snap.total_turnover == 942100.0
+        # 连续天数由历史序列（3日流入 105/205/305）+ 当日流出拼接计算
+        assert snap.citation is not None
+        assert snap.citation.provider == "tonghuashun"
+
+    def test_history_breakdown_backfill(self, monkeypatch):
+        """同花顺当日源仅给主力净额时，用历史序列最新一日拆单比例回填拆单，
+        main_net 方向保持同花顺当日值不变。"""
+        provider = CapitalFlowProvider()
+
+        def mock_today(*args, **kwargs):
+            import pandas as pd
+            from src.data.source_citation import SourceCitation
+            df = pd.DataFrame({
+                "date": pd.to_datetime(["2026-08-10"]),
+                "super_large_net": [0.0],
+                "large_net": [-25300.0],
+                "medium_net": [0.0],
+                "small_net": [0.0],
+                "main_net": [-25300.0],
+                "total_turnover": [942100.0],
+                "close": [74.88],
+                "change_pct": [0.0564],
+                "volume": [0],
+            })
+            citation = SourceCitation(provider="tonghuashun", field="test")
+            return df, citation, ""
+
+        def mock_hist(*args, **kwargs):
+            import pandas as pd
+            from src.data.source_citation import SourceCitation
+            # 历史最新日 08-07：main=305, super=300, large=5 → 拆单比例 super≈0.984 large≈0.016
+            df = pd.DataFrame({
+                "date": pd.to_datetime(["2026-08-05", "2026-08-06", "2026-08-07"]),
+                "super_large_net": [100.0, 200.0, 300.0],
+                "large_net": [5.0, 5.0, 5.0],
+                "medium_net": [0.0, 0.0, 0.0],
+                "small_net": [-5.0, -10.0, -15.0],
+                "main_net": [105.0, 205.0, 305.0],
+                "total_turnover": [1000.0, 1200.0, 1500.0],
+                "close": [100.0, 101.0, 104.0],
+                "change_pct": [0.0, 0.01, 0.0297],
+                "volume": [1000, 1000, 1000],
+            })
+            citation = SourceCitation(provider="eastmoney", field="test")
+            return df, citation
+
+        monkeypatch.setattr(provider, "_fetch_intraday_ths", mock_today)
+        monkeypatch.setattr(provider, "_fetch_em_daykline", mock_hist)
+        monkeypatch.setattr(provider, "_fetch_efinance_fallback", lambda *a, **k: (None, None, ""))
+        monkeypatch.setattr(provider, "_fetch_akshare_fallback", lambda *a, **k: (None, None, ""))
+
+        snap = provider.get_money_flow("600519", weeks=4)
+        assert snap is not None
+        # main_net 保持同花顺当日权威值
+        assert snap.main_net == -25300.0
+        # 拆单按历史比例回填：super≈300/305, large≈5/305 → super≈-24918, large≈-415
+        assert abs(snap.super_large_net + snap.large_net - snap.main_net) < 1.0
+        assert snap.super_large_net < 0  # 主力净流出方向
+        # 当日涨跌幅不被历史污染
+        assert snap.price_change_pct == 0.0564
+        # 连续天数由历史（3日流入）+ 当日流出拼接
+        assert snap.main_consecutive_days <= 0
+
+    def test_history_stale_date_annotated(self, monkeypatch):
+        """当日实时源失败、仅历史序列可用时，显式标记数据滞后日期。"""
+        provider = CapitalFlowProvider()
+        self._mock_today_fail(provider, monkeypatch)
+
+        def mock_hist(*args, **kwargs):
+            import pandas as pd
+            from src.data.source_citation import SourceCitation
+            df = pd.DataFrame({
+                "date": pd.to_datetime(["2026-08-07"]),
+                "super_large_net": [0.0],
+                "large_net": [100.0],
+                "medium_net": [0.0],
+                "small_net": [0.0],
+                "main_net": [100.0],
+                "total_turnover": [500.0],
+                "close": [100.0],
+                "change_pct": [0.01],
+                "volume": [1000],
+            })
+            citation = SourceCitation(provider="eastmoney", field="test")
+            return df, citation
+        monkeypatch.setattr(provider, "_fetch_em_daykline", mock_hist)
+        monkeypatch.setattr(provider, "_fetch_efinance_fallback", lambda *a, **k: (None, None, ""))
+        monkeypatch.setattr(provider, "_fetch_akshare_fallback", lambda *a, **k: (None, None, ""))
+
+        snap = provider.get_money_flow("600519", weeks=4)
+        assert snap is not None
+        # 历史源最新 08-07，非当日 → 应标注滞后日期
+        assert "滞后" in snap.data_gap_reason
+        assert "2026-08-07" in snap.data_gap_reason
 
 
 class TestTurnoverMissingGuard:
