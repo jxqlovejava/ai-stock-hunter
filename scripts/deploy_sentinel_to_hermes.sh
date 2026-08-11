@@ -31,6 +31,7 @@ echo "==> 同步 sentinel 代码与入口"
 "${SCP[@]}" \
   "$ROOT/scripts/baize_sentinel.py" \
   "$ROOT/scripts/hermes_sentinel_config.json" \
+  "$ROOT/scripts/update_kline.py" \
   "$HOST:$REMOTE_ROOT/scripts/"
 
 echo "==> 同步 positions.json + portfolio.yaml + watchlist.json"
@@ -109,11 +110,9 @@ echo "--- funds ---"
 "${SSH[@]}" "$HOST" "python3 /home/ubuntu/.hermes/scripts/baize_sentinel.py --mode funds --force 2>&1 | head -40"
 
 echo ""
-echo "==> 同步 kline_cache（日线缓存，供入场信号/五法使用）"
-if [[ -d "$ROOT/data/kline_cache" ]]; then
-  "${SSH[@]}" "$HOST" "mkdir -p '$REMOTE_ROOT/data/kline_cache'"
-  "${SCP[@]}" "$ROOT/data/kline_cache"/*.csv "$HOST:$REMOTE_ROOT/data/kline_cache/" 2>/dev/null || echo "  (无 csv 缓存文件，跳过)"
-fi
+echo "==> 刷新服务器 kline_cache（脚本已推送，服务器本地拉取，不再从本机推过期快照）"
+"${SSH[@]}" "$HOST" "mkdir -p '$REMOTE_ROOT/data/kline_cache'"
+"${SSH[@]}" "$HOST" "BAIZE_ROOT='$REMOTE_ROOT' BAIZE_POSITIONS='$REMOTE_POS' BAIZE_WATCHLIST='$(dirname "$REMOTE_POS")/watchlist.json' python3 '$REMOTE_ROOT/scripts/update_kline.py' 2>&1 | tail -25" || echo "  (⚠️ 服务器 kline 刷新失败，检查服务器 python3/网络)"
 
 echo ""
 echo "✅ 部署完成"
