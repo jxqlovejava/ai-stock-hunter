@@ -3837,6 +3837,7 @@ class Orchestrator:
                 "flash_24x7": [_ni_to_dict(item) for item in ctx.flash_24x7],
                 "kuaicha_news": [_ni_to_dict(item) for item in ctx.kuaicha_news],
                 "last30days": [_ni_to_dict(item) for item in ctx.last30days],
+                "catalyst_news": [_ni_to_dict(item) for item in ctx.catalyst_news],
                 "summary": ctx.summary,
                 "errors": ctx.errors,
                 "total_items": ctx.total_items,
@@ -3847,6 +3848,7 @@ class Orchestrator:
         return {
             "news": [], "announcements": [], "research_reports": [],
             "flash_24x7": [], "kuaicha_news": [], "last30days": [],
+            "catalyst_news": [],
             "summary": "不可用", "errors": [str(e) if 'e' in dir() else "unknown"],
             "total_items": 0,
         }
@@ -4236,7 +4238,7 @@ def _flatten_news_context(news_ctx: dict | list | None) -> list[dict]:
     # dict 格式：合并所有通道
     all_items = []
     for channel in ("news", "announcements", "research_reports",
-                     "flash_24x7", "kuaicha_news", "last30days"):
+                     "flash_24x7", "kuaicha_news", "last30days", "catalyst_news"):
         all_items.extend(news_ctx.get(channel, []))
     return all_items
 

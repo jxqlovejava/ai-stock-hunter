@@ -390,6 +390,17 @@ def _build_report(result: Any) -> list[str]:
                 lines.append(f"- [{date}] {title}")
             lines.append("")
 
+        catalyst = news_ctx.get("catalyst_news", [])
+        if catalyst:
+            lines.append("### 🧭 板块催化剂")
+            for item in catalyst[:5]:
+                title = item.get("title", "")[:80]
+                url = item.get("url", "")
+                lines.append(f"- {title}")
+                if url:
+                    lines.append(f"  {url}")
+            lines.append("")
+
         l30 = news_ctx.get("last30days", [])
         if l30:
             lines.append("### 🗓️ 近30日资讯")

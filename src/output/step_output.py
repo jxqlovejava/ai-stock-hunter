@@ -713,6 +713,17 @@ def print_news_context(nc: dict) -> None:
             date = item.get("date", "")[:16]
             print(f"    · [{date}] {title}")
 
+    # 板块催化剂 (anysearch 全网补充, 补个股关键词盲区)
+    catalyst = nc.get("catalyst_news", [])
+    if catalyst:
+        print(f"\n  🧭 板块催化剂 ({len(catalyst)}条)")
+        for item in catalyst[:5]:
+            title = item.get("title", "")[:70]
+            url = item.get("url", "")
+            print(f"    · {title}")
+            if url:
+                print(f"      {url}")
+
     # 最近 30 日
     l30 = nc.get("last30days", [])
     if l30:
