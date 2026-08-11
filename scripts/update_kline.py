@@ -69,8 +69,8 @@ def _tx_symbol(code: str) -> str:
 
 
 def _beijing_now() -> dt.datetime:
-    """北京时区当前时间（utc + 8h，不依赖 tz 数据库）。"""
-    return dt.datetime.utcnow() + dt.timedelta(hours=8)
+    """北京时区当前时间（固定 +8h 偏移，不依赖 tz 数据库，避免 utcnow 弃用告警）。"""
+    return dt.datetime.now(dt.timezone(dt.timedelta(hours=8)))
 
 
 def _fetch_tencent_daily(
