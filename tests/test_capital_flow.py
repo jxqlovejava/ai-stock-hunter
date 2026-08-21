@@ -148,6 +148,13 @@ class TestMoneyFlowSnapshot:
 
 
 class TestCapitalFlowProviderWithMock:
+    @pytest.fixture(autouse=True)
+    def _no_market_cache(self, monkeypatch):
+        """本类是 mock 场景，禁用当日市场磁盘缓存，避免跨测试污染。"""
+        monkeypatch.setenv("BAIZE_NO_MARKET_CACHE", "1")
+        yield
+        monkeypatch.delenv("BAIZE_NO_MARKET_CACHE", raising=False)
+
     def _mock_today_fail(self, provider, monkeypatch):
         """模拟当日实时源不可用（同花顺/efinance 当日接口失败），
         使降级链回退到历史序列（东财/efinance history/AKShare）。"""
