@@ -23,6 +23,8 @@ from typing import Optional
 
 import pandas as pd
 
+from src.data.market_cache import daily_market_cache
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -567,8 +569,9 @@ class AKShareProvider(DataProvider):
     # Unique data (no Guosen equivalent)
     # ------------------------------------------------------------------
 
+    @daily_market_cache("dragon_tiger")
     def get_dragon_tiger(self) -> pd.DataFrame:
-        """获取今日龙虎榜数据（独有）。"""
+        """获取今日龙虎榜数据（独有，全市场）。当日磁盘缓存复用。"""
         try:
             today = datetime.now().strftime("%Y%m%d")
             with _em_no_proxy():
@@ -576,15 +579,17 @@ class AKShareProvider(DataProvider):
         except Exception:
             return pd.DataFrame()
 
+    @daily_market_cache("margin_trading")
     def get_margin_trading(self) -> pd.DataFrame:
-        """获取融资融券数据（独有）。"""
+        """获取融资融券数据（独有，全市场）。当日磁盘缓存复用。"""
         try:
             return _akshare_call(ak.stock_margin_detail_sse, date=datetime.now().strftime("%Y%m%d"))
         except Exception:
             return pd.DataFrame()
 
+    @daily_market_cache("northbound_flow")
     def get_northbound_flow(self) -> pd.DataFrame:
-        """获取北向资金流向。"""
+        """获取北向资金流向（全市场）。当日磁盘缓存复用。"""
         try:
             with _em_no_proxy():
                 return _akshare_call(ak.stock_hsgt_fund_flow_summary_em)

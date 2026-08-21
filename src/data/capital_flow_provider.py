@@ -21,6 +21,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
+from src.data.market_cache import daily_market_cache
 from src.data.schema import MoneyFlowSnapshot
 from src.data.source_citation import (
     SOURCE_TIER_T1,
@@ -167,6 +168,11 @@ class CapitalFlowProvider:
     # 公开入口
     # ------------------------------------------------------------------
 
+    @daily_market_cache(
+        "money_flow",
+        key_fn=lambda self, symbol, **k: symbol,
+        cache_predicate=lambda r: r is not None and not getattr(r, "data_gap_reason", ""),
+    )
     def get_money_flow(self, symbol: str, weeks: int = 4) -> Optional[MoneyFlowSnapshot]:
         """获取个股近 N 周主力资金流快照。
 

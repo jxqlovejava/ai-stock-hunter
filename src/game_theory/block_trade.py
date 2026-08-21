@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.data.market_cache import daily_market_cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -413,8 +415,9 @@ class BlockTradeAnalyzer:
     # Data fetching
     # ------------------------------------------------------------------
 
+    @daily_market_cache("block_trade_records", cache_predicate=lambda r: len(r) > 0)
     def _fetch_daily_records(self) -> list[BlockTradeRecord]:
-        """Fetch today's block trade records from AKShare/东财."""
+        """Fetch today's block trade records from AKShare/东财. 当日磁盘缓存复用."""
         cache_key = "daily_records"
         cached = self._cache_get(cache_key)
         if cached is not None:

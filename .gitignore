@@ -21,6 +21,7 @@ venv/
 
 # Runtime data (generated at runtime, not source code)
 data/kline_cache/
+data/cache/
 data/evolution_lifecycles.json
 *.db
 *.sqlite3
