@@ -322,6 +322,7 @@ python -m src tactics <code> --no-t0    # 盘后跳过 T+0
 | 14 | adata | GitHub | 纯 Python A 股数据 SDK / 多数据源自动融合 / 概念板块双源交叉验证 / 统一异常层次 / 代理 IP 池 / 分笔成交(Tick) / 龙虎榜 / 北向-分时 / ETF+可转债 | [分析](docs/reference/adata-analysis.md) |
 | 15 | rodya-caijing-studio | GitHub | 财经研究输出契约 / 可证伪结论（研究台账）/ 反向DCF+分位有效性 / 排雷红旗库 / 合规双版本 / 时效门 | [分析](docs/reference/rodya-caijing-analysis.md) |
 | 16 | TradingAgents（原版） | 本地+GitHub | 多维度讨论协作→决策收敛 / 确定性快照锚定 / 情绪预取注入 / 结构化输出+provider降级 / alpha复盘闭环 / 历史教训注入 | [分析](docs/reference/tradingagents-analysis.md) |
+| 17 | zhengxi-views | GitHub | 原话佐证的方法蒸馏 / 三种话分离（原话·推演·需核实）/ 言行对照（表态 vs 真实持仓）/ 评分语义守护+行为 evals / 景气度"找通胀环节"框架 | [分析](docs/reference/zhengxi-views-analysis.md) |
 
 ## 方法论参考
 
